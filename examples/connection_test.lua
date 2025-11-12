@@ -1,14 +1,18 @@
 -- Example: Testing SSNS Connection and Query Execution
 -- This file demonstrates real database connections using vim-dadbod
 
--- NOTE: This requires vim-dadbod to be installed and a running SQL Server instance
+-- NOTE: This requires vim-dadbod to be installed and your local database servers running
 
 local ssns = require('ssns')
 
--- Setup SSNS with your connection
+-- Setup SSNS with your local connections
 ssns.setup({
   connections = {
-    test_server = "sqlserver://localhost/vim_dadbod_test",
+    -- Your local SQL Server instance
+    test_sqlserver = "sqlserver://.\\SQLEXPRESS/master",
+
+    -- Your local MySQL instance (uncomment to test)
+    -- test_mysql = "mysql://root:password@localhost:3306/mysql",
   },
 })
 
@@ -29,17 +33,17 @@ if not has_dadbod then
 end
 
 -- Test 2: Test connection
-print("\nTest 2: Test connection")
-local test_conn = "sqlserver://localhost/vim_dadbod_test"
+print("\nTest 2: Test connection to SQL Server")
+local test_conn = "sqlserver://.\\SQLEXPRESS/master"
 local success, err = Connection.test(test_conn)
 if success then
   print("  ✓ Connection test successful")
 else
   print(string.format("  ✗ Connection test failed: %s", err))
   print("\n  Make sure you have:")
-  print("    1. SQL Server running")
-  print("    2. A database named 'vim_dadbod_test'")
-  print("    3. Proper authentication configured")
+  print("    1. SQL Server Express running (SQLEXPRESS instance)")
+  print("    2. Proper authentication configured (Windows Authentication)")
+  print("    3. vim-dadbod installed and working")
   return
 end
 
@@ -60,7 +64,7 @@ end
 
 -- Test 4: Connect via ServerClass
 print("\nTest 4: Connect via ServerClass")
-local server = Cache.find_server("test_server")
+local server = Cache.find_server("test_sqlserver")
 if server then
   print(string.format("  Found server: %s", server.name))
 

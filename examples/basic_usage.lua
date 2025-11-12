@@ -7,16 +7,15 @@ local ssns = require('ssns')
 -- Setup with configuration
 ssns.setup({
   connections = {
-    -- SQL Server examples
-    local_dev = "sqlserver://localhost/vim_dadbod_test",
-    local_express = "sqlserver://localhost\\SQLEXPRESS/TestDB",
-    remote_server = "sqlserver://user:password@192.168.1.100/ProductionDB",
+    -- SQL Server local instance
+    local_sqlserver = "sqlserver://.\\SQLEXPRESS/master",
 
-    -- PostgreSQL example (for future)
-    -- postgres_dev = "postgres://localhost:5432/mydb",
+    -- MySQL local instance
+    local_mysql = "mysql://root:password@localhost:3306/mysql",
 
-    -- MySQL example (for future)
-    -- mysql_dev = "mysql://localhost:3306/mydb",
+    -- Additional examples:
+    -- sqlserver_other_db = "sqlserver://.\\SQLEXPRESS/YourDatabaseName",
+    -- mysql_other_db = "mysql://root:password@localhost:3306/your_db_name",
   },
 
   ui = {
@@ -46,7 +45,7 @@ end
 
 -- Example 2: Connect to a server and load databases
 print("\n=== Example 2: Connect and Load Databases ===")
-local server = Cache.find_server("local_dev")
+local server = Cache.find_server("local_sqlserver")
 if server then
   print(string.format("Found server: %s", server.name))
 
@@ -66,12 +65,12 @@ if server then
     print(string.format("  ✗ Connection failed: %s", err))
   end
 else
-  print("Server 'local_dev' not found")
+  print("Server 'local_sqlserver' not found")
 end
 
 -- Example 3: Navigate the hierarchy
 print("\n=== Example 3: Navigate Hierarchy ===")
-local db = Cache.find_database("local_dev", "vim_dadbod_test")
+local db = Cache.find_database("local_sqlserver", "master")
 if db then
   print(string.format("Found database: %s", db.name))
 
@@ -96,7 +95,7 @@ end
 
 -- Example 4: Create a server programmatically
 print("\n=== Example 4: Create Server Programmatically ===")
-local new_server, err = Factory.create_server("Test Server", "sqlserver://localhost/TestDB")
+local new_server, err = Factory.create_server("Test Server", "sqlserver://.\\SQLEXPRESS/tempdb")
 if new_server then
   print(string.format("Created server: %s (%s)", new_server.name, new_server:get_db_type()))
 
@@ -109,7 +108,8 @@ end
 
 -- Example 5: Generate SQL for a table
 print("\n=== Example 5: Generate SQL ===")
-local table = Cache.find_table("local_dev", "vim_dadbod_test", "dbo", "Employees")
+-- Note: Replace with actual table name from your database
+local table = Cache.find_table("local_sqlserver", "master", "dbo", "spt_values")
 if table then
   print(string.format("Found table: %s", table.name))
 
@@ -143,7 +143,7 @@ print(string.format("Connected Databases: %d", stats.connected_databases))
 
 -- Example 7: Find by path
 print("\n=== Example 7: Find by Path ===")
-local obj = Cache.find_by_path({ "local_dev", "vim_dadbod_test", "dbo", "Employees" })
+local obj = Cache.find_by_path({ "local_sqlserver", "master", "dbo", "spt_values" })
 if obj then
   print(string.format("Found: %s", obj.name))
   print(string.format("Full path: %s", obj:get_full_path()))
@@ -163,7 +163,8 @@ end
 -- Example 9: Validate connection string
 print("\n=== Example 9: Validate Connection String ===")
 local test_strings = {
-  "sqlserver://localhost/TestDB",
+  "sqlserver://.\\SQLEXPRESS/master",
+  "mysql://root:password@localhost:3306/mysql",
   "postgres://localhost:5432/mydb",
   "invalid://connection",
   "",
