@@ -147,10 +147,10 @@ function ViewClass:load_columns()
   -- Parse results
   local columns = adapter:parse_columns(results)
 
-  -- Create column objects
+  -- Create column objects (don't set parent to avoid adding to view's children)
   self.columns = {}
   for _, col_data in ipairs(columns) do
-    local col_obj = adapter:create_column(self, col_data)
+    local col_obj = adapter:create_column(nil, col_data)
     table.insert(self.columns, col_obj)
   end
 

@@ -217,10 +217,10 @@ function TableClass:load_columns()
   -- Parse results
   local columns = adapter:parse_columns(results)
 
-  -- Create column objects
+  -- Create column objects (don't set parent to avoid adding to table's children)
   self.columns = {}
   for _, col_data in ipairs(columns) do
-    local col_obj = adapter:create_column(self, col_data)
+    local col_obj = adapter:create_column(nil, col_data)
     table.insert(self.columns, col_obj)
   end
 
@@ -268,7 +268,7 @@ function TableClass:load_indexes()
   -- Parse results
   local indexes = adapter:parse_indexes(results)
 
-  -- Create index objects
+  -- Create index objects (don't set parent to avoid adding to table's children)
   self.indexes = {}
   for _, idx_data in ipairs(indexes) do
     local IndexClass = require('ssns.classes.index')
@@ -278,7 +278,7 @@ function TableClass:load_indexes()
       is_unique = idx_data.is_unique,
       is_primary = idx_data.is_primary,
       columns = idx_data.columns,
-      parent = self,
+      parent = nil,
     })
     table.insert(self.indexes, idx_obj)
   end
@@ -327,7 +327,7 @@ function TableClass:load_constraints()
   -- Parse results
   local constraints = adapter:parse_constraints(results)
 
-  -- Create constraint objects
+  -- Create constraint objects (don't set parent to avoid adding to table's children)
   self.constraints = {}
   for _, constraint_data in ipairs(constraints) do
     local ConstraintClass = require('ssns.classes.constraint')
@@ -338,7 +338,7 @@ function TableClass:load_constraints()
       referenced_table = constraint_data.referenced_table,
       referenced_schema = constraint_data.referenced_schema,
       referenced_columns = constraint_data.referenced_columns,
-      parent = self,
+      parent = nil,
     })
     table.insert(self.constraints, constraint_obj)
   end

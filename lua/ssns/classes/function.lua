@@ -149,7 +149,7 @@ function FunctionClass:load_parameters()
   -- Parse results
   local parameters = adapter:parse_parameters(results)
 
-  -- Create parameter objects
+  -- Create parameter objects (don't set parent to avoid adding to function's children)
   self.parameters = {}
   for _, param_data in ipairs(parameters) do
     local ParameterClass = require('ssns.classes.parameter')
@@ -161,7 +161,7 @@ function FunctionClass:load_parameters()
       max_length = param_data.max_length,
       precision = param_data.precision,
       scale = param_data.scale,
-      parent = self,
+      parent = nil,
     })
     table.insert(self.parameters, param_obj)
   end

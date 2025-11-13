@@ -308,7 +308,7 @@ WHERE seq.is_ms_shipped = 0
 ]], database_name, where_clause)
 end
 
----Get query to list all columns in a table
+---Get query to list all columns in a table or view
 ---@param database_name string
 ---@param schema_name string?
 ---@param table_name string
@@ -330,9 +330,10 @@ SELECT
   c.column_id AS ordinal_position
 FROM sys.columns c
 INNER JOIN sys.types t ON c.user_type_id = t.user_type_id
-INNER JOIN sys.tables tb ON c.object_id = tb.object_id
-INNER JOIN sys.schemas s ON tb.schema_id = s.schema_id
-WHERE tb.name = '%s'
+INNER JOIN sys.objects o ON c.object_id = o.object_id
+INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
+WHERE o.name = '%s'
+  AND o.type IN ('U', 'V')  -- U = User Table, V = View
   %s
 ORDER BY c.column_id;
 ]], database_name, table_name, schema_filter)
@@ -413,21 +414,28 @@ function SqlServerAdapter:get_parameters_query(database_name, schema_name, routi
   return string.format([[
 USE [%s];
 SELECT
-  p.name AS parameter_name,
+  CASE
+    WHEN p.parameter_id = 0 THEN 'RETURNS'
+    ELSE p.name
+  END AS parameter_name,
   t.name AS data_type,
   p.max_length,
   p.precision,
   p.scale,
   p.is_output,
   p.has_default_value,
-  p.parameter_id AS ordinal_position
+  p.parameter_id AS ordinal_position,
+  CASE
+    WHEN p.parameter_id = 0 THEN 1  -- Return value sorts last
+    ELSE 0
+  END AS is_return_value
 FROM sys.parameters p
 INNER JOIN sys.types t ON p.user_type_id = t.user_type_id
 INNER JOIN sys.objects o ON p.object_id = o.object_id
 INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
 WHERE o.name = '%s'
   %s
-ORDER BY p.parameter_id;
+ORDER BY is_return_value, p.parameter_id;
 ]], database_name, routine_name, schema_filter)
 end
 

@@ -217,13 +217,17 @@ function UiTree.render_object(obj, lines, indent_level)
   UiTree.object_map[obj] = #lines
 
   -- If expanded, render children
-  if obj.ui_state.expanded and obj:has_children() then
+  if obj.ui_state.expanded then
     -- Check if this is a structural group that needs alignment
     if obj.object_type == "column_group" or obj.object_type == "index_group" or
        obj.object_type == "key_group" or obj.object_type == "parameter_group" then
+      -- Load the group if not loaded (this populates children)
+      if not obj.is_loaded and obj.load then
+        obj:load()
+      end
       UiTree.render_aligned_group(obj, lines, indent_level + 1)
-    else
-      -- Regular children rendering
+    elseif obj:has_children() then
+      -- Regular children rendering (only if has children)
       for _, child in ipairs(obj:get_children()) do
         UiTree.render_object(child, lines, indent_level + 1)
       end
@@ -240,6 +244,12 @@ function UiTree.render_aligned_group(group, lines, indent_level)
   local children = group:get_children()
 
   if #children == 0 then
+    -- Show "(No <type>)" message for empty groups
+    -- Keep plural form (Columns, Indexes, Keys, Parameters)
+    local message = string.format("(No %s)", group.name)
+    local line = indent .. "  " .. message
+    table.insert(lines, line)
+    -- Don't map to any object for empty message
     return
   end
 
@@ -273,7 +283,8 @@ function UiTree.render_aligned_group(group, lines, indent_level)
       table.insert(parts, padded)
     end
 
-    local line = indent .. table.concat(parts, " | ")
+    -- Add extra spacing to align with action nodes (which have "  " prefix for no arrow)
+    local line = indent .. "  " .. table.concat(parts, " | ")
     table.insert(lines, line)
 
     -- Map line to the original child object
@@ -341,9 +352,19 @@ function UiTree.format_detail_row(obj, group_type)
   elseif group_type == "parameter_group" then
     -- Format: ParameterName | DataType | Mode
     local parts = {}
-    table.insert(parts, obj.parameter_name or obj.name)
-    table.insert(parts, obj.data_type or "")
-    table.insert(parts, obj.mode or "IN")
+    local param_name = obj.parameter_name or obj.name or ""
+    table.insert(parts, param_name)
+
+    -- Get full type with length/precision
+    local data_type = obj.get_full_type and obj:get_full_type() or (obj.data_type or "")
+    table.insert(parts, data_type)
+
+    -- Check if this is a return value
+    if param_name == "RETURNS" then
+      table.insert(parts, "RETURN")
+    else
+      table.insert(parts, obj.mode or "IN")
+    end
 
     return parts
   end
