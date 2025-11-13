@@ -17,6 +17,7 @@ function DbClass.new(opts)
     parent = opts.parent,
   }), DbClass)
 
+  self.object_type = "database"
   self.db_name = opts.name
   self.schemas = nil
   self.is_connected = false
@@ -218,7 +219,10 @@ function DbClass:load_all_tables()
 
   local tables = {}
   for _, table_data in ipairs(table_data_list) do
-    local table_obj = adapter:create_table(self, table_data)
+    -- Pass nil as parent to avoid auto-adding to database.children
+    local table_obj = adapter:create_table(nil, table_data)
+    -- Set parent manually for hierarchy navigation (without adding to children)
+    table_obj.parent = self
     table.insert(tables, table_obj)
   end
 
@@ -240,7 +244,8 @@ function DbClass:load_all_views()
 
   local views = {}
   for _, view_data in ipairs(view_data_list) do
-    local view_obj = adapter:create_view(self, view_data)
+    local view_obj = adapter:create_view(nil, view_data)
+    view_obj.parent = self
     table.insert(views, view_obj)
   end
 
@@ -262,7 +267,8 @@ function DbClass:load_all_procedures()
 
   local procedures = {}
   for _, proc_data in ipairs(proc_data_list) do
-    local proc_obj = adapter:create_procedure(self, proc_data)
+    local proc_obj = adapter:create_procedure(nil, proc_data)
+    proc_obj.parent = self
     table.insert(procedures, proc_obj)
   end
 
@@ -284,7 +290,8 @@ function DbClass:load_all_functions()
 
   local functions = {}
   for _, func_data in ipairs(func_data_list) do
-    local func_obj = adapter:create_function(self, func_data)
+    local func_obj = adapter:create_function(nil, func_data)
+    func_obj.parent = self
     table.insert(functions, func_obj)
   end
 

@@ -187,6 +187,7 @@ function UiTree.render_object(obj, lines, indent_level)
   -- Groups are expandable
   -- Or if already loaded and has children
   local has_children = obj:has_children()
+    or obj.object_type == "database"
     or obj.object_type == "table"
     or obj.object_type == "view"
     or obj.object_type == "procedure"
