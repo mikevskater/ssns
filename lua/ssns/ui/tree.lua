@@ -176,9 +176,18 @@ function UiTree.render_object(obj, lines, indent_level)
   end
 
   -- Regular objects with potential children
-  local has_children = obj:has_children() or obj.object_type == "column_group"
+  -- Tables, views, procedures, functions always have children (action groups)
+  -- Groups are expandable
+  -- Or if already loaded and has children
+  local has_children = obj:has_children()
+    or obj.object_type == "table"
+    or obj.object_type == "view"
+    or obj.object_type == "procedure"
+    or obj.object_type == "function"
+    or obj.object_type == "column_group"
     or obj.object_type == "index_group"
     or obj.object_type == "key_group"
+    or obj.object_type == "parameter_group"
 
   local icon = ""
   if has_children then
