@@ -34,6 +34,15 @@ function ProcedureClass.new(opts)
   return self
 end
 
+---Get display name with schema prefix (e.g., [dbo].[ProcedureName])
+---@return string display_name
+function ProcedureClass:get_display_name()
+  if self.schema_name then
+    return string.format("[%s].[%s]", self.schema_name, self.procedure_name)
+  end
+  return self.procedure_name
+end
+
 ---Load procedure children (parameters and actions) - lazy loading
 ---@return boolean success
 function ProcedureClass:load()

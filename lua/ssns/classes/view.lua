@@ -34,6 +34,15 @@ function ViewClass.new(opts)
   return self
 end
 
+---Get display name with schema prefix (e.g., [dbo].[ViewName])
+---@return string display_name
+function ViewClass:get_display_name()
+  if self.schema_name then
+    return string.format("[%s].[%s]", self.schema_name, self.view_name)
+  end
+  return self.view_name
+end
+
 ---Load view children (columns and actions) - lazy loading
 ---@return boolean success
 function ViewClass:load()

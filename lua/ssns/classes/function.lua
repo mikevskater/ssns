@@ -36,6 +36,15 @@ function FunctionClass.new(opts)
   return self
 end
 
+---Get display name with schema prefix (e.g., [dbo].[FunctionName])
+---@return string display_name
+function FunctionClass:get_display_name()
+  if self.schema_name then
+    return string.format("[%s].[%s]", self.schema_name, self.function_name)
+  end
+  return self.function_name
+end
+
 ---Load function children (parameters and actions) - lazy loading
 ---@return boolean success
 function FunctionClass:load()
