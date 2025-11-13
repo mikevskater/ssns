@@ -123,7 +123,9 @@ function ProcedureClass:load_parameters()
   end
 
   local adapter = self:get_adapter()
-  local db = self.parent.parent
+
+  -- Navigate up: Procedure -> Database (no schemas in new structure)
+  local db = self.parent
 
   -- Get parameters query from adapter
   local query = adapter:get_parameters_query(db.db_name, self.schema_name, self.procedure_name, "PROCEDURE")
@@ -173,7 +175,9 @@ function ProcedureClass:load_definition()
   end
 
   local adapter = self:get_adapter()
-  local db = self.parent.parent
+
+  -- Navigate up: Procedure -> Database (no schemas in new structure)
+  local db = self.parent
 
   -- Get definition query from adapter
   local query = adapter:get_definition_query(db.db_name, self.schema_name, self.procedure_name, "PROCEDURE")

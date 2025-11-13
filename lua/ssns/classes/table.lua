@@ -166,31 +166,22 @@ function TableClass:load_columns()
 
   local adapter = self:get_adapter()
 
-  -- Navigate up: Table -> Schema -> Database
-  local schema = self.parent
-  local db = schema and schema.parent
+  -- Navigate up: Table -> Database (no schemas in new structure)
+  local db = self.parent
 
-  -- Debug parent hierarchy
-  if not schema then
-    vim.notify(string.format("SSNS: Table %s has no parent (schema)", self.table_name), vim.log.levels.ERROR)
-    self.columns = {}
-    self.columns_loaded = true
-    return self.columns
-  end
-
+  -- Validate we have a database
   if not db then
-    vim.notify(string.format("SSNS: Schema %s has no parent (database)", schema.name or "unknown"), vim.log.levels.ERROR)
+    vim.notify(string.format("SSNS: Table %s has no parent (database)", self.table_name), vim.log.levels.ERROR)
     self.columns = {}
     self.columns_loaded = true
     return self.columns
   end
 
   if not db.db_name then
-    vim.notify(string.format("SSNS: Parent of schema '%s' is '%s' (type: %s, has db_name: %s)",
-      schema.name or "unknown",
+    vim.notify(string.format("SSNS: Table %s parent '%s' is not a database (type: %s)",
+      self.table_name,
       db.name or "unknown",
-      db.object_type or "unknown",
-      tostring(db.db_name ~= nil)), vim.log.levels.ERROR)
+      db.object_type or "unknown"), vim.log.levels.ERROR)
     self.columns = {}
     self.columns_loaded = true
     return self.columns
@@ -226,12 +217,22 @@ function TableClass:load_indexes()
 
   local adapter = self:get_adapter()
 
-  -- Navigate up: Table -> Schema -> Database
-  local schema = self.parent
-  local db = schema and schema.parent
+  -- Navigate up: Table -> Database (no schemas in new structure)
+  local db = self.parent
 
-  if not db or not db.db_name then
-    vim.notify(string.format("SSNS: Cannot find database for table %s", self.table_name), vim.log.levels.ERROR)
+  -- Validate we have a database
+  if not db then
+    vim.notify(string.format("SSNS: Table %s has no parent (database)", self.table_name), vim.log.levels.ERROR)
+    self.indexes = {}
+    self.indexes_loaded = true
+    return self.indexes
+  end
+
+  if not db.db_name then
+    vim.notify(string.format("SSNS: Table %s parent '%s' is not a database (type: %s)",
+      self.table_name,
+      db.name or "unknown",
+      db.object_type or "unknown"), vim.log.levels.ERROR)
     self.indexes = {}
     self.indexes_loaded = true
     return self.indexes
@@ -275,12 +276,22 @@ function TableClass:load_constraints()
 
   local adapter = self:get_adapter()
 
-  -- Navigate up: Table -> Schema -> Database
-  local schema = self.parent
-  local db = schema and schema.parent
+  -- Navigate up: Table -> Database (no schemas in new structure)
+  local db = self.parent
 
-  if not db or not db.db_name then
-    vim.notify(string.format("SSNS: Cannot find database for table %s", self.table_name), vim.log.levels.ERROR)
+  -- Validate we have a database
+  if not db then
+    vim.notify(string.format("SSNS: Table %s has no parent (database)", self.table_name), vim.log.levels.ERROR)
+    self.constraints = {}
+    self.constraints_loaded = true
+    return self.constraints
+  end
+
+  if not db.db_name then
+    vim.notify(string.format("SSNS: Table %s parent '%s' is not a database (type: %s)",
+      self.table_name,
+      db.name or "unknown",
+      db.object_type or "unknown"), vim.log.levels.ERROR)
     self.constraints = {}
     self.constraints_loaded = true
     return self.constraints

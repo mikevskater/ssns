@@ -123,7 +123,9 @@ function ViewClass:load_columns()
   end
 
   local adapter = self:get_adapter()
-  local db = self.parent.parent
+
+  -- Navigate up: View -> Database (no schemas in new structure)
+  local db = self.parent
 
   -- Views use the same columns query as tables
   local query = adapter:get_columns_query(db.db_name, self.schema_name, self.view_name)
@@ -178,7 +180,9 @@ function ViewClass:load_definition()
   end
 
   local adapter = self:get_adapter()
-  local db = self.parent.parent
+
+  -- Navigate up: View -> Database (no schemas in new structure)
+  local db = self.parent
 
   -- Get definition query from adapter
   local query = adapter:get_definition_query(db.db_name, self.schema_name, self.view_name, "VIEW")

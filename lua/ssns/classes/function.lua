@@ -125,7 +125,9 @@ function FunctionClass:load_parameters()
   end
 
   local adapter = self:get_adapter()
-  local db = self.parent.parent
+
+  -- Navigate up: Function -> Database (no schemas in new structure)
+  local db = self.parent
 
   -- Get parameters query from adapter
   local query = adapter:get_parameters_query(db.db_name, self.schema_name, self.function_name, "FUNCTION")
@@ -175,7 +177,9 @@ function FunctionClass:load_definition()
   end
 
   local adapter = self:get_adapter()
-  local db = self.parent.parent
+
+  -- Navigate up: Function -> Database (no schemas in new structure)
+  local db = self.parent
 
   -- Get definition query from adapter
   local query = adapter:get_definition_query(db.db_name, self.schema_name, self.function_name, "FUNCTION")
