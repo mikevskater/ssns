@@ -218,10 +218,137 @@ function UiTree.render_object(obj, lines, indent_level)
 
   -- If expanded, render children
   if obj.ui_state.expanded and obj:has_children() then
-    for _, child in ipairs(obj:get_children()) do
-      UiTree.render_object(child, lines, indent_level + 1)
+    -- Check if this is a structural group that needs alignment
+    if obj.object_type == "column_group" or obj.object_type == "index_group" or
+       obj.object_type == "key_group" or obj.object_type == "parameter_group" then
+      UiTree.render_aligned_group(obj, lines, indent_level + 1)
+    else
+      -- Regular children rendering
+      for _, child in ipairs(obj:get_children()) do
+        UiTree.render_object(child, lines, indent_level + 1)
+      end
     end
   end
+end
+
+---Render a structural group with aligned columns
+---@param group BaseDbObject
+---@param lines string[]
+---@param indent_level number
+function UiTree.render_aligned_group(group, lines, indent_level)
+  local indent = string.rep("  ", indent_level)
+  local children = group:get_children()
+
+  if #children == 0 then
+    return
+  end
+
+  -- First pass: Calculate max widths for each field
+  local max_widths = {}
+  local formatted_rows = {}
+
+  for _, child in ipairs(children) do
+    local row = UiTree.format_detail_row(child, group.object_type)
+    if row then
+      table.insert(formatted_rows, row)
+
+      -- Update max widths
+      for idx, value in ipairs(row) do
+        if not max_widths[idx] then
+          max_widths[idx] = 0
+        end
+        if #value > max_widths[idx] then
+          max_widths[idx] = #value
+        end
+      end
+    end
+  end
+
+  -- Second pass: Render with aligned columns
+  for i, row in ipairs(formatted_rows) do
+    local parts = {}
+    for idx, value in ipairs(row) do
+      local width = max_widths[idx] or #value
+      local padded = value .. string.rep(" ", width - #value)
+      table.insert(parts, padded)
+    end
+
+    local line = indent .. table.concat(parts, " | ")
+    table.insert(lines, line)
+
+    -- Map line to the original child object
+    UiTree.line_map[#lines] = children[i]
+    UiTree.object_map[children[i]] = #lines
+  end
+end
+
+---Format a detail row for alignment
+---@param obj BaseDbObject
+---@param group_type string
+---@return string[]?
+function UiTree.format_detail_row(obj, group_type)
+  if group_type == "column_group" then
+    -- Format: ColumnName | DataType | Nullable
+    local parts = {}
+    table.insert(parts, obj.column_name or obj.name)
+
+    -- Get full type with length/precision
+    local data_type = obj.get_full_type and obj:get_full_type() or (obj.data_type or "")
+    table.insert(parts, data_type)
+
+    table.insert(parts, obj.nullable and "NULL" or "NOT NULL")
+
+    return parts
+
+  elseif group_type == "index_group" then
+    -- Format: IndexName | Type | Columns
+    local parts = {}
+    table.insert(parts, obj.index_name or obj.name)
+
+    local index_type = ""
+    if obj.is_primary then
+      index_type = "PRIMARY KEY"
+    elseif obj.is_unique then
+      index_type = "UNIQUE"
+    else
+      index_type = obj.index_type or "INDEX"
+    end
+    table.insert(parts, index_type)
+
+    -- Columns (if available)
+    if obj.columns and #obj.columns > 0 then
+      table.insert(parts, "(" .. table.concat(obj.columns, ", ") .. ")")
+    else
+      table.insert(parts, "()")
+    end
+
+    return parts
+
+  elseif group_type == "key_group" then
+    -- Format: ConstraintName | Type | Columns
+    local parts = {}
+    table.insert(parts, obj.constraint_name or obj.name)
+    table.insert(parts, obj.constraint_type or "CONSTRAINT")
+
+    if obj.columns and #obj.columns > 0 then
+      table.insert(parts, "(" .. table.concat(obj.columns, ", ") .. ")")
+    else
+      table.insert(parts, "()")
+    end
+
+    return parts
+
+  elseif group_type == "parameter_group" then
+    -- Format: ParameterName | DataType | Mode
+    local parts = {}
+    table.insert(parts, obj.parameter_name or obj.name)
+    table.insert(parts, obj.data_type or "")
+    table.insert(parts, obj.mode or "IN")
+
+    return parts
+  end
+
+  return nil
 end
 
 ---Toggle node expansion at current cursor
@@ -294,8 +421,8 @@ function UiTree.execute_action(action)
       vim.notify(string.format("Generated SQL:\n%s", sql), vim.log.levels.INFO)
       -- TODO: Open in query buffer (Phase 6)
     end
-  elseif action.action_type == "definition" then
-    -- Show definition
+  elseif action.action_type == "alter" then
+    -- Show definition (ALTER displays the object definition)
     if parent.get_definition then
       local definition = parent:get_definition()
       if definition then
@@ -305,6 +432,10 @@ function UiTree.execute_action(action)
         vim.notify("No definition available", vim.log.levels.WARN)
       end
     end
+  elseif action.action_type == "dependencies" then
+    -- Show dependencies
+    vim.notify("DEPENDENCIES action not yet implemented (Phase 6)", vim.log.levels.INFO)
+    -- TODO: Query and display dependencies (Phase 6)
   end
 end
 
