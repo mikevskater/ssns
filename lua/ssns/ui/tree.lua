@@ -559,7 +559,7 @@ function UiTree.execute_action(action)
     -- Generate SELECT statement
     if parent.generate_select then
       local sql = parent:generate_select(100)
-      Query.create_query_buffer(server, database, sql)
+      Query.create_query_buffer(server, database, sql, parent.name)
     end
   elseif action.action_type == "drop" then
     -- Generate DROP statement (with confirmation)
@@ -571,21 +571,21 @@ function UiTree.execute_action(action)
         2
       )
       if confirm == 1 then
-        Query.create_query_buffer(server, database, sql)
+        Query.create_query_buffer(server, database, sql, parent.name)
       end
     end
   elseif action.action_type == "exec" then
     -- Generate EXEC statement
     if parent.generate_exec then
       local sql = parent:generate_exec()
-      Query.create_query_buffer(server, database, sql)
+      Query.create_query_buffer(server, database, sql, parent.name)
     end
   elseif action.action_type == "alter" then
     -- Show definition (ALTER displays the object definition)
     if parent.get_definition then
       local definition = parent:get_definition()
       if definition then
-        Query.create_query_buffer(server, database, definition)
+        Query.create_query_buffer(server, database, definition, parent.name)
       else
         vim.notify("No definition available", vim.log.levels.WARN)
       end
@@ -597,31 +597,31 @@ function UiTree.execute_action(action)
     -- Generate COUNT query
     if parent.generate_count then
       local sql = parent:generate_count()
-      Query.create_query_buffer(server, database, sql)
+      Query.create_query_buffer(server, database, sql, parent.name)
     end
   elseif action.action_type == "describe" then
     -- Generate DESCRIBE query (sp_help for SQL Server)
     if parent.generate_describe then
       local sql = parent:generate_describe()
-      Query.create_query_buffer(server, database, sql)
+      Query.create_query_buffer(server, database, sql, parent.name)
     end
   elseif action.action_type == "insert" then
     -- Generate INSERT template
     if parent.generate_insert then
       local sql = parent:generate_insert()
-      Query.create_query_buffer(server, database, sql)
+      Query.create_query_buffer(server, database, sql, parent.name)
     end
   elseif action.action_type == "update" then
     -- Generate UPDATE template
     if parent.generate_update then
       local sql = parent:generate_update()
-      Query.create_query_buffer(server, database, sql)
+      Query.create_query_buffer(server, database, sql, parent.name)
     end
   elseif action.action_type == "delete" then
     -- Generate DELETE template
     if parent.generate_delete then
       local sql = parent:generate_delete()
-      Query.create_query_buffer(server, database, sql)
+      Query.create_query_buffer(server, database, sql, parent.name)
     end
   end
 end

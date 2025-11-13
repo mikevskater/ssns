@@ -88,6 +88,19 @@ function BaseDbObject:get_server()
   return current
 end
 
+---Get the database object by traversing up the hierarchy
+---@return BaseDbObject? database object or nil if not found
+function BaseDbObject:get_database()
+  local current = self
+  while current do
+    if current.object_type == "database" then
+      return current
+    end
+    current = current.parent
+  end
+  return nil
+end
+
 ---Get the adapter for this object's database type
 ---Traverses up to the server and returns its adapter
 ---@return BaseAdapter

@@ -6,28 +6,117 @@ local UiQuery = {}
 ---@type table<number, {server: ServerClass, database: DbClass?}>
 UiQuery.query_buffers = {}
 
+---Track buffer counter for unique names
+---@type table<string, number>
+UiQuery.buffer_counter = {}
+
+---Generate a unique buffer name
+---@param object_name string? The object name (table, view, etc.)
+---@param server ServerClass? The server
+---@param database DbClass? The database
+---@return string buffer_name
+function UiQuery.generate_buffer_name(object_name, server, database)
+  local base_name = object_name or "query"
+
+  -- Initialize counter for this base name if needed
+  if not UiQuery.buffer_counter[base_name] then
+    UiQuery.buffer_counter[base_name] = 0
+  end
+
+  -- Increment counter
+  UiQuery.buffer_counter[base_name] = UiQuery.buffer_counter[base_name] + 1
+  local count = UiQuery.buffer_counter[base_name]
+
+  -- Generate unique name
+  local buf_name = string.format("[%s-%d]", base_name, count)
+
+  return buf_name
+end
+
+---Prepend USE statement for SQL Server databases
+---@param sql string The SQL to prepend USE statement to
+---@param server ServerClass? The server
+---@param database DbClass? The database
+---@return string sql SQL with USE statement prepended if applicable
+function UiQuery.prepend_use_statement(sql, server, database)
+  -- Only add USE statement for SQL Server and if database is specified
+  if not server or not database then
+    return sql
+  end
+
+  local adapter = server:get_adapter()
+  if not adapter or adapter.db_type ~= "sqlserver" then
+    return sql
+  end
+
+  -- Prepend USE [database];
+  return string.format("USE [%s];\n\n%s", database.db_name, sql)
+end
+
+---Find or create a window for query buffers (not the SSNS tree window)
+---@return number winid
+function UiQuery.focus_query_window()
+  local ssns_buffer = require('ssns.ui.buffer')
+
+  -- Look for an existing query buffer window (not SSNS tree, not special buffers)
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    local bufnr = vim.api.nvim_win_get_buf(win)
+    local buftype = vim.api.nvim_buf_get_option(bufnr, 'buftype')
+    local filetype = vim.api.nvim_buf_get_option(bufnr, 'filetype')
+    local modifiable = vim.api.nvim_buf_get_option(bufnr, 'modifiable')
+
+    -- Skip SSNS tree window
+    if bufnr == ssns_buffer.bufnr then
+      goto continue
+    end
+
+    -- Skip special buffers (nofile, help, etc.)
+    if buftype ~= '' and buftype ~= 'acwrite' then
+      goto continue
+    end
+
+    -- Found a suitable window (normal buffer or query buffer)
+    if modifiable then
+      vim.api.nvim_set_current_win(win)
+      return win
+    end
+
+    ::continue::
+  end
+
+  -- No suitable window found, create new one
+  -- Determine position based on SSNS tree position
+  local Config = require('ssns.config')
+  local ui_config = Config.get_ui()
+  local win_pos = ui_config.position == 'left' and 'botright' or 'topleft'
+
+  vim.cmd(win_pos .. ' new')
+  return vim.api.nvim_get_current_win()
+end
+
 ---Create a new query buffer with optional SQL
 ---@param server ServerClass? The server to associate with this query
 ---@param database DbClass? The database to associate with this query
 ---@param sql string? Optional SQL to populate the buffer
+---@param object_name string? The object name for the buffer title
 ---@return number bufnr The buffer number
-function UiQuery.create_query_buffer(server, database, sql)
+function UiQuery.create_query_buffer(server, database, sql, object_name)
+  -- Focus or create query window
+  UiQuery.focus_query_window()
+
   -- Create a new buffer
   local bufnr = vim.api.nvim_create_buf(true, false)
 
-  -- Set buffer name
-  local buf_name = "SSNS Query"
-  if server then
-    buf_name = buf_name .. " - " .. server.name
-    if database then
-      buf_name = buf_name .. "." .. database.db_name
-    end
-  end
+  -- Generate unique buffer name
+  local buf_name = UiQuery.generate_buffer_name(object_name, server, database)
   vim.api.nvim_buf_set_name(bufnr, buf_name)
 
   -- Set filetype to sql for syntax highlighting
   vim.api.nvim_buf_set_option(bufnr, 'filetype', 'sql')
   vim.api.nvim_buf_set_option(bufnr, 'buftype', '')
+
+  -- Enable line numbers
+  vim.api.nvim_buf_set_option(bufnr, 'buflisted', true)
 
   -- Track this buffer
   UiQuery.query_buffers[bufnr] = {
@@ -38,18 +127,22 @@ function UiQuery.create_query_buffer(server, database, sql)
   -- Set buffer-local keymaps
   UiQuery.setup_query_keymaps(bufnr)
 
-  -- If SQL provided, set it in the buffer
+  -- If SQL provided, prepend USE statement and set it in the buffer
   if sql then
-    local lines = vim.split(sql, "\n")
+    local final_sql = UiQuery.prepend_use_statement(sql, server, database)
+    local lines = vim.split(final_sql, "\n")
     vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
   end
 
-  -- Open the buffer in a new window
-  vim.cmd('vsplit')
+  -- Switch to the new buffer in the current window
   vim.api.nvim_win_set_buf(0, bufnr)
 
   -- Set modifiable
   vim.api.nvim_buf_set_option(bufnr, 'modifiable', true)
+
+  -- Enable line numbers in this window
+  vim.api.nvim_win_set_option(0, 'number', true)
+  vim.api.nvim_win_set_option(0, 'relativenumber', false)
 
   return bufnr
 end
