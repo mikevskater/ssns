@@ -20,6 +20,7 @@ function ViewClass.new(opts)
     parent = opts.parent,
   }), ViewClass)
 
+  self.object_type = "view"
   self.view_name = opts.name
   self.schema_name = opts.schema_name
   self.columns = nil

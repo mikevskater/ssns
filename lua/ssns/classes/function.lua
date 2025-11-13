@@ -21,6 +21,7 @@ function FunctionClass.new(opts)
     parent = opts.parent,
   }), FunctionClass)
 
+  self.object_type = "function"
   self.function_name = opts.name
   self.schema_name = opts.schema_name
   self.function_type = opts.function_type

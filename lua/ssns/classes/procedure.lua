@@ -20,6 +20,7 @@ function ProcedureClass.new(opts)
     parent = opts.parent,
   }), ProcedureClass)
 
+  self.object_type = "procedure"
   self.procedure_name = opts.name
   self.schema_name = opts.schema_name
   self.parameters = nil

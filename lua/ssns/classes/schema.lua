@@ -203,8 +203,10 @@ function SchemaClass:create_object_groups()
     tables_group.object_type = "table_group"
 
     -- Add actual tables as children of the group
+    -- IMPORTANT: Don't change table_obj.parent - keep it as schema for hierarchy
     for _, table_obj in ipairs(self.tables) do
-      table_obj.parent = tables_group
+      -- Store reference to schema for navigation
+      table_obj.schema = self
       table.insert(tables_group.children, table_obj)
     end
 
@@ -220,8 +222,9 @@ function SchemaClass:create_object_groups()
     views_group.ui_state.icon = ""
     views_group.object_type = "view_group"
 
+    -- IMPORTANT: Don't change view_obj.parent - keep it as schema for hierarchy
     for _, view_obj in ipairs(self.views) do
-      view_obj.parent = views_group
+      view_obj.schema = self
       table.insert(views_group.children, view_obj)
     end
 
@@ -237,8 +240,9 @@ function SchemaClass:create_object_groups()
     procs_group.ui_state.icon = ""
     procs_group.object_type = "procedure_group"
 
+    -- IMPORTANT: Don't change proc_obj.parent - keep it as schema for hierarchy
     for _, proc_obj in ipairs(self.procedures) do
-      proc_obj.parent = procs_group
+      proc_obj.schema = self
       table.insert(procs_group.children, proc_obj)
     end
 
@@ -254,8 +258,9 @@ function SchemaClass:create_object_groups()
     funcs_group.ui_state.icon = ""
     funcs_group.object_type = "function_group"
 
+    -- IMPORTANT: Don't change func_obj.parent - keep it as schema for hierarchy
     for _, func_obj in ipairs(self.functions) do
-      func_obj.parent = funcs_group
+      func_obj.schema = self
       table.insert(funcs_group.children, func_obj)
     end
 
