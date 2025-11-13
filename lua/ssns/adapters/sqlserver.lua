@@ -695,6 +695,58 @@ function SqlServerAdapter:create_column(parent, row)
   })
 end
 
+---Get query to fetch object dependencies
+---@param database_name string
+---@param schema_name string
+---@param object_name string
+---@return string query
+function SqlServerAdapter:get_dependencies_query(database_name, schema_name, object_name)
+  return string.format([[
+USE [%s];
+-- Get objects that THIS object depends on (referenced objects)
+SELECT
+  'DEPENDS ON' AS dependency_type,
+  OBJECT_SCHEMA_NAME(d.referenced_id) AS schema_name,
+  OBJECT_NAME(d.referenced_id) AS object_name,
+  o.type_desc AS object_type
+FROM sys.sql_expression_dependencies d
+INNER JOIN sys.objects o ON d.referenced_id = o.object_id
+WHERE d.referencing_id = OBJECT_ID('[%s].[%s]')
+
+UNION ALL
+
+-- Get objects that depend ON this object (referencing objects)
+SELECT
+  'DEPENDED ON BY' AS dependency_type,
+  OBJECT_SCHEMA_NAME(d.referencing_id) AS schema_name,
+  OBJECT_NAME(d.referencing_id) AS object_name,
+  o.type_desc AS object_type
+FROM sys.sql_expression_dependencies d
+INNER JOIN sys.objects o ON d.referencing_id = o.object_id
+WHERE d.referenced_id = OBJECT_ID('[%s].[%s]')
+
+ORDER BY dependency_type, schema_name, object_name;
+]], database_name, schema_name, object_name, schema_name, object_name)
+end
+
+---Parse dependencies query results
+---@param results table
+---@return table dependencies Array of dependency objects
+function SqlServerAdapter:parse_dependencies(results)
+  local dependencies = {}
+
+  for _, row in ipairs(results) do
+    table.insert(dependencies, {
+      dependency_type = row[1] or row.dependency_type,
+      schema_name = row[2] or row.schema_name,
+      object_name = row[3] or row.object_name,
+      object_type = row[4] or row.object_type,
+    })
+  end
+
+  return dependencies
+end
+
 -- ============================================================================
 -- Utility Methods
 -- ============================================================================

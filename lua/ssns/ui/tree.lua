@@ -456,9 +456,123 @@ function UiTree.execute_action(action)
     end
   elseif action.action_type == "dependencies" then
     -- Show dependencies
-    vim.notify("DEPENDENCIES action not yet implemented (Phase 6)", vim.log.levels.INFO)
-    -- TODO: Query and display dependencies (Phase 6)
+    UiTree.show_dependencies(parent)
   end
+end
+
+---Show object dependencies in a floating window
+---@param obj BaseDbObject
+function UiTree.show_dependencies(obj)
+  local adapter = obj:get_adapter()
+  local server = obj:get_server()
+
+  -- Get database and schema/object names based on object type
+  local database, schema_name, object_name
+
+  if obj.object_type == "table" or obj.object_type == "view" then
+    database = obj.parent  -- Table/View -> Database
+    schema_name = obj.schema_name
+    object_name = obj.table_name or obj.view_name
+  elseif obj.object_type == "procedure" then
+    database = obj.parent  -- Procedure -> Database
+    schema_name = obj.schema_name
+    object_name = obj.procedure_name
+  elseif obj.object_type == "function" then
+    database = obj.parent  -- Function -> Database
+    schema_name = obj.schema_name
+    object_name = obj.function_name
+  else
+    vim.notify("SSNS: Dependencies not supported for this object type", vim.log.levels.WARN)
+    return
+  end
+
+  -- Get dependencies query
+  local query = adapter:get_dependencies_query(database.db_name, schema_name, object_name)
+
+  -- Execute query
+  local results, err = adapter:execute(server.connection, query)
+
+  if err then
+    vim.notify(string.format("SSNS: Failed to fetch dependencies: %s", err), vim.log.levels.ERROR)
+    return
+  end
+
+  -- Parse dependencies
+  local dependencies = adapter:parse_dependencies(results)
+
+  if #dependencies == 0 then
+    vim.notify("SSNS: No dependencies found", vim.log.levels.INFO)
+    return
+  end
+
+  -- Format dependencies for display
+  local lines = {
+    string.format("=== Dependencies for %s ===", obj.name),
+    "",
+  }
+
+  -- Group by dependency type
+  local depends_on = {}
+  local depended_on_by = {}
+
+  for _, dep in ipairs(dependencies) do
+    if dep.dependency_type == "DEPENDS ON" then
+      table.insert(depends_on, dep)
+    else
+      table.insert(depended_on_by, dep)
+    end
+  end
+
+  -- Show "DEPENDS ON" section
+  if #depends_on > 0 then
+    table.insert(lines, "This object depends on:")
+    table.insert(lines, "")
+    for _, dep in ipairs(depends_on) do
+      table.insert(lines, string.format("  [%s].[%s] (%s)", dep.schema_name, dep.object_name, dep.object_type))
+    end
+    table.insert(lines, "")
+  end
+
+  -- Show "DEPENDED ON BY" section
+  if #depended_on_by > 0 then
+    table.insert(lines, "This object is depended on by:")
+    table.insert(lines, "")
+    for _, dep in ipairs(depended_on_by) do
+      table.insert(lines, string.format("  [%s].[%s] (%s)", dep.schema_name, dep.object_name, dep.object_type))
+    end
+  end
+
+  table.insert(lines, "")
+  table.insert(lines, string.format("Total: %d dependencies", #dependencies))
+
+  -- Create floating window
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.api.nvim_buf_set_option(buf, 'modifiable', false)
+  vim.api.nvim_buf_set_option(buf, 'filetype', 'ssns-dependencies')
+
+  -- Calculate window size
+  local width = 80
+  local height = math.min(#lines + 2, 30)
+  local row = math.floor((vim.o.lines - height) / 2)
+  local col = math.floor((vim.o.columns - width) / 2)
+
+  local win = vim.api.nvim_open_win(buf, true, {
+    relative = "editor",
+    width = width,
+    height = height,
+    row = row,
+    col = col,
+    style = "minimal",
+    border = "rounded",
+    title = " Dependencies ",
+    title_pos = "center",
+  })
+
+  -- Close on any key press
+  vim.api.nvim_buf_set_keymap(buf, "n", "q", ":close<CR>", { noremap = true, silent = true })
+  vim.api.nvim_buf_set_keymap(buf, "n", "<Esc>", ":close<CR>", { noremap = true, silent = true })
+  vim.api.nvim_buf_set_keymap(buf, "n", "<CR>", ":close<CR>", { noremap = true, silent = true })
 end
 
 ---Refresh node at current cursor
