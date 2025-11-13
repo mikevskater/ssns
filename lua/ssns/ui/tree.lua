@@ -65,7 +65,13 @@ function UiTree.render_server(server, lines, line_number, indent_level)
 
   -- If expanded, render children (Databases group, etc.)
   if server.ui_state.expanded then
-    if server.is_loaded and server:has_children() then
+    if server.ui_state.error then
+      -- Show error message
+      table.insert(lines, indent .. "    ✗ Error: " .. server.ui_state.error)
+    elseif server.ui_state.loading then
+      -- Show loading indicator
+      table.insert(lines, indent .. "    ⋯ Loading...")
+    elseif server.is_loaded and server:has_children() then
       -- Render server children (Databases group, New Query, Saved Queries)
       for _, child in ipairs(server.children) do
         if child.object_type == "databases_group" then
@@ -77,8 +83,8 @@ function UiTree.render_server(server, lines, line_number, indent_level)
         end
       end
     elseif server:is_connected() and not server.is_loaded then
-      -- Show loading indicator
-      table.insert(lines, indent .. "    Loading...")
+      -- Show loading indicator (fallback if loading flag not set)
+      table.insert(lines, indent .. "    ⋯ Loading...")
     end
   end
 end
@@ -102,13 +108,19 @@ function UiTree.render_database(db, lines, indent_level)
 
   -- If expanded, render object type groups (TABLES, VIEWS, etc.)
   if db.ui_state.expanded then
-    if db.is_loaded and db:has_children() then
+    if db.ui_state.error then
+      -- Show error message
+      table.insert(lines, indent .. "    ✗ Error: " .. db.ui_state.error)
+    elseif db.ui_state.loading then
+      -- Show loading indicator
+      table.insert(lines, indent .. "    ⋯ Loading...")
+    elseif db.is_loaded and db:has_children() then
       -- Render each object type group
       for _, group in ipairs(db.children) do
         UiTree.render_object(group, lines, indent_level + 1)
       end
     else
-      table.insert(lines, indent .. "    Loading...")
+      table.insert(lines, indent .. "    ⋯ Loading...")
     end
   end
 end
@@ -219,18 +231,26 @@ function UiTree.render_object(obj, lines, indent_level)
 
   -- If expanded, render children
   if obj.ui_state.expanded then
-    -- Check if this is a structural group that needs alignment
-    if obj.object_type == "column_group" or obj.object_type == "index_group" or
-       obj.object_type == "key_group" or obj.object_type == "parameter_group" then
-      -- Load the group if not loaded (this populates children)
-      if not obj.is_loaded and obj.load then
-        obj:load()
-      end
-      UiTree.render_aligned_group(obj, lines, indent_level + 1)
-    elseif obj:has_children() then
-      -- Regular children rendering (only if has children)
-      for _, child in ipairs(obj:get_children()) do
-        UiTree.render_object(child, lines, indent_level + 1)
+    if obj.ui_state.error then
+      -- Show error message
+      table.insert(lines, indent .. "  ✗ Error: " .. obj.ui_state.error)
+    elseif obj.ui_state.loading then
+      -- Show loading indicator
+      table.insert(lines, indent .. "  ⋯ Loading...")
+    else
+      -- Check if this is a structural group that needs alignment
+      if obj.object_type == "column_group" or obj.object_type == "index_group" or
+         obj.object_type == "key_group" or obj.object_type == "parameter_group" then
+        -- Load the group if not loaded (this populates children)
+        if not obj.is_loaded and obj.load then
+          obj:load()
+        end
+        UiTree.render_aligned_group(obj, lines, indent_level + 1)
+      elseif obj:has_children() then
+        -- Regular children rendering (only if has children)
+        for _, child in ipairs(obj:get_children()) do
+          UiTree.render_object(child, lines, indent_level + 1)
+        end
       end
     end
   end
@@ -393,11 +413,50 @@ function UiTree.toggle_node()
   -- Toggle expansion
   obj:toggle_expand()
 
-  -- Re-render tree
-  UiTree.render()
+  -- If expanding and not loaded, load asynchronously
+  if obj.ui_state.expanded and not obj.is_loaded and obj.load then
+    UiTree.load_node_async(obj, line_number)
+  else
+    -- Re-render tree immediately
+    UiTree.render()
+    -- Restore cursor position
+    Buffer.set_cursor(line_number)
+  end
+end
 
-  -- Restore cursor position
+---Load a node asynchronously
+---@param obj BaseDbObject
+---@param line_number number
+function UiTree.load_node_async(obj, line_number)
+  local Buffer = require('ssns.ui.buffer')
+
+  -- Set loading state
+  obj.ui_state.loading = true
+  obj.ui_state.error = nil
+
+  -- Render with loading indicator
+  UiTree.render()
   Buffer.set_cursor(line_number)
+
+  -- Load asynchronously using vim.schedule
+  vim.schedule(function()
+    local success, err = pcall(function()
+      obj:load()
+    end)
+
+    -- Clear loading state
+    obj.ui_state.loading = false
+
+    if not success then
+      -- Set error state
+      obj.ui_state.error = tostring(err)
+      vim.notify(string.format("SSNS: Failed to load %s: %s", obj.name, err), vim.log.levels.ERROR)
+    end
+
+    -- Re-render tree with results or error
+    UiTree.render()
+    Buffer.set_cursor(line_number)
+  end)
 end
 
 ---Execute an action node
@@ -617,17 +676,38 @@ function UiTree.refresh_node()
     return
   end
 
-  -- Reload the object
+  -- Reload the object asynchronously
   if obj.reload then
-    obj:reload()
-    vim.notify(string.format("Refreshed %s", obj.name), vim.log.levels.INFO)
+    -- Set loading state
+    obj.ui_state.loading = true
+    obj.ui_state.error = nil
+
+    -- Render with loading indicator
+    UiTree.render()
+    Buffer.set_cursor(line_number)
+
+    -- Reload asynchronously
+    vim.schedule(function()
+      local success, err = pcall(function()
+        obj:reload()
+      end)
+
+      -- Clear loading state
+      obj.ui_state.loading = false
+
+      if success then
+        vim.notify(string.format("SSNS: Refreshed %s", obj.name), vim.log.levels.INFO)
+      else
+        -- Set error state
+        obj.ui_state.error = tostring(err)
+        vim.notify(string.format("SSNS: Failed to refresh %s: %s", obj.name, err), vim.log.levels.ERROR)
+      end
+
+      -- Re-render tree with results or error
+      UiTree.render()
+      Buffer.set_cursor(line_number)
+    end)
   end
-
-  -- Re-render tree
-  UiTree.render()
-
-  -- Restore cursor position
-  Buffer.set_cursor(line_number)
 end
 
 ---Refresh all servers
