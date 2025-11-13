@@ -641,6 +641,33 @@ function SqlServerAdapter:create_view(parent, row)
   })
 end
 
+---Create a procedure object from parsed row data
+---@param parent BaseDbObject
+---@param row table
+---@return BaseDbObject
+function SqlServerAdapter:create_procedure(parent, row)
+  local ProcedureClass = require('ssns.classes.procedure')
+  return ProcedureClass.new({
+    name = row.name,
+    schema_name = row.schema,
+    parent = parent,
+  })
+end
+
+---Create a function object from parsed row data
+---@param parent BaseDbObject
+---@param row table
+---@return BaseDbObject
+function SqlServerAdapter:create_function(parent, row)
+  local FunctionClass = require('ssns.classes.function')
+  return FunctionClass.new({
+    name = row.name,
+    schema_name = row.schema,
+    function_type = row.type,
+    parent = parent,
+  })
+end
+
 ---Create a column object from parsed row data
 ---@param parent BaseDbObject
 ---@param row table

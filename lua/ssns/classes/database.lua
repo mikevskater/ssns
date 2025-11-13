@@ -206,4 +206,161 @@ function DbClass:to_string()
   )
 end
 
+---Load all tables from all schemas
+---@return table[] Array of table objects
+function DbClass:load_all_tables()
+  local adapter = self:get_adapter()
+
+  -- Get tables query - pass nil for schema_name to get ALL tables
+  local query = adapter:get_tables_query(self.db_name, nil)
+  local results = adapter:execute(self:get_server().connection, query)
+  local table_data_list = adapter:parse_tables(results)
+
+  local tables = {}
+  for _, table_data in ipairs(table_data_list) do
+    local table_obj = adapter:create_table(self, table_data)
+    table.insert(tables, table_obj)
+  end
+
+  return tables
+end
+
+---Load all views from all schemas
+---@return table[] Array of view objects
+function DbClass:load_all_views()
+  local adapter = self:get_adapter()
+
+  if not adapter.features.views then
+    return {}
+  end
+
+  local query = adapter:get_views_query(self.db_name, nil)
+  local results = adapter:execute(self:get_server().connection, query)
+  local view_data_list = adapter:parse_views(results)
+
+  local views = {}
+  for _, view_data in ipairs(view_data_list) do
+    local view_obj = adapter:create_view(self, view_data)
+    table.insert(views, view_obj)
+  end
+
+  return views
+end
+
+---Load all procedures from all schemas
+---@return table[] Array of procedure objects
+function DbClass:load_all_procedures()
+  local adapter = self:get_adapter()
+
+  if not adapter.features.procedures then
+    return {}
+  end
+
+  local query = adapter:get_procedures_query(self.db_name, nil)
+  local results = adapter:execute(self:get_server().connection, query)
+  local proc_data_list = adapter:parse_procedures(results)
+
+  local procedures = {}
+  for _, proc_data in ipairs(proc_data_list) do
+    local proc_obj = adapter:create_procedure(self, proc_data)
+    table.insert(procedures, proc_obj)
+  end
+
+  return procedures
+end
+
+---Load all functions from all schemas
+---@return table[] Array of function objects
+function DbClass:load_all_functions()
+  local adapter = self:get_adapter()
+
+  if not adapter.features.functions then
+    return {}
+  end
+
+  local query = adapter:get_functions_query(self.db_name, nil)
+  local results = adapter:execute(self:get_server().connection, query)
+  local func_data_list = adapter:parse_functions(results)
+
+  local functions = {}
+  for _, func_data in ipairs(func_data_list) do
+    local func_obj = adapter:create_function(self, func_data)
+    table.insert(functions, func_obj)
+  end
+
+  return functions
+end
+
+---Create object type groups (TABLES, VIEWS, etc.)
+---@param tables table[]
+---@param views table[]
+---@param procedures table[]
+---@param functions table[]
+function DbClass:create_object_type_groups(tables, views, procedures, functions)
+  -- Create TABLES group
+  if #tables > 0 then
+    local tables_group = BaseDbObject.new({
+      name = string.format("TABLES (%d)", #tables),
+      parent = self,
+    })
+    tables_group.object_type = "tables_group"
+    tables_group.ui_state.icon = ""
+
+    -- Add tables to group (but keep their parent as database for hierarchy)
+    for _, table_obj in ipairs(tables) do
+      table.insert(tables_group.children, table_obj)
+    end
+
+    tables_group.is_loaded = true
+  end
+
+  -- Create VIEWS group
+  if #views > 0 then
+    local views_group = BaseDbObject.new({
+      name = string.format("VIEWS (%d)", #views),
+      parent = self,
+    })
+    views_group.object_type = "views_group"
+    views_group.ui_state.icon = ""
+
+    for _, view_obj in ipairs(views) do
+      table.insert(views_group.children, view_obj)
+    end
+
+    views_group.is_loaded = true
+  end
+
+  -- Create PROCEDURES group
+  if #procedures > 0 then
+    local procs_group = BaseDbObject.new({
+      name = string.format("PROCEDURES (%d)", #procedures),
+      parent = self,
+    })
+    procs_group.object_type = "procedures_group"
+    procs_group.ui_state.icon = ""
+
+    for _, proc_obj in ipairs(procedures) do
+      table.insert(procs_group.children, proc_obj)
+    end
+
+    procs_group.is_loaded = true
+  end
+
+  -- Create FUNCTIONS group
+  if #functions > 0 then
+    local funcs_group = BaseDbObject.new({
+      name = string.format("FUNCTIONS (%d)", #functions),
+      parent = self,
+    })
+    funcs_group.object_type = "functions_group"
+    funcs_group.ui_state.icon = ""
+
+    for _, func_obj in ipairs(functions) do
+      table.insert(funcs_group.children, func_obj)
+    end
+
+    funcs_group.is_loaded = true
+  end
+end
+
 return DbClass
