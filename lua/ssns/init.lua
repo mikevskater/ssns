@@ -208,8 +208,36 @@ end
 
 ---Open a new query buffer
 function Ssns.new_query()
-  -- TODO: Implement in Phase 6 (Query Buffers)
-  vim.notify("SSNS: Query buffers not yet implemented (Phase 6)", vim.log.levels.INFO)
+  local Query = require('ssns.ui.query')
+  local Cache = require('ssns.cache')
+
+  -- Get all servers
+  local servers = Cache.get_all_servers()
+
+  if #servers == 0 then
+    vim.notify("SSNS: No servers configured", vim.log.levels.WARN)
+    return
+  end
+
+  -- If only one server, use it directly
+  if #servers == 1 then
+    Query.create_query_buffer(servers[1], nil, nil)
+    return
+  end
+
+  -- Multiple servers - prompt user to select
+  local server_names = {}
+  for _, server in ipairs(servers) do
+    table.insert(server_names, server.name)
+  end
+
+  vim.ui.select(server_names, {
+    prompt = "Select server:",
+  }, function(choice, idx)
+    if choice then
+      Query.create_query_buffer(servers[idx], nil, nil)
+    end
+  end)
 end
 
 ---Show cache statistics

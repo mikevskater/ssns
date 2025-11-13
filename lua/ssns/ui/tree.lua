@@ -402,6 +402,7 @@ end
 ---Execute an action node
 ---@param action BaseDbObject
 function UiTree.execute_action(action)
+  local Query = require('ssns.ui.query')
   local parent = action.parent
 
   -- Navigate up past groups to find actual parent object
@@ -414,12 +415,15 @@ function UiTree.execute_action(action)
     return
   end
 
+  -- Get the server and database for this action
+  local server = parent:get_server()
+  local database = parent:get_database()
+
   if action.action_type == "select" then
     -- Generate SELECT statement
     if parent.generate_select then
       local sql = parent:generate_select(100)
-      vim.notify(string.format("Generated SQL:\n%s", sql), vim.log.levels.INFO)
-      -- TODO: Open in query buffer (Phase 6)
+      Query.create_query_buffer(server, database, sql)
     end
   elseif action.action_type == "drop" then
     -- Generate DROP statement (with confirmation)
@@ -431,24 +435,21 @@ function UiTree.execute_action(action)
         2
       )
       if confirm == 1 then
-        vim.notify(string.format("Generated SQL:\n%s", sql), vim.log.levels.INFO)
-        -- TODO: Open in query buffer (Phase 6)
+        Query.create_query_buffer(server, database, sql)
       end
     end
   elseif action.action_type == "exec" then
     -- Generate EXEC statement
     if parent.generate_exec then
       local sql = parent:generate_exec()
-      vim.notify(string.format("Generated SQL:\n%s", sql), vim.log.levels.INFO)
-      -- TODO: Open in query buffer (Phase 6)
+      Query.create_query_buffer(server, database, sql)
     end
   elseif action.action_type == "alter" then
     -- Show definition (ALTER displays the object definition)
     if parent.get_definition then
       local definition = parent:get_definition()
       if definition then
-        vim.notify(string.format("Definition:\n%s", definition), vim.log.levels.INFO)
-        -- TODO: Open in buffer (Phase 6)
+        Query.create_query_buffer(server, database, definition)
       else
         vim.notify("No definition available", vim.log.levels.WARN)
       end
