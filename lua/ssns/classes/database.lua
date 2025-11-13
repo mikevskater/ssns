@@ -27,7 +27,7 @@ function DbClass.new(opts)
   return self
 end
 
----Load schemas from the database
+---Load objects from database (vim-dadbod-ui style - no schema nodes)
 ---@return boolean success
 function DbClass:load()
   if self.is_loaded then
@@ -35,32 +35,25 @@ function DbClass:load()
   end
 
   local adapter = self:get_adapter()
-
-  -- Check if this database type supports schemas
-  if not adapter.features.schemas then
-    -- For databases without schemas (MySQL, SQLite), load tables directly
-    return self:load_tables_directly()
-  end
-
-  -- Get schemas query from adapter
-  local query = adapter:get_schemas_query(self.db_name)
-
-  -- Execute query
-  -- TODO: Implement actual execution via vim-dadbod
-  local results = adapter:execute(self:get_server().connection, query)
-
-  -- Parse results
-  local schemas = adapter:parse_schemas(results)
-
-  -- Create schema objects
   self:clear_children()
-  for _, schema_data in ipairs(schemas) do
-    local SchemaClass = require('ssns.classes.schema')
-    local schema = SchemaClass.new({
-      name = schema_data.name,
-      parent = self,
-    })
-  end
+
+  -- Load all objects across ALL schemas and group by type
+  -- This matches vim-dadbod-ui structure: Database -> TABLES/VIEWS/etc (no schema nodes)
+
+  -- Load tables from all schemas
+  local tables = self:load_all_tables()
+
+  -- Load views from all schemas
+  local views = self:load_all_views()
+
+  -- Load procedures from all schemas
+  local procedures = self:load_all_procedures()
+
+  -- Load functions from all schemas
+  local functions = self:load_all_functions()
+
+  -- Create object type groups
+  self:create_object_type_groups(tables, views, procedures, functions)
 
   self.is_loaded = true
   return true
