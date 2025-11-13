@@ -1,5 +1,5 @@
----@class Connection
----Database connection management using vim-dadbod
+---Database connection management for SSNS
+---Wraps vim-dadbod's db#adapter#dispatch and db#systemlist
 local Connection = {}
 
 ---Check if vim-dadbod is available
@@ -10,38 +10,22 @@ function Connection.is_dadbod_available()
   return db_path ~= ""
 end
 
----Parse connection string into components
----@param connection_string string
----@return table parsed {url: string, database: string?, scheme: string?}
-function Connection.parse(connection_string)
-  local parsed = {
-    url = connection_string,
-    database = nil,
-    scheme = nil,
-  }
-
-  -- Extract scheme (database type)
-  local scheme = connection_string:match("^([^:]+)://")
-  if scheme then
-    parsed.scheme = scheme
-  end
-
-  -- Extract database name (last part after /)
-  local database = connection_string:match("/([^/]+)$")
-  if database then
-    parsed.database = database
-  end
-
-  return parsed
-end
-
----Test a connection without maintaining state
----@param connection_string string
+---Test a database connection
+---@param connection_string string The connection string to test
 ---@return boolean success
 ---@return string? error_message
 function Connection.test(connection_string)
   if not Connection.is_dadbod_available() then
-    return false, "vim-dadbod not available"
+    return false, "vim-dadbod is not available"
+  end
+
+  -- Try to get the adapter
+  local success, adapter = pcall(function()
+    return vim.fn['db#adapter#dispatch'](connection_string, "interactive")
+  end)
+
+  if not success then
+    return false, "Invalid connection string or unsupported database type"
   end
 
   -- Try a simple query to test connection
@@ -59,9 +43,14 @@ end
 ---Execute a synchronous query using vim-dadbod
 ---@param connection_string string The connection string or connection object
 ---@param query string The SQL query to execute
+---@param opts table? Options { use_delimiter: boolean, include_headers: boolean }
 ---@return table results Array of result rows
 ---@return string? error_message Error message if query failed
-function Connection.execute_sync(connection_string, query)
+function Connection.execute_sync(connection_string, query, opts)
+  opts = opts or {}
+  local use_delimiter = opts.use_delimiter == nil and true or opts.use_delimiter
+  local include_headers = opts.include_headers or false
+
   if not Connection.is_dadbod_available() then
     return {}, "vim-dadbod not available"
   end
@@ -79,15 +68,31 @@ function Connection.execute_sync(connection_string, query)
   end
 
   -- Add sqlcmd flags for cleaner output
-  -- -h-1: Remove headers
-  -- -W: Remove trailing spaces
-  -- -s",": Use comma as column separator (easier to parse)
-  table.insert(cmd, "-h-1")
-  table.insert(cmd, "-W")
-  table.insert(cmd, "-s,")
+  -- Note: -h and -y 0 are mutually exclusive, so we only use -h for delimited queries
 
-  -- Prepend SET NOCOUNT ON to prevent row count messages
-  local clean_query = "SET NOCOUNT ON;\n" .. query
+  if use_delimiter then
+    -- For structured data (database lists, table lists):
+    -- -W: Remove trailing spaces
+    -- -s|: Use pipe as column separator
+    -- -h-1: Remove headers (only if not include_headers)
+    if not include_headers then
+      table.insert(cmd, "-h-1")
+    end
+    table.insert(cmd, "-W")
+    table.insert(cmd, "-s|")
+  else
+    -- For multi-line text (definitions):
+    -- -y 0: Variable-length type display (unlimited width)
+    -- Note: Cannot use -h-1 with -y 0 (mutually exclusive)
+    -- Note: Cannot use -W with -y (mutually exclusive)
+    table.insert(cmd, "-y")
+    table.insert(cmd, "0")
+  end
+
+  -- Prepend SET statements for SQL Server compatibility
+  -- SET NOCOUNT ON: Prevent row count messages
+  -- SET QUOTED_IDENTIFIER ON: Required for indexed views, computed columns, filtered indexes
+  local clean_query = "SET NOCOUNT ON; SET QUOTED_IDENTIFIER ON;\n" .. query
 
   -- Execute query using db#systemlist
   local results_raw
@@ -108,14 +113,26 @@ function Connection.execute_sync(connection_string, query)
   end
 
   -- Parse the results
-  local parsed_results = Connection.parse_result(results_raw)
+  local parsed_results
+  if use_delimiter then
+    parsed_results = Connection.parse_result(results_raw, "|", 0, include_headers)
+  else
+    -- No delimiter - treat as raw multi-line text
+    parsed_results = Connection.parse_result_raw(results_raw)
+  end
   return parsed_results, nil
 end
 
 ---Parse vim-dadbod result into table format
 ---@param result any Raw result from vim-dadbod (array of lines or string)
+---@param delimiter string? Column delimiter (default "|")
+---@param expected_columns number? Expected number of columns (0 = auto-detect)
+---@param has_headers boolean? Whether first row contains column names (default false)
 ---@return table parsed Array of row tables
-function Connection.parse_result(result)
+function Connection.parse_result(result, delimiter, expected_columns, has_headers)
+  delimiter = delimiter or "|"
+  expected_columns = expected_columns or 0
+
   local lines = {}
 
   -- Convert result to lines array
@@ -133,48 +150,168 @@ function Connection.parse_result(result)
     return {}
   end
 
-  -- With -h-1 and -s"," flags, sqlcmd output is:
-  -- - No headers (we use column names from query)
-  -- - Comma-separated values
-  -- - One row per line
-  -- - SET NOCOUNT ON prevents row count messages
+  -- Remove trailing lines (vim-dadbod-ui uses [0:-3] for sqlserver)
+  -- In VimScript, [0:-3] means "up to but not including the last 2 elements"
+  -- In Lua with vim.list_slice, we need to slice from 1 to #lines - 2 (inclusive)
+  -- But only if there are trailing empty lines
+  while #lines > 0 and (lines[#lines] == "" or lines[#lines]:match("^%s*$")) do
+    table.remove(lines, #lines)
+  end
 
-  local rows = {}
+  -- Filter out SQL Server messages and noise
+  local clean_lines = {}
   for _, line in ipairs(lines) do
-    -- Skip empty lines and any remaining noise
     if line and line ~= "" and not line:match("^%s*$") then
-      -- Skip lines that look like messages or errors
       if not line:match("^Changed database context") and
          not line:match("^Msg %d+") and
-         not line:match("^%(") and  -- Skip "(X rows affected)" if any slip through
+         not line:match("^%(") and  -- Skip "(X rows affected)"
          not line:match("^Changed language setting") then
-
-        -- Parse comma-separated values
-        local values = {}
-        for value in line:gmatch("([^,]+)") do
-          local trimmed = vim.trim(value)
-          table.insert(values, trimmed)
-        end
-
-        -- Create row object
-        -- Since we use -h-1, we don't have headers from sqlcmd
-        -- We rely on the adapter's parse methods to handle this
-        if #values > 0 then
-          local row = {}
-          for idx, value in ipairs(values) do
-            row[idx] = value  -- Store by numeric index
-            -- For single-column results, also store as 'name' for compatibility
-            if #values == 1 then
-              row.name = value
-            end
-          end
-          table.insert(rows, row)
-        end
+        table.insert(clean_lines, line)
       end
     end
   end
 
-  return rows
+  if #clean_lines == 0 then
+    return {}
+  end
+
+  -- Special case: single column results (like database names)
+  if expected_columns == 1 then
+    local rows = {}
+    for _, line in ipairs(clean_lines) do
+      local trimmed = vim.trim(line)
+      if trimmed ~= "" then
+        table.insert(rows, { [1] = trimmed, name = trimmed })
+      end
+    end
+    return rows
+  end
+
+  -- Parse multi-column results using delimiter
+  -- Mimic vim-dadbod-ui's s:results_parser logic
+  local parsed_rows = {}
+  for _, line in ipairs(clean_lines) do
+    local columns = {}
+    for col in line:gmatch("[^" .. vim.pesc(delimiter) .. "]+") do
+      local trimmed = vim.trim(col)
+      if trimmed ~= "" then
+        table.insert(columns, trimmed)
+      end
+    end
+
+    if #columns > 0 then
+      table.insert(parsed_rows, columns)
+    end
+  end
+
+  if #parsed_rows == 0 then
+    return {}
+  end
+
+  -- Auto-detect expected column count if not specified
+  if expected_columns == 0 then
+    -- Find the most common column count (like vim-dadbod-ui does with max())
+    local col_counts = {}
+    for _, row in ipairs(parsed_rows) do
+      table.insert(col_counts, #row)
+    end
+    expected_columns = math.max(unpack(col_counts))
+  end
+
+  -- Filter rows to only include those with expected column count
+  local filtered_rows = {}
+  for _, row in ipairs(parsed_rows) do
+    if #row == expected_columns then
+      table.insert(filtered_rows, row)
+    end
+  end
+
+  if #filtered_rows == 0 then
+    return {}
+  end
+
+  -- If has_headers is true, first row contains column names
+  local header = nil
+  local data_rows = filtered_rows
+
+  if has_headers and #filtered_rows > 0 then
+    header = filtered_rows[1]
+    data_rows = vim.list_slice(filtered_rows, 2, #filtered_rows)
+  end
+
+  -- Convert arrays to objects
+  local result_objects = {}
+  for _, row in ipairs(data_rows) do
+    local obj = {}
+    for idx, value in ipairs(row) do
+      if header then
+        -- Use column name from header as key
+        local col_name = header[idx] or tostring(idx)
+        obj[col_name] = value
+      else
+        -- Use numeric key
+        obj[idx] = value
+      end
+    end
+    -- Add common field names if single column
+    if #row == 1 then
+      obj.name = row[1]
+    end
+    table.insert(result_objects, obj)
+  end
+
+  return result_objects
+end
+
+---Parse raw multi-line text result (no delimiter)
+---Used for OBJECT_DEFINITION and other multi-line text queries
+---@param result any Raw result from vim-dadbod
+---@return table parsed Array with single row containing the full text
+function Connection.parse_result_raw(result)
+  local lines = {}
+
+  -- Convert result to lines array
+  if type(result) == "table" then
+    lines = result
+  elseif type(result) == "string" then
+    lines = vim.split(result, "\n", { plain = true })
+  else
+    return {}
+  end
+
+  if #lines == 0 then
+    return {}
+  end
+
+  -- Filter out SQL Server messages and clean up lines
+  local clean_lines = {}
+  for _, line in ipairs(lines) do
+    if line and not line:match("^Changed database context") and
+       not line:match("^Msg %d+") and
+       not line:match("^%(") then  -- Skip "(X rows affected)"
+      -- Remove carriage returns (\r) that show as ^M
+      line = line:gsub("\r", "")
+      table.insert(clean_lines, line)
+    end
+  end
+
+  if #clean_lines == 0 then
+    return {}
+  end
+
+  -- Join all lines into a single text value
+  local full_text = table.concat(clean_lines, "\n")
+
+  -- Clean up any remaining carriage returns (shouldn't be any with CHAR(10) in queries)
+  full_text = full_text:gsub("\r\n", "\n")  -- CRLF to LF
+  full_text = full_text:gsub("\r", "\n")    -- CR to LF
+
+  -- Return as single-row result with the full text
+  return {{
+    [1] = full_text,
+    definition = full_text,
+    name = full_text
+  }}
 end
 
 ---Execute an asynchronous query using vim-dadbod
@@ -344,6 +481,31 @@ function Connection.get_pool_stats()
   end
 
   return stats
+end
+
+---Parse connection string into components
+---@param connection_string string
+---@return table parsed {url: string, database: string?, scheme: string?}
+function Connection.parse(connection_string)
+  local parsed = {
+    url = connection_string,
+    database = nil,
+    scheme = nil,
+  }
+
+  -- Extract scheme (database type)
+  local scheme = connection_string:match("^([^:]+)://")
+  if scheme then
+    parsed.scheme = scheme
+  end
+
+  -- Extract database name (last part after /)
+  local database = connection_string:match("/([^/]+)$")
+  if database then
+    parsed.database = database
+  end
+
+  return parsed
 end
 
 ---Format query with proper line endings

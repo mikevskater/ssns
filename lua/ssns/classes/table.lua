@@ -596,6 +596,88 @@ function TableClass:get_qualified_name()
   )
 end
 
+---Get the table definition (CREATE TABLE script)
+---@return string sql The CREATE TABLE script
+function TableClass:get_definition()
+  local adapter = self:get_adapter()
+  local db = self.parent
+
+  -- Validate we have a database
+  if not db or not db.db_name then
+    return string.format("-- Error: Unable to get definition for table %s", self.table_name)
+  end
+
+  -- Use adapter to get the definition query
+  local query = adapter:get_table_definition_query(db.db_name, self.schema_name, self.table_name)
+
+  -- Execute query to get the definition (no delimiter for multi-line text)
+  local server = self:get_server()
+  local success, results = pcall(adapter.execute, adapter, server.connection, query, { use_delimiter = false })
+
+  if not success then
+    return string.format("-- Error getting definition: %s", tostring(results))
+  end
+
+  -- For SQL Server, the result should contain the CREATE TABLE script
+  if adapter.db_type == "sqlserver" then
+    -- The query should return a single row with the CREATE TABLE script
+    if results and #results > 0 and results[1].definition then
+      return results[1].definition
+    end
+  end
+
+  -- Fallback: construct CREATE TABLE from columns metadata
+  return self:construct_create_table_from_metadata()
+end
+
+---Construct a CREATE TABLE script from metadata (fallback)
+---@return string sql The CREATE TABLE script
+function TableClass:construct_create_table_from_metadata()
+  local adapter = self:get_adapter()
+  local qualified_name = adapter:get_qualified_name(
+    self.parent.parent.db_name,
+    self.schema_name,
+    self.table_name
+  )
+
+  local columns = self:get_columns()
+
+  if #columns == 0 then
+    return string.format("-- No columns found for %s", qualified_name)
+  end
+
+  local lines = {
+    string.format("CREATE TABLE %s (", qualified_name)
+  }
+
+  -- Add column definitions
+  for i, col in ipairs(columns) do
+    local col_name = col.column_name or col.name
+    local data_type = col.data_type or "VARCHAR(MAX)"
+    local nullable = col.is_nullable and "NULL" or "NOT NULL"
+    local identity = col.is_identity and " IDENTITY(1,1)" or ""
+    local default_val = col.default_value and string.format(" DEFAULT %s", col.default_value) or ""
+
+    local col_def = string.format("  %s %s%s %s%s",
+      adapter:quote_identifier(col_name),
+      data_type,
+      identity,
+      nullable,
+      default_val
+    )
+
+    if i < #columns then
+      col_def = col_def .. ","
+    end
+
+    table.insert(lines, col_def)
+  end
+
+  table.insert(lines, ");")
+
+  return table.concat(lines, "\n")
+end
+
 ---Get string representation for debugging
 ---@return string
 function TableClass:to_string()

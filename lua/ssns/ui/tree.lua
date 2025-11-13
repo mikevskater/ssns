@@ -490,18 +490,26 @@ function UiTree.load_node_async(obj, line_number)
 
   -- Load asynchronously using vim.schedule
   vim.schedule(function()
-    local success, err = pcall(function()
-      obj:load()
+    local success, result = pcall(function()
+      return obj:load()
     end)
 
     -- Clear loading state
     obj.ui_state.loading = false
 
+    -- Check if pcall failed (threw error)
     if not success then
-      -- Set error state
-      obj.ui_state.error = tostring(err)
-      vim.notify(string.format("SSNS: Failed to load %s: %s", obj.name, err), vim.log.levels.ERROR)
+      obj.ui_state.error = tostring(result)
+      vim.notify(string.format("SSNS: Failed to load %s: %s", obj.name, result), vim.log.levels.ERROR)
+    -- Check if load() returned false (failed without throwing)
+    elseif result == false then
+      local error_msg = obj.error_message or "Unknown error"
+      obj.ui_state.error = error_msg
+      vim.notify(string.format("SSNS: Failed to load %s: %s", obj.name, error_msg), vim.log.levels.ERROR)
     end
+
+    -- Update success flag based on both checks
+    success = success and result ~= false
 
     -- Re-render tree with results or error
     UiTree.render()

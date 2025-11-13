@@ -197,9 +197,8 @@ function ViewClass:load_definition()
   -- Get definition query from adapter
   local query = adapter:get_definition_query(db.db_name, self.schema_name, self.view_name, "VIEW")
 
-  -- Execute query
-  -- TODO: Implement actual execution via vim-dadbod
-  local results = adapter:execute(self:get_server().connection, query)
+  -- Execute query (no delimiter for multi-line text)
+  local results = adapter:execute(self:get_server().connection, query, { use_delimiter = false })
 
   -- Extract definition from results
   if results and #results > 0 then

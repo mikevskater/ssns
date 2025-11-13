@@ -189,9 +189,28 @@ function ServerClass:load()
   databases_group.ui_state.icon = ""
 
   -- Load databases
-  local query = self.adapter:get_databases_query()
-  local results = self.adapter:execute(self.connection, query)
-  local databases = self.adapter:parse_databases(results)
+  local success, query = pcall(self.adapter.get_databases_query, self.adapter)
+  if not success then
+    self.error_message = "Failed to get databases query: " .. tostring(query)
+    vim.notify("SSNS Error: " .. self.error_message, vim.log.levels.ERROR)
+    return false
+  end
+
+  local results
+  success, results = pcall(self.adapter.execute, self.adapter, self.connection, query)
+  if not success then
+    self.error_message = "Failed to execute databases query: " .. tostring(results)
+    vim.notify("SSNS Error: " .. self.error_message, vim.log.levels.ERROR)
+    return false
+  end
+
+  local databases
+  success, databases = pcall(self.adapter.parse_databases, self.adapter, results)
+  if not success then
+    self.error_message = "Failed to parse databases: " .. tostring(databases)
+    vim.notify("SSNS Error: " .. self.error_message, vim.log.levels.ERROR)
+    return false
+  end
 
   -- Create database objects as children of the databases group
   for _, db_data in ipairs(databases) do

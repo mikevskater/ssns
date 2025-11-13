@@ -219,7 +219,11 @@ function UiQuery.execute_query(bufnr, visual)
   vim.notify("SSNS: Executing query...", vim.log.levels.INFO)
 
   local adapter = server:get_adapter()
-  local success, results = pcall(adapter.execute, adapter, server.connection, sql)
+  -- User queries should include headers so we can parse column names
+  local success, results = pcall(adapter.execute, adapter, server.connection, sql, {
+    use_delimiter = true,
+    include_headers = true
+  })
 
   if not success then
     vim.notify(string.format("SSNS: Query failed: %s", results), vim.log.levels.ERROR)
@@ -275,11 +279,24 @@ end
 ---@param results any The query results
 ---@param sql string The SQL that was executed
 function UiQuery.display_results(results, sql)
-  -- Create a results buffer
-  local result_buf = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_name(result_buf, "SSNS Results")
-  vim.api.nvim_buf_set_option(result_buf, 'buftype', 'nofile')
-  vim.api.nvim_buf_set_option(result_buf, 'modifiable', false)
+  -- Try to find existing results buffer
+  local result_buf = nil
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_valid(buf) then
+      local buf_name = vim.api.nvim_buf_get_name(buf)
+      if buf_name:match("SSNS Results") then
+        result_buf = buf
+        break
+      end
+    end
+  end
+
+  -- Create new buffer if not found
+  if not result_buf then
+    result_buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_name(result_buf, "SSNS Results")
+    vim.api.nvim_buf_set_option(result_buf, 'buftype', 'nofile')
+  end
 
   -- Format results
   local lines = UiQuery.format_results(results, sql)
@@ -289,9 +306,24 @@ function UiQuery.display_results(results, sql)
   vim.api.nvim_buf_set_lines(result_buf, 0, -1, false, lines)
   vim.api.nvim_buf_set_option(result_buf, 'modifiable', false)
 
-  -- Open in horizontal split below
-  vim.cmd('split')
-  vim.api.nvim_win_set_buf(0, result_buf)
+  -- Check if buffer is already visible in a window
+  local result_win = nil
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(win) == result_buf then
+      result_win = win
+      break
+    end
+  end
+
+  -- If buffer is not visible, open it in a split
+  if not result_win then
+    vim.cmd('split')
+    vim.api.nvim_win_set_buf(0, result_buf)
+    result_win = vim.api.nvim_get_current_win()
+  else
+    -- If already visible, just focus it
+    vim.api.nvim_set_current_win(result_win)
+  end
 
   -- Setup close keymap
   vim.api.nvim_buf_set_keymap(result_buf, 'n', 'q', ':close<CR>', { noremap = true, silent = true })
@@ -306,11 +338,16 @@ function UiQuery.format_results(results, sql)
     "=== SSNS Query Results ===",
     "",
     "SQL:",
-    sql,
-    "",
-    "Results:",
-    "",
   }
+
+  -- Split SQL into separate lines if it contains newlines
+  for _, line in ipairs(vim.split(sql, "\n", { plain = true })) do
+    table.insert(lines, line)
+  end
+
+  table.insert(lines, "")
+  table.insert(lines, "Results:")
+  table.insert(lines, "")
 
   -- Check if results is a table
   if type(results) ~= "table" then
@@ -342,6 +379,8 @@ function UiQuery.format_results(results, sql)
   for _, row in ipairs(results) do
     for _, col in ipairs(columns) do
       local value = tostring(row[col] or "")
+      -- Replace newlines with space for width calculation
+      value = value:gsub("\n", " ")
       if #value > widths[col] then
         widths[col] = #value
       end
@@ -368,6 +407,8 @@ function UiQuery.format_results(results, sql)
     local row_parts = {}
     for _, col in ipairs(columns) do
       local value = tostring(row[col] or "")
+      -- Replace newlines with space for display
+      value = value:gsub("\n", " ")
       local padded = value .. string.rep(" ", widths[col] - #value)
       table.insert(row_parts, padded)
     end
