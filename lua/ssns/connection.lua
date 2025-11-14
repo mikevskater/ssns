@@ -250,34 +250,26 @@ function Connection.parse_result(result, delimiter, expected_columns, has_header
         -- First row is always a header
         is_header = true
       else
-        -- Check if this looks like a header (different from current header)
-        -- If we encounter a row that matches the current header structure but has different values
-        -- it's likely a new result set header
-        if current_header and #row == #current_header then
-          -- Check if all values are non-numeric or look like column names
-          local looks_like_header = true
-          for _, val in ipairs(row) do
-            -- If it looks like data (numeric or typical data patterns), it's not a header
-            if val:match("^%-?%d+%.?%d*$") or val == "NULL" then
-              looks_like_header = false
-              break
-            end
+        -- Check if this row looks like a header
+        -- A header has column names (non-numeric, not NULL, not dates, etc.)
+        local looks_like_header = true
+        for _, val in ipairs(row) do
+          -- If it looks like data, it's not a header
+          -- Check for: numbers, NULL, dates (YYYY-MM-DD), emails (@), decimals
+          if val:match("^%-?%d+%.?%d*$") or  -- Numbers (123, -45, 67.89)
+             val == "NULL" or                 -- NULL values
+             val:match("^%d%d%d%d%-%d%d%-%d%d") or  -- Dates (YYYY-MM-DD)
+             val:match("@") or                -- Emails
+             val:match("%.com") or            -- Domain names
+             val:match("^[01]$") then         -- Boolean (0/1)
+            looks_like_header = false
+            break
           end
+        end
 
-          if looks_like_header then
-            -- Check if it's identical to current header (same result set repeated)
-            local identical = true
-            for j = 1, #row do
-              if row[j] ~= current_header[j] then
-                identical = false
-                break
-              end
-            end
-
-            if identical or looks_like_header then
-              is_header = true
-            end
-          end
+        -- If it looks like a header, it's a new result set
+        if looks_like_header then
+          is_header = true
         end
       end
 
