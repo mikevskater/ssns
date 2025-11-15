@@ -41,6 +41,10 @@ function getDriver(connectionString) {
  * @param {Object} plugin - Neovim plugin instance
  */
 module.exports = (plugin) => {
+  console.error('[SSNS] Plugin initializing...');
+
+  // Wrap in try-catch to catch any errors during registration
+  try {
   /**
    * SSNSExecuteQuery - Execute SQL query and return structured results
    *
@@ -52,7 +56,9 @@ module.exports = (plugin) => {
    */
   plugin.registerFunction('SSNSExecuteQuery', async (args) => {
     try {
-      const [connectionString, query] = args;
+      // Handle double-wrapped array from Neovim
+      const connectionString = Array.isArray(args[0]) ? args[0][0] : args[0];
+      const query = Array.isArray(args[0]) ? args[0][1] : args[1];
 
       if (!connectionString || !query) {
         return {
@@ -87,7 +93,7 @@ module.exports = (plugin) => {
         }
       };
     }
-  }, { sync: false });
+  }, { sync: true }); // Changed to sync: true
 
   /**
    * SSNSGetMetadata - Get metadata for database object (for IntelliSense)
@@ -100,7 +106,11 @@ module.exports = (plugin) => {
    */
   plugin.registerFunction('SSNSGetMetadata', async (args) => {
     try {
-      const [connectionString, objectType, objectName, schemaName] = args;
+      // Handle double-wrapped array from Neovim
+      const connectionString = Array.isArray(args[0]) ? args[0][0] : args[0];
+      const objectType = Array.isArray(args[0]) ? args[0][1] : args[1];
+      const objectName = Array.isArray(args[0]) ? args[0][2] : args[2];
+      const schemaName = Array.isArray(args[0]) ? args[0][3] : args[3];
 
       if (!connectionString || !objectType || !objectName) {
         return {
@@ -123,7 +133,7 @@ module.exports = (plugin) => {
         error: err.message || 'Unknown error occurred'
       };
     }
-  }, { sync: false });
+  }, { sync: true }); // Changed to sync: true
 
   /**
    * SSNSTestConnection - Test database connection
@@ -135,9 +145,22 @@ module.exports = (plugin) => {
    * @returns {Promise<Object>} { success: boolean, message: string }
    */
   plugin.registerFunction('SSNSTestConnection', async (args) => {
+    console.error('[SSNS] SSNSTestConnection called');
+    console.error('[SSNS] args:', JSON.stringify(args));
+    console.error('[SSNS] args length:', args.length);
+    console.error('[SSNS] args[0]:', args[0]);
+    console.error('[SSNS] args[0] type:', typeof args[0]);
+    console.error('[SSNS] args[0] isArray:', Array.isArray(args[0]));
+
+    if (Array.isArray(args[0])) {
+      console.error('[SSNS] args[0][0]:', args[0][0]);
+      console.error('[SSNS] args[0][0] type:', typeof args[0][0]);
+    }
+
     try {
-      console.error('[SSNS] SSNSTestConnection called with args:', args);
-      const [connectionString] = args;
+      // If Neovim double-wraps the array, unwrap it
+      const connectionString = Array.isArray(args[0]) ? args[0][0] : args[0];
+      console.error('[SSNS] Final connectionString:', connectionString, 'type:', typeof connectionString);
 
       if (!connectionString) {
         console.error('[SSNS] No connection string provided');
@@ -168,7 +191,7 @@ module.exports = (plugin) => {
         message: err.message || 'Connection failed'
       };
     }
-  }, { sync: false });
+  }, { sync: true }); // Changed to sync: true
 
   /**
    * SSNSCloseConnection - Close database connection
@@ -181,7 +204,8 @@ module.exports = (plugin) => {
    */
   plugin.registerFunction('SSNSCloseConnection', async (args) => {
     try {
-      const [connectionString] = args;
+      // Handle double-wrapped array from Neovim
+      const connectionString = Array.isArray(args[0]) ? args[0][0] : args[0];
 
       if (!connectionString) {
         return { success: false };
@@ -199,5 +223,13 @@ module.exports = (plugin) => {
     } catch (err) {
       return { success: false };
     }
-  }, { sync: false });
+  }, { sync: true }); // Changed to sync: true
+
+  console.error('[SSNS] All functions registered successfully');
+
+  } catch (err) {
+    console.error('[SSNS] ERROR during plugin initialization:', err);
+    console.error('[SSNS] Stack:', err.stack);
+    throw err;
+  }
 };
