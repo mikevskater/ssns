@@ -6,8 +6,9 @@
   "author": "SSNS Contributors",
   "license": "MIT",
   "dependencies": {
-    "neovim": "^5.1.0",
-    "mssql": "^10.0.0"
+    "msnodesqlv8": "^5.1.1",
+    "mssql": "^10.0.0",
+    "neovim": "^5.1.0"
   },
   "engines": {
     "node": ">=16.0.0"
