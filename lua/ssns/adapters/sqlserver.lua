@@ -26,15 +26,20 @@ function SqlServerAdapter.new(connection_string)
   return self
 end
 
----Execute a query against SQL Server using vim-dadbod
+---Execute a query against SQL Server using vim-dadbod or Node.js backend
 ---@param connection any The database connection object or connection string
 ---@param query string The SQL query to execute
 ---@param opts table? Options { use_delimiter: boolean, include_headers: boolean }
 ---@return table results Array of result rows
 function SqlServerAdapter:execute(connection, query, opts)
+  local Debug = require('ssns.debug')
+  Debug.log("SqlServerAdapter:execute called")
+
   opts = opts or { use_delimiter = true }
   local ConnectionModule = require('ssns.connection')
+  local Config = require('ssns.config')
 
+  Debug.log("Determining connection string")
   -- Handle both connection object and connection string
   local conn_str
   if type(connection) == "string" then
@@ -46,8 +51,20 @@ function SqlServerAdapter:execute(connection, query, opts)
     conn_str = self.connection_string
   end
 
-  -- Execute query
-  local results, err = ConnectionModule.execute_sync(conn_str, query, opts)
+  Debug.log("Checking which backend to use")
+  -- Check if Node.js backend should be used
+  local results, err
+  if Config.use_nodejs() then
+    Debug.log("Using Node.js backend")
+    -- Use Node.js backend (Phase 7)
+    results, err = ConnectionModule.execute_nodejs(conn_str, query)
+    Debug.log("Node.js backend returned")
+  else
+    Debug.log("Using vim-dadbod backend")
+    -- Use vim-dadbod
+    results, err = ConnectionModule.execute_sync(conn_str, query, opts)
+    Debug.log("vim-dadbod backend returned")
+  end
 
   if err then
     -- Log error but return empty results for now

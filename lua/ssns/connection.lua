@@ -388,6 +388,157 @@ function Connection.parse_result_raw(result)
   }}
 end
 
+---Simple USE statement handler - just removes USE from beginning and extracts DB
+---@param connection_string string Base connection string
+---@param query string The SQL query with possible USE statement
+---@return string modified_conn_string Connection string with correct database
+---@return string modified_query Query with USE statement removed
+local function handle_use_statement(connection_string, query)
+  local Debug = require('ssns.debug')
+  local ConnectionString = require('ssns.connection_string')
+
+  -- SIMPLIFIED VERSION: Only handle USE at the very beginning
+  -- Pattern: USE [database]; or USE database;
+  -- Only match at start of query (after optional whitespace)
+
+  local pattern = "^%s*USE%s+%[?([^]%;]+)%]?%s*;?"
+  local target_db = query:match(pattern)
+
+  Debug.log("handle_use_statement - input conn_string: " .. connection_string)
+  Debug.log("handle_use_statement - target_db from USE: " .. tostring(target_db or "nil"))
+
+  if target_db then
+    -- Found USE statement at beginning
+    -- Remove it from query
+    local modified_query = query:gsub(pattern, "", 1)
+
+    -- Use proper connection string parser to build new connection with target database
+    local modified_conn = ConnectionString.with_database(connection_string, target_db)
+
+    Debug.log("handle_use_statement - modified_conn: " .. modified_conn)
+    return modified_conn, modified_query
+  end
+
+  -- No USE statement, return as-is
+  Debug.log("handle_use_statement - returning original connection string")
+  return connection_string, query
+end
+
+---Execute a query using Node.js backend (Phase 7)
+---@param connection_string string The connection string
+---@param query string The SQL query to execute
+---@param opts table? Options { parse_as_dadbod: boolean } - If true, convert to dadbod-compatible format
+---@return table results Array of result rows (or raw Node.js result if parse_as_dadbod=false)
+---@return string? error_message Error message if query failed
+function Connection.execute_nodejs(connection_string, query, opts)
+  local Debug = require('ssns.debug')
+  Debug.log("execute_nodejs called")
+
+  opts = opts or {}
+  local parse_as_dadbod = opts.parse_as_dadbod == nil and true or opts.parse_as_dadbod
+
+  Debug.log("About to call handle_use_statement")
+  -- Handle USE statement (simple version - only at beginning of query)
+  local final_conn_string, final_query = handle_use_statement(connection_string, query)
+  Debug.log("handle_use_statement returned")
+
+  -- DEBUG: Log if USE was found
+  if final_conn_string ~= connection_string then
+    Debug.log("USE statement modified connection string")
+  end
+
+  Debug.log("About to call vim.fn.SSNSExecuteQuery")
+  Debug.log("Connection: " .. final_conn_string:sub(1, 50))
+  Debug.log("Query (first 100 chars): " .. final_query:sub(1, 100))
+
+  -- Call Node.js RPC function SSNSExecuteQuery
+  local success, result = pcall(function()
+    return vim.fn.SSNSExecuteQuery({final_conn_string, final_query})
+  end)
+
+  Debug.log("vim.fn.SSNSExecuteQuery returned, success=" .. tostring(success))
+
+  if not success then
+    Debug.log("RPC call failed: " .. tostring(result))
+    return {}, "Node.js RPC call failed: " .. tostring(result)
+  end
+
+  -- Convert userdata/vim dict to Lua table if needed
+  if type(result) ~= "table" then
+    return {}, "Unexpected result type from Node.js: " .. type(result)
+  end
+
+  -- Check if there was an error in the result
+  local error_obj = result.error
+  if type(error_obj) == "table" and error_obj.message then
+    return {}, tostring(error_obj.message)
+  end
+
+  -- Get result sets
+  local resultSets = result.resultSets or result["resultSets"] or {}
+
+  -- If not parsing as dadbod format, return raw result
+  if not parse_as_dadbod then
+    return result, nil
+  end
+
+  -- Convert Node.js result format to dadbod-compatible format
+  -- Handle vim.NIL or empty result sets
+  if resultSets == vim.NIL or (type(resultSets) == "table" and #resultSets == 0) then
+    return {}, nil
+  end
+
+  -- For single result set, return rows array
+  if #resultSets == 1 then
+    local resultSet = resultSets[1]
+    local rows = resultSet.rows or resultSet["rows"] or {}
+
+    -- Handle vim.NIL
+    if rows == vim.NIL then
+      return {}, nil
+    end
+
+    -- Add 'name' property if single column (for compatibility with existing code)
+    local columns = resultSet.columns or resultSet["columns"]
+    if columns and type(columns) == "table" and vim.tbl_count(columns) == 1 then
+      local column_name = next(columns)
+      for _, row in ipairs(rows) do
+        local col_val = row[column_name]
+        if col_val and col_val ~= vim.NIL then
+          row.name = col_val
+        end
+      end
+    end
+
+    return rows, nil
+  end
+
+  -- For multiple result sets, return array of result sets
+  local all_results = {}
+  for _, resultSet in ipairs(resultSets) do
+    local rows = resultSet.rows or resultSet["rows"] or {}
+
+    -- Handle vim.NIL
+    if rows ~= vim.NIL then
+      -- Add 'name' property if single column
+      local columns = resultSet.columns or resultSet["columns"]
+      if columns and type(columns) == "table" and vim.tbl_count(columns) == 1 then
+        local column_name = next(columns)
+        for _, row in ipairs(rows) do
+          local col_val = row[column_name]
+          if col_val and col_val ~= vim.NIL then
+            row.name = col_val
+          end
+        end
+      end
+
+      table.insert(all_results, rows)
+    end
+  end
+
+  return all_results, nil
+end
+
 ---Execute an asynchronous query using vim-dadbod
 ---@param connection_string string The connection string
 ---@param query string The SQL query to execute
@@ -474,6 +625,15 @@ function Connection.new(connection_string)
   ---@return string? error
   function conn:execute(query)
     return Connection.execute_sync(self.connection_string, query)
+  end
+
+  ---Execute query using Node.js backend on this connection
+  ---@param query string
+  ---@param opts table? Options
+  ---@return table results
+  ---@return string? error
+  function conn:execute_nodejs(query, opts)
+    return Connection.execute_nodejs(self.connection_string, query, opts)
   end
 
   ---Execute async query on this connection

@@ -2,6 +2,7 @@
 ---@field connections table<string, string> Map of connection names to connection strings
 ---@field ui UiConfig UI configuration
 ---@field cache CacheConfig Cache configuration
+---@field backend BackendConfig Backend configuration
 
 ---@class UiConfig
 ---@field position string Window position: "left", "right", "float"
@@ -30,6 +31,9 @@
 
 ---@class CacheConfig
 ---@field ttl number Time to live in seconds for cached data
+
+---@class BackendConfig
+---@field use_nodejs boolean Use Node.js backend instead of vim-dadbod (Phase 7)
 
 ---Default configuration
 ---@type SsnsConfig
@@ -78,6 +82,10 @@ local default_config = {
   cache = {
     ttl = 300,  -- 5 minutes
   },
+
+  backend = {
+    use_nodejs = true,  -- Use Node.js backend (Phase 7) - set to false to use vim-dadbod
+  },
 }
 
 ---@class Config
@@ -117,6 +125,18 @@ end
 ---@return CacheConfig
 function Config.get_cache()
   return Config.current.cache
+end
+
+---Get backend configuration
+---@return BackendConfig
+function Config.get_backend()
+  return Config.current.backend
+end
+
+---Check if Node.js backend should be used
+---@return boolean
+function Config.use_nodejs()
+  return Config.current.backend and Config.current.backend.use_nodejs or false
 end
 
 ---Get connections configuration
