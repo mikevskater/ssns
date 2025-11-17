@@ -50,19 +50,6 @@ function SqlServerAdapter:execute(connection, query, opts)
   return ConnectionModule.execute(conn_str, query, opts)
 end
 
----Execute a query against SQL Server asynchronously
----@deprecated Use execute() instead - Node.js backend is already async
----@param connection any The database connection object or connection string
----@param query string The SQL query to execute
----@param callback function Callback function(result)
-function SqlServerAdapter:execute_async(connection, query, callback)
-  -- Node.js backend is already async, so just wrap execute() with vim.schedule
-  vim.schedule(function()
-    local result = self:execute(connection, query)
-    callback(result)
-  end)
-end
-
 ---Parse SQL Server connection string
 ---@return table connection_info
 function SqlServerAdapter:parse_connection_string()
