@@ -2,7 +2,10 @@
 ---@field connections table<string, string> Map of connection names to connection strings
 ---@field ui UiConfig UI configuration
 ---@field cache CacheConfig Cache configuration
----@field backend BackendConfig Backend configuration
+---@field query QueryConfig Query execution configuration
+---@field keymaps KeymapsConfig Keymap configuration
+---@field table_helpers TableHelpersConfig Table helper templates per database type
+---@field performance PerformanceConfig Performance tuning options
 
 ---@class UiConfig
 ---@field position string Window position: "left", "right", "float"
@@ -14,6 +17,7 @@
 ---@field smart_cursor_positioning boolean Enable smart cursor positioning on j/k movement (default: true)
 ---@field result_set_divider string? Format for divider between multiple result sets (default: "")
 ---@field show_result_set_info boolean Show divider/info before first result set and single result sets (default: false)
+---@field show_help boolean Show help text at top of tree buffer (default: true)
 ---@field icons IconsConfig Icon configuration
 
 ---@class IconsConfig
@@ -28,9 +32,39 @@
 ---@field index string Index icon
 ---@field key string Key/constraint icon
 ---@field action string Action icon
+---@field sequence string Sequence icon
+---@field synonym string Synonym icon
 
 ---@class CacheConfig
 ---@field ttl number Time to live in seconds for cached data
+---@field enabled boolean Enable query result caching (default: true)
+
+---@class QueryConfig
+---@field default_limit number Default LIMIT for SELECT queries (0 = no limit)
+---@field timeout number Query timeout in milliseconds (0 = no timeout)
+---@field auto_execute_on_open boolean Auto-execute query when opening action (default: false)
+
+---@class KeymapsConfig
+---@field toggle string Toggle SSNS tree window
+---@field execute string Execute query in buffer
+---@field execute_selection string Execute visual selection
+---@field save_query string Save current query to file
+---@field close string Close SSNS window
+---@field refresh string Refresh current node
+---@field refresh_all string Refresh all servers
+---@field help string Show help
+---@field toggle_connection string Toggle server connection
+
+---@class TableHelpersConfig
+---@field sqlserver table<string, string>? SQL Server helper templates
+---@field postgres table<string, string>? PostgreSQL helper templates
+---@field mysql table<string, string>? MySQL helper templates
+---@field sqlite table<string, string>? SQLite helper templates
+
+---@class PerformanceConfig
+---@field lazy_load boolean Enable lazy loading (default: true)
+---@field page_size number Number of items to load per page (0 = load all)
+---@field async boolean Use async operations where possible (default: true)
 
 ---Default configuration
 ---@type SsnsConfig
@@ -39,16 +73,20 @@ local default_config = {
     -- Example:
     -- dev = "sqlserver://localhost/DevDB",
     -- prod = "sqlserver://user:pass@server\\SQLEXPRESS/ProductionDB",
+    -- postgres_local = "postgres://postgres:password@localhost:5432/mydb",
+    -- mysql_local = "mysql://root@localhost/mydb",
+    -- sqlite_local = "sqlite://./data/app.db",
   },
 
   ui = {
     position = "left",  -- "left", "right", "float"
     width = 40,
-    height = nil,  -- Only used for float
+    height = 30,  -- Only used for float
     ssms_style = true,
     show_schema_prefix = true,
     auto_expand_depth = nil,  -- nil = don't auto-expand
     smart_cursor_positioning = true,  -- Enable smart cursor positioning on j/k
+    show_help = true,  -- Show help text at top of tree
     -- Divider between multiple result sets
     -- Format: supports repeat patterns (N<char>), raw strings, variables, and auto-width
     -- Repeat: "20#" = 20 hashes, "10-" = 10 dashes
@@ -73,11 +111,77 @@ local default_config = {
       index = "",
       key = "",
       action = "",
+      sequence = "",
+      synonym = "",
     },
   },
 
   cache = {
     ttl = 300,  -- 5 minutes
+    enabled = true,  -- Enable query result caching
+  },
+
+  query = {
+    default_limit = 100,  -- Default LIMIT for SELECT queries (0 = no limit)
+    timeout = 30000,  -- Query timeout in milliseconds (30 seconds, 0 = no timeout)
+    auto_execute_on_open = false,  -- Auto-execute query when opening action
+  },
+
+  keymaps = {
+    toggle = "<CR>",  -- Toggle expand/collapse or execute action
+    execute = "<Leader>r",  -- Execute query
+    execute_selection = "<Leader>r",  -- Execute visual selection (in visual mode)
+    save_query = "<Leader>s",  -- Save query to file
+    close = "q",  -- Close SSNS window
+    refresh = "r",  -- Refresh current node
+    refresh_all = "R",  -- Refresh all servers
+    help = "?",  -- Show help
+    toggle_connection = "S",  -- Toggle server connection
+  },
+
+  table_helpers = {
+    sqlserver = {
+      ["SELECT Top 100"] = "SELECT TOP 100 * FROM {table};",
+      ["SELECT Top 1000"] = "SELECT TOP 1000 * FROM {table};",
+      ["Count"] = "SELECT COUNT(*) AS row_count FROM {table};",
+      ["Describe"] = "EXEC sp_help '{table}';",
+      ["INSERT Template"] = "INSERT INTO {table} ({columns})\nVALUES ({values});",
+      ["UPDATE Template"] = "UPDATE {table}\nSET {column} = {value}\nWHERE {condition};",
+      ["DELETE Template"] = "DELETE FROM {table}\nWHERE {condition};",
+    },
+    postgres = {
+      ["SELECT Limit 100"] = "SELECT * FROM {table} LIMIT 100;",
+      ["SELECT Limit 1000"] = "SELECT * FROM {table} LIMIT 1000;",
+      ["Count"] = "SELECT COUNT(*) AS row_count FROM {table};",
+      ["Describe"] = "\\d+ {table}",
+      ["INSERT Template"] = "INSERT INTO {table} ({columns})\nVALUES ({values})\nRETURNING *;",
+      ["UPDATE Template"] = "UPDATE {table}\nSET {column} = {value}\nWHERE {condition}\nRETURNING *;",
+      ["DELETE Template"] = "DELETE FROM {table}\nWHERE {condition};",
+    },
+    mysql = {
+      ["SELECT Limit 100"] = "SELECT * FROM {table} LIMIT 100;",
+      ["SELECT Limit 1000"] = "SELECT * FROM {table} LIMIT 1000;",
+      ["Count"] = "SELECT COUNT(*) AS row_count FROM {table};",
+      ["Describe"] = "DESCRIBE {table};",
+      ["INSERT Template"] = "INSERT INTO {table} ({columns})\nVALUES ({values});",
+      ["UPDATE Template"] = "UPDATE {table}\nSET {column} = {value}\nWHERE {condition};",
+      ["DELETE Template"] = "DELETE FROM {table}\nWHERE {condition};",
+    },
+    sqlite = {
+      ["SELECT Limit 100"] = "SELECT * FROM {table} LIMIT 100;",
+      ["SELECT Limit 1000"] = "SELECT * FROM {table} LIMIT 1000;",
+      ["Count"] = "SELECT COUNT(*) AS row_count FROM {table};",
+      ["Describe"] = "PRAGMA table_info({table});",
+      ["INSERT Template"] = "INSERT INTO {table} ({columns})\nVALUES ({values});",
+      ["UPDATE Template"] = "UPDATE {table}\nSET {column} = {value}\nWHERE {condition};",
+      ["DELETE Template"] = "DELETE FROM {table}\nWHERE {condition};",
+    },
+  },
+
+  performance = {
+    lazy_load = true,  -- Enable lazy loading
+    page_size = 0,  -- Number of items per page (0 = load all)
+    async = true,  -- Use async operations
   },
 }
 
@@ -146,6 +250,31 @@ function Config.get_icon(icon_name)
   return Config.current.ui.icons[icon_name] or ""
 end
 
+---Get query configuration
+---@return QueryConfig
+function Config.get_query()
+  return Config.current.query
+end
+
+---Get keymaps configuration
+---@return KeymapsConfig
+function Config.get_keymaps()
+  return Config.current.keymaps
+end
+
+---Get table helpers configuration for a specific database type
+---@param db_type string Database type (sqlserver, postgres, mysql, sqlite)
+---@return table<string, string>?
+function Config.get_table_helpers(db_type)
+  return Config.current.table_helpers[db_type]
+end
+
+---Get performance configuration
+---@return PerformanceConfig
+function Config.get_performance()
+  return Config.current.performance
+end
+
 ---Validate configuration
 ---@param config SsnsConfig
 ---@return boolean valid
@@ -171,9 +300,26 @@ function Config.validate(config)
     return false, "ui.width must be at least 10"
   end
 
-  -- Validate cache TTL
+  -- Validate cache configuration
   if not config.cache or not config.cache.ttl or config.cache.ttl < 0 then
     return false, "cache.ttl must be a positive number"
+  end
+
+  -- Validate query configuration
+  if config.query then
+    if config.query.default_limit and config.query.default_limit < 0 then
+      return false, "query.default_limit must be non-negative"
+    end
+    if config.query.timeout and config.query.timeout < 0 then
+      return false, "query.timeout must be non-negative"
+    end
+  end
+
+  -- Validate performance configuration
+  if config.performance then
+    if config.performance.page_size and config.performance.page_size < 0 then
+      return false, "performance.page_size must be non-negative"
+    end
   end
 
   return true, nil
