@@ -29,7 +29,6 @@ function ProcedureClass.new(opts)
   self.definition_loaded = false
 
   -- Set appropriate icon for procedure
-  self.ui_state.icon = ""  -- Procedure icon
 
   return self
 end
@@ -66,7 +65,6 @@ function ProcedureClass:create_action_nodes()
     name = "EXEC",
     parent = self,
   })
-  exec_action.ui_state.icon = ""
   exec_action.object_type = "action"
   exec_action.action_type = "exec"
   exec_action.is_loaded = true
@@ -76,7 +74,6 @@ function ProcedureClass:create_action_nodes()
     name = "Parameters",
     parent = self,
   })
-  params_group.ui_state.icon = ""
   params_group.object_type = "parameter_group"
 
   -- Override load for parameters group
@@ -99,7 +96,6 @@ function ProcedureClass:create_action_nodes()
     name = "ALTER",
     parent = self,
   })
-  definition_action.ui_state.icon = ""
   definition_action.object_type = "action"
   definition_action.action_type = "alter"
   definition_action.is_loaded = true
@@ -109,7 +105,6 @@ function ProcedureClass:create_action_nodes()
     name = "DROP",
     parent = self,
   })
-  drop_action.ui_state.icon = ""
   drop_action.object_type = "action"
   drop_action.action_type = "drop"
   drop_action.is_loaded = true
@@ -119,7 +114,6 @@ function ProcedureClass:create_action_nodes()
     name = "DEPENDENCIES",
     parent = self,
   })
-  dependencies_action.ui_state.icon = ""
   dependencies_action.object_type = "action"
   dependencies_action.action_type = "dependencies"
   dependencies_action.is_loaded = true

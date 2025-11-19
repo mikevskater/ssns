@@ -35,19 +35,6 @@ function ConstraintClass.new(opts)
   -- Set object type for highlighting
   self.object_type = "key"
 
-  -- Set appropriate icon based on constraint type
-  if self:is_primary_key() then
-    self.ui_state.icon = ""  -- Key icon
-  elseif self:is_foreign_key() then
-    self.ui_state.icon = ""  -- Link icon
-  elseif self:is_unique() then
-    self.ui_state.icon = ""  -- Unique icon
-  elseif self:is_check() then
-    self.ui_state.icon = ""  -- Check icon
-  else
-    self.ui_state.icon = ""  -- Default constraint icon
-  end
-
   return self
 end
 

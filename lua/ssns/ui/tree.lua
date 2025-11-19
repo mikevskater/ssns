@@ -17,6 +17,8 @@ UiTree.object_map = {}
 function UiTree.get_object_icon(object_type, icons)
   -- Map object types to icon names
   local icon_map = {
+    database = icons.database or "",
+    schema = icons.schema or "",
     table = icons.table or "",
     view = icons.view or "",
     procedure = icons.procedure or "",
@@ -24,8 +26,10 @@ function UiTree.get_object_icon(object_type, icons)
     column = icons.column or "",
     index = icons.index or "",
     key = icons.key or "",
+    parameter = icons.parameter or "",
     sequence = icons.sequence or "",
     synonym = icons.synonym or "",
+    action = icons.action or "",
     -- Groups use folder icon
     databases_group = icons.schema or "",
     tables_group = icons.schema or "",
@@ -376,6 +380,10 @@ function UiTree.render_aligned_group(group, lines, indent_level)
     end
   end
 
+  -- Get config for icons
+  local Config = require('ssns.config')
+  local icons = Config.get_ui().icons
+
   -- Second pass: Render with aligned columns
   for i, row in ipairs(formatted_rows) do
     local parts = {}
@@ -385,13 +393,17 @@ function UiTree.render_aligned_group(group, lines, indent_level)
       table.insert(parts, padded)
     end
 
-    -- Add extra spacing to align with action nodes (which have "  " prefix for no arrow)
-    local line = indent .. "  " .. table.concat(parts, " | ")
+    -- Get icon for this object type
+    local child = children[i]
+    local obj_icon = UiTree.get_object_icon(child.object_type, icons)
+
+    -- Add icon and aligned content
+    local line = indent .. "  " .. obj_icon .. " " .. table.concat(parts, " | ")
     table.insert(lines, line)
 
     -- Map line to the original child object
-    UiTree.line_map[#lines] = children[i]
-    UiTree.object_map[children[i]] = #lines
+    UiTree.line_map[#lines] = child
+    UiTree.object_map[child] = #lines
   end
 end
 

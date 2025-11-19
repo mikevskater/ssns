@@ -57,9 +57,6 @@ function ServerClass.new(opts)
   -- Set object type for highlighting
   self.object_type = "server"
 
-  -- Set appropriate icon for server
-  self.ui_state.icon = ""  -- Server icon
-
   return self
 end
 
@@ -189,7 +186,6 @@ function ServerClass:load()
     parent = self,
   })
   databases_group.object_type = "databases_group"
-  databases_group.ui_state.icon = ""
 
   -- Load databases
   local success, query = pcall(self.adapter.get_databases_query, self.adapter)

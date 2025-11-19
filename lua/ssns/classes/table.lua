@@ -35,7 +35,6 @@ function TableClass.new(opts)
   self.constraints_loaded = false
 
   -- Set appropriate icon for table
-  self.ui_state.icon = ""  -- Table icon
 
   return self
 end
@@ -72,7 +71,6 @@ function TableClass:create_action_nodes()
     name = "SELECT",
     parent = self,
   })
-  select_action.ui_state.icon = ""
   select_action.object_type = "action"
   select_action.action_type = "select"
   select_action.is_loaded = true
@@ -82,7 +80,6 @@ function TableClass:create_action_nodes()
     name = "Columns",
     parent = self,
   })
-  columns_group.ui_state.icon = ""
   columns_group.object_type = "column_group"
 
   -- Override load for columns group
@@ -105,7 +102,6 @@ function TableClass:create_action_nodes()
     name = "Indexes",
     parent = self,
   })
-  indexes_group.ui_state.icon = ""
   indexes_group.object_type = "index_group"
 
   -- Override load for indexes group
@@ -128,7 +124,6 @@ function TableClass:create_action_nodes()
     name = "Keys",
     parent = self,
   })
-  keys_group.ui_state.icon = ""
   keys_group.object_type = "key_group"
 
   -- Override load for keys group
@@ -151,7 +146,6 @@ function TableClass:create_action_nodes()
     name = "ALTER",
     parent = self,
   })
-  alter_action.ui_state.icon = ""
   alter_action.object_type = "action"
   alter_action.action_type = "alter"
   alter_action.is_loaded = true
@@ -161,7 +155,6 @@ function TableClass:create_action_nodes()
     name = "DROP",
     parent = self,
   })
-  drop_action.ui_state.icon = ""
   drop_action.object_type = "action"
   drop_action.action_type = "drop"
   drop_action.is_loaded = true
@@ -171,7 +164,6 @@ function TableClass:create_action_nodes()
     name = "DEPENDENCIES",
     parent = self,
   })
-  dependencies_action.ui_state.icon = ""
   dependencies_action.object_type = "action"
   dependencies_action.action_type = "dependencies"
   dependencies_action.is_loaded = true
@@ -181,7 +173,6 @@ function TableClass:create_action_nodes()
     name = "Actions",
     parent = self,
   })
-  actions_group.ui_state.icon = ""
   actions_group.object_type = "actions_group"
   actions_group.is_loaded = true
 
@@ -190,7 +181,6 @@ function TableClass:create_action_nodes()
     name = "COUNT",
     parent = actions_group,
   })
-  count_action.ui_state.icon = ""
   count_action.object_type = "action"
   count_action.action_type = "count"
   count_action.is_loaded = true
@@ -199,7 +189,6 @@ function TableClass:create_action_nodes()
     name = "DESCRIBE",
     parent = actions_group,
   })
-  describe_action.ui_state.icon = ""
   describe_action.object_type = "action"
   describe_action.action_type = "describe"
   describe_action.is_loaded = true
@@ -208,7 +197,6 @@ function TableClass:create_action_nodes()
     name = "INSERT",
     parent = actions_group,
   })
-  insert_action.ui_state.icon = ""
   insert_action.object_type = "action"
   insert_action.action_type = "insert"
   insert_action.is_loaded = true
@@ -217,7 +205,6 @@ function TableClass:create_action_nodes()
     name = "UPDATE",
     parent = actions_group,
   })
-  update_action.ui_state.icon = ""
   update_action.object_type = "action"
   update_action.action_type = "update"
   update_action.is_loaded = true
@@ -226,7 +213,6 @@ function TableClass:create_action_nodes()
     name = "DELETE",
     parent = actions_group,
   })
-  delete_action.ui_state.icon = ""
   delete_action.object_type = "action"
   delete_action.action_type = "delete"
   delete_action.is_loaded = true

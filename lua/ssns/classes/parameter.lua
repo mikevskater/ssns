@@ -37,9 +37,6 @@ function ParameterClass.new(opts)
   -- Set object type for highlighting
   self.object_type = "parameter"
 
-  -- Set appropriate icon for parameter
-  self.ui_state.icon = ""  -- Parameter icon
-
   return self
 end
 

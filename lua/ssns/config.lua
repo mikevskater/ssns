@@ -125,6 +125,7 @@ local default_config = {
       column = "\u{f0ca}",      --
       index = "\u{f0e7}",       --
       key = "\u{f084}",         --
+      parameter = "\u{f12e}",   --
       action = "\u{f04b}",      --
       sequence = "\u{f292}",    --
       synonym = "\u{f0c1}",     --

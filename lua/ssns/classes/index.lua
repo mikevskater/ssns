@@ -31,13 +31,6 @@ function IndexClass.new(opts)
   -- Set object type for highlighting
   self.object_type = "index"
 
-  -- Set appropriate icon for index
-  if self.is_primary then
-    self.ui_state.icon = ""  -- Key icon for primary key
-  else
-    self.ui_state.icon = ""  -- Index icon
-  end
-
   return self
 end
 

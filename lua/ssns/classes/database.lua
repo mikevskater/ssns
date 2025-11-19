@@ -22,9 +22,6 @@ function DbClass.new(opts)
   self.schemas = nil
   self.is_connected = false
 
-  -- Set appropriate icon for database
-  self.ui_state.icon = ""  -- Database icon
-
   return self
 end
 
@@ -317,7 +314,6 @@ function DbClass:create_object_type_groups(tables, views, procedures, functions)
     parent = self,
   })
   tables_group.object_type = "tables_group"
-  tables_group.ui_state.icon = ""
 
   -- Add tables to group (but keep their parent as database for hierarchy)
   for _, table_obj in ipairs(tables) do
@@ -332,7 +328,6 @@ function DbClass:create_object_type_groups(tables, views, procedures, functions)
     parent = self,
   })
   views_group.object_type = "views_group"
-  views_group.ui_state.icon = ""
 
   for _, view_obj in ipairs(views) do
     table.insert(views_group.children, view_obj)
@@ -346,7 +341,6 @@ function DbClass:create_object_type_groups(tables, views, procedures, functions)
     parent = self,
   })
   procs_group.object_type = "procedures_group"
-  procs_group.ui_state.icon = ""
 
   for _, proc_obj in ipairs(procedures) do
     table.insert(procs_group.children, proc_obj)
@@ -360,7 +354,6 @@ function DbClass:create_object_type_groups(tables, views, procedures, functions)
     parent = self,
   })
   funcs_group.object_type = "functions_group"
-  funcs_group.ui_state.icon = ""
 
   for _, func_obj in ipairs(functions) do
     table.insert(funcs_group.children, func_obj)

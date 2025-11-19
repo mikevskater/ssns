@@ -110,6 +110,16 @@ function BaseDbObject:get_adapter()
   return server.adapter
 end
 
+---Get icon from config for this object type
+---@return string
+function BaseDbObject:get_icon()
+  local Config = require('ssns.config')
+  local icons = Config.get_ui().icons
+
+  -- Return the icon for this object type, or fallback to stored icon
+  return icons[self.object_type] or self.ui_state.icon or ""
+end
+
 ---Get the full hierarchical path of this object
 ---@param separator string? Path separator (default: " > ")
 ---@return string

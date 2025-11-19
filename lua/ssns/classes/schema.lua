@@ -28,7 +28,6 @@ function SchemaClass.new(opts)
   self.object_groups = nil
 
   -- Set appropriate icon for schema
-  self.ui_state.icon = ""  -- Folder icon for schema
 
   return self
 end
@@ -199,7 +198,6 @@ function SchemaClass:create_object_groups()
       name = string.format("TABLES (%d)", #self.tables),
       parent = self,
     })
-    tables_group.ui_state.icon = ""
     tables_group.object_type = "table_group"
 
     -- Add actual tables as children of the group
@@ -219,7 +217,6 @@ function SchemaClass:create_object_groups()
       name = string.format("VIEWS (%d)", #self.views),
       parent = self,
     })
-    views_group.ui_state.icon = ""
     views_group.object_type = "view_group"
 
     -- IMPORTANT: Don't change view_obj.parent - keep it as schema for hierarchy
@@ -237,7 +234,6 @@ function SchemaClass:create_object_groups()
       name = string.format("PROCEDURES (%d)", #self.procedures),
       parent = self,
     })
-    procs_group.ui_state.icon = ""
     procs_group.object_type = "procedure_group"
 
     -- IMPORTANT: Don't change proc_obj.parent - keep it as schema for hierarchy
@@ -255,7 +251,6 @@ function SchemaClass:create_object_groups()
       name = string.format("FUNCTIONS (%d)", #self.functions),
       parent = self,
     })
-    funcs_group.ui_state.icon = ""
     funcs_group.object_type = "function_group"
 
     -- IMPORTANT: Don't change func_obj.parent - keep it as schema for hierarchy

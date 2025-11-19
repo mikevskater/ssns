@@ -39,9 +39,6 @@ function ColumnClass.new(opts)
   -- Set object type for highlighting
   self.object_type = "column"
 
-  -- Set appropriate icon for column
-  self.ui_state.icon = ""  -- Column icon
-
   return self
 end
 
