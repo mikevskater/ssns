@@ -32,6 +32,9 @@ function ConstraintClass.new(opts)
   -- Constraints don't have children
   self.is_loaded = true
 
+  -- Set object type for highlighting
+  self.object_type = "key"
+
   -- Set appropriate icon based on constraint type
   if self:is_primary_key() then
     self.ui_state.icon = ""  -- Key icon

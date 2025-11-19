@@ -139,6 +139,42 @@ local default_config = {
       expanded = "\u{f078}",    --
       collapsed = "\u{f054}",   --
     },
+
+    highlights = {
+      -- Server type-specific highlights (by database type)
+      server_sqlserver = { fg = "#569CD6", bold = true },  -- Blue (SQL Server)
+      server_postgres = { fg = "#4EC9B0", bold = true },   -- Cyan (PostgreSQL)
+      server_mysql = { fg = "#CE9178", bold = true },      -- Orange (MySQL)
+      server_sqlite = { fg = "#B5CEA8", bold = true },     -- Green (SQLite)
+      server_bigquery = { fg = "#C586C0", bold = true },   -- Purple (BigQuery)
+      server = { fg = "#808080", bold = true },            -- Gray (unknown/default)
+
+      -- Object type highlights
+      database = { fg = "#9CDCFE" },                       -- Light Blue (databases)
+      schema = { fg = "#C586C0" },                         -- Purple (schemas)
+      table = { fg = "#4FC1FF" },                          -- Bright Blue (tables)
+      view = { fg = "#DCDCAA" },                           -- Yellow (views)
+      procedure = { fg = "#CE9178" },                      -- Orange (procedures)
+      ["function"] = { fg = "#4EC9B0" },                   -- Cyan (functions)
+      column = { fg = "#9CDCFE" },                         -- Light Blue (columns)
+      index = { fg = "#D7BA7D" },                          -- Gold (indexes)
+      key = { fg = "#569CD6" },                            -- Blue (keys)
+      parameter = { fg = "#DCDCAA" },                      -- Yellow (parameters)
+      sequence = { fg = "#B5CEA8" },                       -- Green (sequences)
+      synonym = { fg = "#808080" },                        -- Gray (synonyms)
+      action = { fg = "#C586C0" },                         -- Purple (actions)
+      group = { fg = "#858585", bold = true },             -- Gray bold (groups)
+
+      -- Status highlights
+      status_connected = { fg = "#4EC9B0", bold = true },  -- Green/cyan
+      status_disconnected = { fg = "#808080" },            -- Gray
+      status_connecting = { fg = "#DCDCAA" },              -- Yellow
+      status_error = { fg = "#F48771", bold = true },      -- Red
+
+      -- Tree expand/collapse indicators
+      expanded = { fg = "#808080" },                       -- Gray
+      collapsed = { fg = "#808080" },                      -- Gray
+    },
   },
 
   cache = {

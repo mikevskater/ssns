@@ -28,6 +28,9 @@ function IndexClass.new(opts)
   -- Indexes don't have children
   self.is_loaded = true
 
+  -- Set object type for highlighting
+  self.object_type = "index"
+
   -- Set appropriate icon for index
   if self.is_primary then
     self.ui_state.icon = ""  -- Key icon for primary key

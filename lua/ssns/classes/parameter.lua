@@ -34,6 +34,9 @@ function ParameterClass.new(opts)
   -- Parameters don't have children
   self.is_loaded = true
 
+  -- Set object type for highlighting
+  self.object_type = "parameter"
+
   -- Set appropriate icon for parameter
   self.ui_state.icon = ""  -- Parameter icon
 

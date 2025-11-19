@@ -36,6 +36,9 @@ function ColumnClass.new(opts)
   -- Columns don't have children
   self.is_loaded = true
 
+  -- Set object type for highlighting
+  self.object_type = "column"
+
   -- Set appropriate icon for column
   self.ui_state.icon = ""  -- Column icon
 
