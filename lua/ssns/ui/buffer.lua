@@ -167,6 +167,13 @@ function UiBuffer.setup_keymaps()
     desc = "Toggle connection",
   })
 
+  -- Set lualine color
+  vim.api.nvim_buf_set_keymap(bufnr, "n", "<Leader>c", "<Cmd>lua require('ssns.ui.tree').set_lualine_color()<CR>", {
+    noremap = true,
+    silent = true,
+    desc = "Set lualine color",
+  })
+
   -- Help
   vim.api.nvim_buf_set_keymap(bufnr, "n", "?", "<Cmd>lua require('ssns.ui.buffer').show_help()<CR>", {
     noremap = true,
@@ -330,16 +337,17 @@ function UiBuffer.show_help()
     "SSNS - SQL Server NeoVim Studio",
     "",
     "Navigation:",
-    "  <CR>, o  - Expand/collapse node",
-    "  q        - Close SSNS",
+    "  <CR>, o    - Expand/collapse node",
+    "  q          - Close SSNS",
     "",
     "Actions:",
-    "  r        - Refresh current node",
-    "  R        - Refresh all servers",
-    "  d        - Toggle connection",
+    "  r          - Refresh current node",
+    "  R          - Refresh all servers",
+    "  d          - Toggle connection",
+    "  <Leader>c  - Set lualine color (server/database)",
     "",
     "Help:",
-    "  ?        - Show this help",
+    "  ?          - Show this help",
   }
 
   -- Create floating window

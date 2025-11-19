@@ -945,4 +945,74 @@ function UiTree.toggle_connection()
   end
 end
 
+---Set lualine color for current server or database
+function UiTree.set_lualine_color()
+  local Buffer = require('ssns.ui.buffer')
+  local line_number = Buffer.get_current_line()
+
+  -- Get object at current line
+  local obj = UiTree.line_map[line_number]
+  if not obj then
+    return
+  end
+
+  -- Determine if it's a server or database
+  local is_server = obj.object_type == "server"
+  local is_database = obj.object_type == "database"
+
+  if not is_server and not is_database then
+    vim.notify("SSNS: Can only set lualine color on servers or databases", vim.log.levels.WARN)
+    return
+  end
+
+  -- Get the name to use for color lookup
+  local name = nil
+  if is_server then
+    -- For servers, use server name from connection string
+    local ConnectionString = require('ssns.connection_string')
+    local parsed = ConnectionString.parse(obj.connection_string)
+
+    if parsed.scheme == "sqlite" then
+      -- For SQLite, use the full file path
+      -- Note: The parser incorrectly splits Windows paths into host/instance/path
+      if parsed.host then
+        name = parsed.host
+        if parsed.instance then
+          -- Reconstruct full path from split parts
+          name = name .. "/" .. parsed.instance
+        end
+        if parsed.path then
+          name = name .. parsed.path
+        end
+        -- Normalize backslashes to forward slashes for consistency
+        name = name:gsub("\\", "/")
+      elseif parsed.path then
+        -- Just path (remove leading slash)
+        name = parsed.path:match("^/(.*)") or parsed.path
+        name = name:gsub("\\", "/")
+      else
+        name = ":memory:"
+      end
+    elseif parsed.host then
+      -- Build server name: host[\instance]
+      name = parsed.host
+      if parsed.instance then
+        name = name .. "\\" .. parsed.instance
+      end
+    end
+  elseif is_database then
+    -- For databases, use database name
+    name = obj.db_name
+  end
+
+  if not name then
+    vim.notify("SSNS: Could not determine name for color setting", vim.log.levels.ERROR)
+    return
+  end
+
+  -- Prompt for color
+  local LualineColors = require('ssns.lualine_colors')
+  LualineColors.prompt_set_color(name, is_server)
+end
+
 return UiTree

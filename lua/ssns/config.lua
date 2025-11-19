@@ -6,6 +6,7 @@
 ---@field keymaps KeymapsConfig Keymap configuration
 ---@field table_helpers TableHelpersConfig Table helper templates per database type
 ---@field performance PerformanceConfig Performance tuning options
+---@field lualine LualineConfig Lualine statusline integration
 
 ---@class UiConfig
 ---@field position string Window position: "left", "right", "float"
@@ -71,6 +72,12 @@
 ---@field lazy_load boolean Enable lazy loading (default: true)
 ---@field page_size number Number of items to load per page (0 = load all)
 ---@field async boolean Use async operations where possible (default: true)
+
+---@class LualineConfig
+---@field enabled boolean Enable lualine integration (default: true)
+---@field colors table<string, table> Color map for database connections { fg, bg, gui }
+---@field default_color table? Default color { fg, bg, gui }
+---@field save_colors boolean Save color customizations to file (default: true)
 
 ---Default configuration
 ---@type SsnsConfig
@@ -249,6 +256,23 @@ local default_config = {
     lazy_load = true,  -- Enable lazy loading
     page_size = 0,  -- Number of items per page (0 = load all)
     async = true,  -- Use async operations
+  },
+
+  -- Lualine statusline integration
+  lualine = {
+    enabled = true,  -- Enable lualine component
+    save_colors = true,  -- Save color customizations to file
+    colors = {
+      -- Color configuration (similar to Redgate SSMS color-coding)
+      -- For server-level connections (no database in connection string):
+      --   Use server name: ['localhost'] = { fg = '#ffffff', bg = '#0066cc' }
+      -- For database-level connections (database in connection string):
+      --   Use database name: ['ProductionDB'] = { fg = '#ffffff', bg = '#ff0000' }
+      -- Pattern matching supported:
+      --   ['*prod*'] = { fg = '#ffffff', bg = '#ff0000' },  -- Any server/DB with "prod"
+      --   ['*dev*'] = { fg = '#000000', bg = '#00ff00' },   -- Any server/DB with "dev"
+    },
+    default_color = nil,  -- Default color (nil = use lualine theme)
   },
 }
 
