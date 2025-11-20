@@ -246,22 +246,36 @@ function Connection.execute_with_buffer_context(connection_string, query, buffer
     local chunk_execution_time_ms = (chunk_end_time - chunk_start_time) / 1000000  -- Convert to milliseconds
 
     if not result.success then
-      -- Add chunk context to error
+      -- Add chunk context to error and adjust line number
       if result.error then
         result.error.chunk_number = i
         result.error.total_chunks = #chunks
         result.error.batch_number = chunk.batch_number
         result.error.chunk_database = chunk.database
+
+        -- DEBUG: Log line number adjustment
+        local original_line = result.error.lineNumber
+        vim.notify(string.format("DEBUG: Error original line=%s, chunk.start_line=%s",
+          tostring(original_line), tostring(chunk.start_line)), vim.log.levels.INFO)
+
+        -- Adjust error line number to account for removed USE statements
+        -- and position within original query
+        if result.error.lineNumber and chunk.start_line then
+          result.error.lineNumber = result.error.lineNumber + chunk.start_line - 1
+          vim.notify(string.format("DEBUG: Adjusted line number from %s to %s",
+            tostring(original_line), tostring(result.error.lineNumber)), vim.log.levels.INFO)
+        end
       end
       return result, last_database
     end
 
-    -- Add chunk execution time to each result set in this chunk
+    -- Add chunk execution time and line mapping to each result set in this chunk
     if result.resultSets then
       for _, resultSet in ipairs(result.resultSets) do
         resultSet.chunk_execution_time_ms = chunk_execution_time_ms
         resultSet.chunk_number = i
         resultSet.batch_number = chunk.batch_number
+        resultSet.chunk_start_line = chunk.start_line
       end
     end
 
