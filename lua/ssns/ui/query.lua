@@ -205,13 +205,23 @@ function UiQuery.execute_query(bufnr, visual)
   else
     -- Get entire buffer
     local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+
+    -- DEBUG: Show what we got from buffer
+    -- vim.notify(string.format("DEBUG BUFFER: Read %d lines from buffer", #lines), vim.log.levels.INFO)
+    --for i, line in ipairs(lines) do
+      -- vim.notify(string.format("DEBUG BUFFER: Line %d: [%s] (len=%d)", i, line, #line), vim.log.levels.INFO)
+    --end
+
     sql = table.concat(lines, "\n")
+
+    -- DEBUG: Show concatenated result
+    -- vim.notify(string.format("DEBUG BUFFER: Concatenated SQL length=%d", #sql), vim.log.levels.INFO)
+    -- vim.notify(string.format("DEBUG BUFFER: SQL preview: %s", sql:sub(1, 100):gsub("\n", "\\n")), vim.log.levels.INFO)
   end
 
-  -- Trim whitespace
-  sql = sql:match("^%s*(.-)%s*$")
-
-  if sql == "" then
+  -- Don't trim! We need to preserve exact line numbers for error reporting
+  -- Just check if it's empty (only whitespace)
+  if sql:match("^%s*$") then
     vim.notify("SSNS: No SQL to execute", vim.log.levels.WARN)
     return
   end

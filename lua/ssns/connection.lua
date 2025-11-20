@@ -255,15 +255,15 @@ function Connection.execute_with_buffer_context(connection_string, query, buffer
 
         -- DEBUG: Log line number adjustment
         local original_line = result.error.lineNumber
-        vim.notify(string.format("DEBUG: Error original line=%s, chunk.start_line=%s",
-          tostring(original_line), tostring(chunk.start_line)), vim.log.levels.INFO)
+        -- vim.notify(string.format("DEBUG: Error original line=%s, chunk.start_line=%s",
+          --tostring(original_line), tostring(chunk.start_line)), vim.log.levels.INFO)
 
         -- Adjust error line number to account for removed USE statements
         -- and position within original query
         if result.error.lineNumber and chunk.start_line then
           result.error.lineNumber = result.error.lineNumber + chunk.start_line - 1
-          vim.notify(string.format("DEBUG: Adjusted line number from %s to %s",
-            tostring(original_line), tostring(result.error.lineNumber)), vim.log.levels.INFO)
+          -- vim.notify(string.format("DEBUG: Adjusted line number from %s to %s",
+            --tostring(original_line), tostring(result.error.lineNumber)), vim.log.levels.INFO)
         end
       end
       return result, last_database
@@ -294,8 +294,6 @@ function Connection.execute_with_buffer_context(connection_string, query, buffer
   local combined = combine_multi_chunk_results(all_results, {
     total_chunks = #chunks,
     go_batches = debug_info.go_batches,
-    comments_removed = debug_info.comments_removed.line_comments_removed +
-                       debug_info.comments_removed.block_comments_removed,
     total_execution_time = total_time,
     total_execution_time_ms = total_time_ms
   })

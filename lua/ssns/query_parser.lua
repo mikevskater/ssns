@@ -265,12 +265,17 @@ function QueryParser.extract_database_name(query, start_pos)
     end
   end
 
-  -- Skip optional semicolon and whitespace
-  while i <= len and query:sub(i, i):match("%s") do
+  -- Skip optional semicolon and spaces (NOT newlines!)
+  -- We want to preserve newlines for accurate line number tracking
+  while i <= len and query:sub(i, i):match("[ \t]") do
     i = i + 1
   end
   if i <= len and query:sub(i, i) == ";" then
     i = i + 1
+    -- Skip spaces after semicolon (but NOT newlines)
+    while i <= len and query:sub(i, i):match("[ \t]") do
+      i = i + 1
+    end
   end
 
   if #db_name == 0 then
@@ -443,6 +448,9 @@ end
 ---@param use_positions table Array of USE statement positions
 ---@return table chunks Array of chunks with start_line tracking
 function QueryParser.split_query_at_use_statements(query, use_positions)
+  -- DEBUG: Show the first 150 characters of the query
+  -- vim.notify(string.format("DEBUG SPLIT: Query length=%d, preview: %s",
+  --   #query, query:sub(1, 150):gsub("\n", "\\n"):gsub("\r", "\\r")), vim.log.levels.INFO)
   local chunks = {}
 
   -- If no USE statements, return entire query as one chunk
@@ -461,19 +469,50 @@ function QueryParser.split_query_at_use_statements(query, use_positions)
   local current_database = nil
 
   for _, use_info in ipairs(use_positions) do
+    -- vim.notify(string.format("DEBUG SPLIT: Processing USE at pos=%d, line=%d, db=%s",
+    --   use_info.start_pos, use_info.line_num, use_info.database), vim.log.levels.INFO)
+    -- vim.notify(string.format("DEBUG SPLIT: USE ends at pos=%d", use_info.end_pos), vim.log.levels.INFO)
+
+    -- Show characters around the USE statement
+    -- local before_use = query:sub(math.max(1, use_info.start_pos - 5), use_info.start_pos - 1)
+    -- local after_use = query:sub(use_info.end_pos, math.min(#query, use_info.end_pos + 10))
+    -- vim.notify(string.format("DEBUG SPLIT: Before USE: %s", before_use:gsub("\n", "\\n"):gsub("\r", "\\r")), vim.log.levels.INFO)
+    -- vim.notify(string.format("DEBUG SPLIT: After USE: %s", after_use:gsub("\n", "\\n"):gsub("\r", "\\r")), vim.log.levels.INFO)
+
+    -- vim.notify(string.format("DEBUG SPLIT: current_pos=%d, current_line=%d",
+    --   current_pos, current_line), vim.log.levels.INFO)
+
     -- Add chunk before this USE statement (if any content)
     if use_info.start_pos > current_pos then
       local chunk_sql = query:sub(current_pos, use_info.start_pos - 1)
       local trimmed = chunk_sql:match("^%s*(.-)%s*$")
 
       if trimmed and trimmed ~= "" then
+        -- Chunk starts at current_line (the line we're on when we start reading the chunk)
+        -- We keep ALL whitespace/newlines in the chunk so SQL Server sees the same line numbers
+        -- vim.notify(string.format("DEBUG SPLIT: Adding chunk with start_line=%d, sql=%s",
+        --   current_line, chunk_sql:sub(1, 50):gsub("\n", "\\n")), vim.log.levels.INFO)
+
         table.insert(chunks, {
-          sql = chunk_sql,  -- Keep original with whitespace for line numbers
+          sql = chunk_sql,  -- Keep ALL original whitespace for line number accuracy
           database = current_database,
           has_use = false,
           start_line = current_line
         })
       end
+
+      -- Update current_line to account for ALL newlines in this chunk
+      local newline_count = 0
+      for i = current_pos, use_info.start_pos - 1 do
+        if query:sub(i, i) == "\n" then
+          current_line = current_line + 1
+          newline_count = newline_count + 1
+          -- vim.notify(string.format("DEBUG SPLIT: Found \\n at pos %d, current_line now=%d",
+          --   i, current_line), vim.log.levels.INFO)
+        end
+      end
+      -- vim.notify(string.format("DEBUG SPLIT: After chunk (pos %d to %d), counted %d newlines, current_line=%d",
+      --   current_pos, use_info.start_pos - 1, newline_count, current_line), vim.log.levels.INFO)
     end
 
     -- Add database switch chunk
@@ -486,14 +525,19 @@ function QueryParser.split_query_at_use_statements(query, use_positions)
 
     current_database = use_info.database
 
-    -- Count lines from current_pos to end of USE statement
-    for i = current_pos, use_info.end_pos - 1 do
+    -- Count lines from USE start to USE end
+    local newlines_in_use = 0
+    for i = use_info.start_pos, use_info.end_pos - 1 do
       if query:sub(i, i) == "\n" then
         current_line = current_line + 1
+        newlines_in_use = newlines_in_use + 1
       end
     end
+    -- vim.notify(string.format("DEBUG SPLIT: Counted %d newlines in USE statement (pos %d to %d), current_line now=%d",
+    --   newlines_in_use, use_info.start_pos, use_info.end_pos - 1, current_line), vim.log.levels.INFO)
 
     current_pos = use_info.end_pos
+    -- vim.notify(string.format("DEBUG SPLIT: current_pos now=%d", current_pos), vim.log.levels.INFO)
   end
 
   -- Add final chunk after last USE statement
@@ -502,8 +546,12 @@ function QueryParser.split_query_at_use_statements(query, use_positions)
     local trimmed = chunk_sql:match("^%s*(.-)%s*$")
 
     if trimmed and trimmed ~= "" then
+      -- Chunk starts at current_line (where we are after processing all previous chunks/USEs)
+      -- vim.notify(string.format("DEBUG SPLIT: Adding final chunk with start_line=%d",
+      --   current_line), vim.log.levels.INFO)
+
       table.insert(chunks, {
-        sql = chunk_sql,  -- Keep original with whitespace
+        sql = chunk_sql,  -- Keep ALL original whitespace for line number accuracy
         database = current_database,
         has_use = false,
         start_line = current_line
@@ -514,244 +562,6 @@ function QueryParser.split_query_at_use_statements(query, use_positions)
   return chunks
 end
 
----OLD FUNCTION BELOW - TO BE DELETED
-function QueryParser.OLD_parse_use_statements_DELETE_ME(query)
-  local i = 1
-  local len = #query
-
-  -- State tracking (same as remove_comments but we DON'T remove)
-  local state = {
-    in_string = false,
-    string_delimiter = nil,
-    in_bracket = false,
-    in_line_comment = false,
-    in_block_comment = false,
-    block_comment_depth = 0
-  }
-
-  -- Track current word for USE detection
-  local word_start = nil
-  local current_word = {}
-
-  while i <= len do
-    local char = query:sub(i, i)
-    local next_char = query:sub(i + 1, i + 1)
-
-    -- ====================
-    -- Track Line Comments (don't remove, just skip parsing)
-    -- ====================
-    if state.in_line_comment then
-      if char == "\n" or char == "\r" then
-        state.in_line_comment = false
-      end
-      i = i + 1
-      goto continue
-    end
-
-    if not state.in_string and not state.in_bracket and not state.in_block_comment
-       and char == "-" and next_char == "-" then
-      state.in_line_comment = true
-      i = i + 2
-      goto continue
-    end
-
-    -- ====================
-    -- Track Block Comments (don't remove, just skip parsing)
-    -- ====================
-    if state.in_block_comment then
-      if char == "/" and next_char == "*" then
-        state.block_comment_depth = state.block_comment_depth + 1
-        i = i + 2
-        goto continue
-      end
-      if char == "*" and next_char == "/" then
-        state.block_comment_depth = state.block_comment_depth - 1
-        if state.block_comment_depth == 0 then
-          state.in_block_comment = false
-        end
-        i = i + 2
-        goto continue
-      end
-      i = i + 1
-      goto continue
-    end
-
-    if not state.in_string and not state.in_bracket
-       and char == "/" and next_char == "*" then
-      state.in_block_comment = true
-      state.block_comment_depth = 1
-      i = i + 2
-      goto continue
-    end
-
-    -- ====================
-    -- Handle String Literals
-    -- ====================
-
-    if state.in_string then
-
-      if char == state.string_delimiter then
-        if next_char == state.string_delimiter then
-          -- Escaped quote
-          table.insert(current_chunk, next_char)
-          i = i + 2
-          goto continue
-        else
-          -- End of string
-          state.in_string = false
-          state.string_delimiter = nil
-        end
-      end
-
-      i = i + 1
-      goto continue
-    end
-
-    if not state.in_bracket and (char == "'" or char == '"') then
-      -- Start of string
-      state.in_string = true
-      state.string_delimiter = char
-      table.insert(current_chunk, char)
-      i = i + 1
-      goto continue
-    end
-
-    -- ====================
-    -- Handle Bracketed Identifiers
-    -- ====================
-
-    if state.in_bracket then
-      table.insert(current_chunk, char)
-
-      if char == "]" then
-        if next_char == "]" then
-          -- Escaped bracket
-          table.insert(current_chunk, next_char)
-          i = i + 2
-          goto continue
-        else
-          state.in_bracket = false
-        end
-      end
-
-      i = i + 1
-      goto continue
-    end
-
-    if char == "[" then
-      state.in_bracket = true
-      table.insert(current_chunk, char)
-      i = i + 1
-      goto continue
-    end
-
-    -- ====================
-    -- Detect USE Statements
-    -- Must be at word boundary (start of line or after whitespace)
-    -- ====================
-
-    -- Check if we're at a potential word boundary
-    local is_word_char = char:match("[%w_]") ~= nil
-
-    if is_word_char then
-      -- Building a word
-      if not word_start then
-        word_start = i
-      end
-      table.insert(current_word, char:upper())  -- Case insensitive
-    else
-      -- End of word (or not in word)
-      if word_start then
-        -- We just finished a word
-        local word = table.concat(current_word)
-
-        -- Check if it's USE
-        if word == "USE" then
-          -- Found USE statement!
-          -- Extract database name
-          local db_name, use_end_pos = QueryParser.extract_database_name(query, i)
-
-          if db_name then
-            -- Save current chunk (before USE)
-            local chunk_text = table.concat(current_chunk):match("^%s*(.-)%s*$")
-            if chunk_text and chunk_text ~= "" then
-              table.insert(chunks, {
-                database = nil,
-                sql = chunk_text,
-                has_use = false,
-                start_line = chunk_start_line or 1
-              })
-            end
-            current_chunk = {}
-
-            -- Create chunk for database switch
-            table.insert(chunks, {
-              database = db_name,
-              sql = "",
-              has_use = true,
-              start_line = current_line
-            })
-
-            -- Next chunk will start on the next line (or later if there are empty lines)
-            -- We'll update chunk_start_line when we encounter the first non-whitespace
-            chunk_start_line = nil  -- Mark as "needs to be set"
-
-            -- Count newlines in the skipped portion (from current i to use_end_pos)
-            for skip_i = i, use_end_pos - 1 do
-              if query:sub(skip_i, skip_i) == "\n" then
-                current_line = current_line + 1
-              end
-            end
-
-            -- Skip to after USE statement
-            i = use_end_pos
-            word_start = nil
-            current_word = {}
-            goto continue
-          end
-        end
-
-        -- Not USE, or failed to parse - add word to chunk
-        for j = word_start, i - 1 do
-          table.insert(current_chunk, query:sub(j, j))
-        end
-
-        word_start = nil
-        current_word = {}
-      end
-
-      -- Add current character to chunk
-      table.insert(current_chunk, char)
-
-      -- Set chunk_start_line on first non-whitespace character
-      if chunk_start_line == nil and char:match("%S") then
-        chunk_start_line = current_line
-      end
-    end
-
-    -- Track line numbers
-    if char == "\n" then
-      current_line = current_line + 1
-    end
-
-    i = i + 1
-
-    ::continue::
-  end
-
-  -- Add final chunk
-  local final_text = table.concat(current_chunk):match("^%s*(.-)%s*$")
-  if final_text and final_text ~= "" then
-    table.insert(chunks, {
-      database = nil,
-      sql = final_text,
-      has_use = false,
-      start_line = chunk_start_line or 1
-    })
-  end
-
-  return chunks
-end
 
 ---Split query by GO separators (SSMS-specific)
 ---GO must be on its own line (with optional whitespace)
@@ -763,8 +573,34 @@ function QueryParser.split_by_go(query)
   local current_line = 1
   local batch_start_line = 1
 
-  -- Split into lines
-  for line in query:gmatch("[^\r\n]+") do
+  -- Split into lines, preserving blank lines
+  -- We need to split manually to preserve empty lines
+  local lines = {}
+  local current_pos = 1
+  local query_len = #query
+
+  while current_pos <= query_len do
+    local line_end = query:find("[\r\n]", current_pos)
+
+    if not line_end then
+      -- Last line (no newline at end)
+      table.insert(lines, query:sub(current_pos))
+      break
+    end
+
+    -- Extract line (without the newline)
+    table.insert(lines, query:sub(current_pos, line_end - 1))
+
+    -- Skip the newline character(s)
+    if query:sub(line_end, line_end) == "\r" and query:sub(line_end + 1, line_end + 1) == "\n" then
+      current_pos = line_end + 2  -- Skip \r\n
+    else
+      current_pos = line_end + 1  -- Skip \n or \r
+    end
+  end
+
+  -- Process lines
+  for _, line in ipairs(lines) do
     -- Check if line is just GO (case-insensitive, optional whitespace)
     if line:match("^%s*[Gg][Oo]%s*$") then
       -- This is a GO separator
@@ -778,7 +614,7 @@ function QueryParser.split_by_go(query)
       -- Next batch starts on the next line
       batch_start_line = current_line + 1
     else
-      -- Regular line
+      -- Regular line (including blank lines!)
       table.insert(current_batch, line)
     end
     current_line = current_line + 1
@@ -828,9 +664,9 @@ function QueryParser.parse_query(query, buffer_database)
           local absolute_start_line = (chunk.start_line or 1) + batch_start_line - 1
 
           -- DEBUG: Log chunk creation
-          vim.notify(string.format("DEBUG: Creating chunk - batch_start=%d, chunk_start=%d, absolute=%d, sql=%s",
-            batch_start_line, chunk.start_line or 1, absolute_start_line,
-            chunk.sql:sub(1, 50):gsub("\n", " ")), vim.log.levels.INFO)
+          -- vim.notify(string.format("DEBUG: Creating chunk - batch_start=%d, chunk_start=%d, absolute=%d, sql=%s",
+          --   batch_start_line, chunk.start_line or 1, absolute_start_line,
+          --   chunk.sql:sub(1, 50):gsub("\n", " ")), vim.log.levels.INFO)
 
           table.insert(all_chunks, {
             sql = chunk.sql,
@@ -845,7 +681,6 @@ function QueryParser.parse_query(query, buffer_database)
   end
 
   return all_chunks, {
-    comments_removed = comment_debug,
     go_batches = #go_batches,
     total_chunks = #all_chunks
   }
