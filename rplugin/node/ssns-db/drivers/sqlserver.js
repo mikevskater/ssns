@@ -34,9 +34,23 @@ class SqlServerDriver extends BaseDriver {
 
     console.error('[DEBUG] Original connection string:', connStr);
 
-    // Remove sqlserver:// prefix
-    const cleaned = connStr.replace(/^sqlserver:\/\//, '');
-    console.error('[DEBUG] After removing prefix:', cleaned);
+    // Extract query parameters (e.g., ?driver=...)
+    let cleaned = connStr.replace(/^sqlserver:\/\//, '');
+    let driverParam = null;
+
+    const queryParamMatch = cleaned.match(/\?(.+)$/);
+    if (queryParamMatch) {
+      const params = new URLSearchParams(queryParamMatch[1]);
+      driverParam = params.get('driver');
+      if (driverParam) {
+        // URL decode the driver name (URLSearchParams does this automatically)
+        console.error('[DEBUG] Extracted driver parameter:', driverParam);
+      }
+      // Remove query params from connection string
+      cleaned = cleaned.replace(/\?.*$/, '');
+    }
+
+    console.error('[DEBUG] After removing prefix and params:', cleaned);
 
     // Parse authentication (if present)
     let auth = null;
@@ -105,14 +119,21 @@ class SqlServerDriver extends BaseDriver {
     } else {
       // Windows authentication - use msnodesqlv8 (native ODBC)
       // Build connection string for msnodesqlv8
-      // Try ODBC Driver 17/18 first (modern), then fall back to older drivers
       const instancePart = instanceName ? `\\${instanceName}` : '';
-      const connectionString = `Driver={ODBC Driver 17 for SQL Server};Server=${server}${instancePart};Database=${database || 'master'};Trusted_Connection=yes;`;
 
-      console.error('[DEBUG] Using Windows auth with connection string:', connectionString);
+      // Use driver from Lua if provided, otherwise use default
+      const driver = driverParam || 'ODBC Driver 17 for SQL Server';
+
+      const connectionString = `Driver={${driver}};Server=${server}${instancePart};Database=${database || 'master'};Trusted_Connection=yes;TrustServerCertificate=yes;`;
+
+      console.error('[DEBUG] Using Windows auth with driver:', driver);
+      console.error('[DEBUG] Connection string:', connectionString);
 
       return {
-        config: { connectionString: connectionString },
+        config: {
+          connectionString: connectionString,
+          selectedDriver: driver
+        },
         useNativeDriver: true
       };
     }
@@ -135,17 +156,20 @@ class SqlServerDriver extends BaseDriver {
     if (this.useNativeDriver) {
       // Use msnodesqlv8 for Windows authentication (callback-based API)
       console.error('[DEBUG] Connecting with msnodesqlv8 (Windows auth)');
+      console.error('[DEBUG] Connection string:', this.config.connectionString);
       return new Promise((resolve, reject) => {
         msnodesqlv8.open(this.config.connectionString, (err, conn) => {
           if (err) {
             this.isConnected = false;
             console.error('[DEBUG] Connection error:', err);
-            reject(new Error(`SQL Server connection failed: ${err.message || err}`));
+            console.error('[DEBUG] Error details:', JSON.stringify(err, null, 2));
+            reject(new Error(`SQL Server Windows Auth connection failed: ${err.message || err}\nConnection string: ${this.config.connectionString}`));
             return;
           }
 
           this.connection = conn;
           this.isConnected = true;
+          console.error('[DEBUG] Successfully connected with msnodesqlv8');
           resolve();
         });
       });

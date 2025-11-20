@@ -3,10 +3,72 @@
 ---@class ConnectionString
 local ConnectionString = {}
 
+---Cached ODBC driver (so we don't query every time)
+---@type string?
+local cached_odbc_driver = nil
+
+---Get the best available ODBC driver for SQL Server
+---@return string? driver_name The best ODBC driver name, or nil if none found
+function ConnectionString.get_best_odbc_driver()
+  -- Return cached value if available
+  if cached_odbc_driver then
+    return cached_odbc_driver
+  end
+
+  -- Preferred drivers in order
+  local preferred_drivers = {
+    'ODBC Driver 18 for SQL Server',
+    'ODBC Driver 17 for SQL Server',
+    'ODBC Driver 13 for SQL Server',
+    'ODBC Driver 11 for SQL Server',
+    'SQL Server Native Client 11.0',
+    'SQL Server'
+  }
+
+  -- Query available drivers using PowerShell
+  local powershell_cmd = [[powershell -NoProfile -Command "Get-OdbcDriver | Where-Object {$_.Name -like '*SQL Server*'} | Select-Object -ExpandProperty Name"]]
+
+  local handle = io.popen(powershell_cmd)
+  if not handle then
+    -- Fallback to default if PowerShell fails
+    cached_odbc_driver = 'ODBC Driver 17 for SQL Server'
+    return cached_odbc_driver
+  end
+
+  local available_drivers = {}
+  for line in handle:lines() do
+    local trimmed = line:match("^%s*(.-)%s*$")  -- Trim whitespace
+    if trimmed and trimmed ~= "" then
+      table.insert(available_drivers, trimmed)
+    end
+  end
+  handle:close()
+
+  -- Find the best match from preferred list
+  for _, preferred in ipairs(preferred_drivers) do
+    for _, available in ipairs(available_drivers) do
+      if available == preferred then
+        cached_odbc_driver = preferred
+        return cached_odbc_driver
+      end
+    end
+  end
+
+  -- If no preferred driver found, use the first available one
+  if #available_drivers > 0 then
+    cached_odbc_driver = available_drivers[1]
+    return cached_odbc_driver
+  end
+
+  -- No drivers found, use default fallback
+  cached_odbc_driver = 'ODBC Driver 17 for SQL Server'
+  return cached_odbc_driver
+end
+
 ---Parse a connection string into components
 ---Based on vim-dadbod's db#url#parse logic
 ---@param connection_string string The connection string to parse
----@return table parsed {scheme, user, password, host, instance, database, port, path}
+---@return table parsed {scheme, user, password, host, instance, database, port, path, odbc_driver}
 function ConnectionString.parse(connection_string)
   local parsed = {
     scheme = nil,
@@ -17,6 +79,7 @@ function ConnectionString.parse(connection_string)
     database = nil,
     port = nil,
     path = nil,
+    odbc_driver = nil,
     original = connection_string
   }
 
@@ -126,11 +189,19 @@ function ConnectionString.parse(connection_string)
     parsed.database = path:match("^/([^/?#]*)")
   end
 
+  -- For SQL Server without authentication, detect best ODBC driver
+  if parsed.scheme == "sqlserver" or parsed.scheme == "mssql" then
+    if not parsed.user then
+      -- Windows authentication - get best ODBC driver
+      parsed.odbc_driver = ConnectionString.get_best_odbc_driver()
+    end
+  end
+
   return parsed
 end
 
 ---Build a connection string from components
----@param components table {scheme, user, password, host, instance, database, port}
+---@param components table {scheme, user, password, host, instance, database, port, odbc_driver}
 ---@return string connection_string
 function ConnectionString.build(components)
   local parts = {}
@@ -168,6 +239,14 @@ function ConnectionString.build(components)
   if components.database then
     table.insert(parts, "/")
     table.insert(parts, components.database)
+  end
+
+  -- ODBC driver (as query parameter for SQL Server Windows auth)
+  if components.odbc_driver then
+    -- URL-encode the driver name (replace spaces with %20)
+    local encoded_driver = components.odbc_driver:gsub(" ", "%%20")
+    table.insert(parts, "?driver=")
+    table.insert(parts, encoded_driver)
   end
 
   return table.concat(parts)
