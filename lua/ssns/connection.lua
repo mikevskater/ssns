@@ -229,8 +229,10 @@ function Connection.execute_with_buffer_context(connection_string, query, buffer
 
   for i, chunk in ipairs(chunks) do
     -- Build connection string for this chunk's database
+    -- NOTE: SQLite doesn't support USE statements - the database IS the file
+    local is_sqlite = connection_string:match("^sqlite://")
     local chunk_conn_string
-    if chunk.database then
+    if chunk.database and not is_sqlite then
       chunk_conn_string = ConnectionString.with_database(connection_string, chunk.database)
     else
       chunk_conn_string = connection_string
@@ -261,7 +263,11 @@ function Connection.execute_with_buffer_context(connection_string, query, buffer
         -- Adjust error line number to account for removed USE statements
         -- and position within original query
         if result.error.lineNumber and chunk.start_line then
-          result.error.lineNumber = result.error.lineNumber + chunk.start_line - 1
+          -- Convert lineNumber to Lua number (may come as userdata from Node.js)
+          local line_num = tonumber(result.error.lineNumber)
+          if line_num then
+            result.error.lineNumber = line_num + chunk.start_line - 1
+          end
           -- vim.notify(string.format("DEBUG: Adjusted line number from %s to %s",
             --tostring(original_line), tostring(result.error.lineNumber)), vim.log.levels.INFO)
         end

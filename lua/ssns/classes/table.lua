@@ -440,12 +440,9 @@ end
 function TableClass:generate_select(top)
   local adapter = self:get_adapter()
 
-  -- Get database - handle both SQL Server (Table->Schema->Database) and MySQL (Table->Database)
-  local db = self:get_database()
-  local db_name = db and db.db_name or nil
-
+  -- Don't include database name - use the connection context
   local qualified_name = adapter:get_qualified_name(
-    db_name,
+    nil,  -- database_name (use connection context)
     self.schema_name,
     self.table_name
   )
@@ -465,10 +462,9 @@ end
 ---@return string sql
 function TableClass:generate_insert()
   local adapter = self:get_adapter()
-  local db = self:get_database()
-  local db_name = db and db.db_name or nil
+  -- Don't include database name - use the connection context
   local qualified_name = adapter:get_qualified_name(
-    db_name,
+    nil,  -- database_name (use connection context)
     self.schema_name,
     self.table_name
   )
@@ -497,10 +493,9 @@ end
 ---@return string sql
 function TableClass:generate_drop()
   local adapter = self:get_adapter()
-  local db = self:get_database()
-  local db_name = db and db.db_name or nil
+  -- Don't include database name - use the connection context
   local qualified_name = adapter:get_qualified_name(
-    db_name,
+    nil,  -- database_name (use connection context)
     self.schema_name,
     self.table_name
   )
@@ -512,10 +507,9 @@ end
 ---@return string sql
 function TableClass:generate_count()
   local adapter = self:get_adapter()
-  local db = self:get_database()
-  local db_name = db and db.db_name or nil
+  -- Don't include database name - use the connection context
   local qualified_name = adapter:get_qualified_name(
-    db_name,
+    nil,  -- database_name (use connection context)
     self.schema_name,
     self.table_name
   )
@@ -527,10 +521,9 @@ end
 ---@return string sql
 function TableClass:generate_describe()
   local adapter = self:get_adapter()
-  local db = self:get_database()
-  local db_name = db and db.db_name or nil
+  -- Don't include database name - use the connection context
   local qualified_name = adapter:get_qualified_name(
-    db_name,
+    nil,  -- database_name (use connection context)
     self.schema_name,
     self.table_name
   )
@@ -547,10 +540,9 @@ end
 ---@return string sql
 function TableClass:generate_update()
   local adapter = self:get_adapter()
-  local db = self:get_database()
-  local db_name = db and db.db_name or nil
+  -- Don't include database name - use the connection context
   local qualified_name = adapter:get_qualified_name(
-    db_name,
+    nil,  -- database_name (use connection context)
     self.schema_name,
     self.table_name
   )
@@ -581,10 +573,9 @@ end
 ---@return string sql
 function TableClass:generate_delete()
   local adapter = self:get_adapter()
-  local db = self:get_database()
-  local db_name = db and db.db_name or nil
+  -- Don't include database name - use the connection context
   local qualified_name = adapter:get_qualified_name(
-    db_name,
+    nil,  -- database_name (use connection context)
     self.schema_name,
     self.table_name
   )
@@ -641,10 +632,9 @@ end
 ---@return string sql The CREATE TABLE script
 function TableClass:construct_create_table_from_metadata()
   local adapter = self:get_adapter()
-  local db = self:get_database()
-  local db_name = db and db.db_name or nil
+  -- Don't include database name - use the connection context
   local qualified_name = adapter:get_qualified_name(
-    db_name,
+    nil,  -- database_name (use connection context)
     self.schema_name,
     self.table_name
   )
