@@ -658,6 +658,25 @@ function SqlServerAdapter:parse_functions(result)
   return funcs
 end
 
+---Parse synonym list results
+---@param result table Node.js result object { success, resultSets, metadata, error }
+---@return table synonyms
+function SqlServerAdapter:parse_synonyms(result)
+  local synonyms = {}
+  if result.success and result.resultSets and #result.resultSets > 0 then
+    local rows = result.resultSets[1].rows or {}
+    for _, row in ipairs(rows) do
+      table.insert(synonyms, {
+        schema = row.schema_name,
+        name = row.synonym_name,
+        base_object_name = row.base_object_name,
+        base_object_type = nil,  -- SQL Server sys.synonyms doesn't provide base type
+      })
+    end
+  end
+  return synonyms
+end
+
 ---Parse column list results
 ---@param result table Node.js result object { success, resultSets, metadata, error }
 ---@return table columns

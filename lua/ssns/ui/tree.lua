@@ -284,11 +284,13 @@ function UiTree.render_object(obj, lines, indent_level)
     or obj.object_type == "view"
     or obj.object_type == "procedure"
     or obj.object_type == "function"
+    or obj.object_type == "synonym"
     or obj.object_type == "databases_group"
     or obj.object_type == "tables_group"
     or obj.object_type == "views_group"
     or obj.object_type == "procedures_group"
     or obj.object_type == "functions_group"
+    or obj.object_type == "synonyms_group"
     or obj.object_type == "column_group"
     or obj.object_type == "index_group"
     or obj.object_type == "key_group"
@@ -500,6 +502,13 @@ function UiTree.toggle_node()
   -- Handle action nodes
   if obj.object_type == "action" then
     UiTree.execute_action(obj)
+    return
+  end
+
+  -- Handle object reference nodes (from SCHEMAS group)
+  if obj.object_type == "object_reference" and obj.referenced_object then
+    -- Navigate to the actual object in the main tree
+    UiTree.navigate_to_object(obj.referenced_object)
     return
   end
 
@@ -724,6 +733,16 @@ function UiTree.execute_action(action)
       local sql = parent:generate_delete()
       Query.create_query_buffer(server, database, sql, parent.name)
     end
+  elseif action.action_type == "goto" then
+    -- Navigate to base object in tree (for synonyms)
+    if parent.resolve then
+      local base_object, error_msg = parent:resolve()
+      if base_object then
+        UiTree.navigate_to_object(base_object)
+      else
+        vim.notify(string.format("Cannot navigate: %s", error_msg or "Unknown error"), vim.log.levels.WARN)
+      end
+    end
   end
 end
 
@@ -740,6 +759,10 @@ function UiTree.show_dependencies(obj)
     database = obj.parent  -- Table/View -> Database
     schema_name = obj.schema_name
     object_name = obj.table_name or obj.view_name
+  elseif obj.object_type == "synonym" then
+    database = obj.parent  -- Synonym -> Database
+    schema_name = obj.schema_name
+    object_name = obj.synonym_name
   elseif obj.object_type == "procedure" then
     database = obj.parent  -- Procedure -> Database
     schema_name = obj.schema_name

@@ -50,8 +50,11 @@ function DbClass:load()
   -- Load functions from all schemas
   local functions = self:load_all_functions()
 
+  -- Load synonyms from all schemas
+  local synonyms = self:load_all_synonyms()
+
   -- Create object type groups
-  self:create_object_type_groups(tables, views, procedures, functions)
+  self:create_object_type_groups(tables, views, procedures, functions, synonyms)
 
   self.is_loaded = true
   return true
@@ -128,26 +131,37 @@ function DbClass:get_default_schema()
   return "dbo"  -- Fallback
 end
 
----Load synonyms (SQL Server specific)
----@return boolean success
-function DbClass:load_synonyms()
+---Load all synonyms from all schemas
+---@return table[] Array of synonym objects
+function DbClass:load_all_synonyms()
   local adapter = self:get_adapter()
 
   if not adapter.features.synonyms then
-    return false
+    return {}
   end
 
-  -- Get synonyms query from adapter
+  -- Get synonyms query - pass nil for schema_name to get ALL synonyms
   local query = adapter:get_synonyms_query(self.db_name, nil)
-
-  -- Execute query
-  -- TODO: Implement actual execution
   local results = adapter:execute(self:get_server().connection, query)
+  local synonym_data_list = adapter:parse_synonyms(results)
 
-  -- TODO: Parse and create synonym objects
-  -- This will be implemented when we create SynonymClass
+  local SynonymClass = require('ssns.classes.synonym')
+  local synonyms = {}
+  for _, syn_data in ipairs(synonym_data_list) do
+    -- Pass nil as parent to avoid auto-adding to database.children
+    local syn_obj = SynonymClass.new({
+      name = syn_data.name,
+      schema_name = syn_data.schema,
+      base_object_name = syn_data.base_object_name,
+      base_object_type = syn_data.base_object_type,
+      parent = nil,  -- Don't auto-add to children
+    })
+    -- Set parent manually for hierarchy navigation (without adding to children)
+    syn_obj.parent = self
+    table.insert(synonyms, syn_obj)
+  end
 
-  return true
+  return synonyms
 end
 
 ---Connect to this database (make it the active database)
@@ -302,12 +316,13 @@ function DbClass:load_all_functions()
   return functions
 end
 
----Create object type groups (TABLES, VIEWS, etc.)
+---Create object type groups (TABLES, VIEWS, PROCEDURES, FUNCTIONS, SYNONYMS)
 ---@param tables table[]
 ---@param views table[]
 ---@param procedures table[]
 ---@param functions table[]
-function DbClass:create_object_type_groups(tables, views, procedures, functions)
+---@param synonyms table[]
+function DbClass:create_object_type_groups(tables, views, procedures, functions, synonyms)
   -- Always create TABLES group (even if empty)
   local tables_group = BaseDbObject.new({
     name = string.format("TABLES (%d)", #tables),

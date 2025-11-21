@@ -7,6 +7,7 @@ local BaseDbObject = require('ssns.classes.base')
 ---@field views ViewClass[]? Array of view objects
 ---@field procedures ProcedureClass[]? Array of procedure objects
 ---@field functions FunctionClass[]? Array of function objects
+---@field synonyms SynonymClass[]? Array of synonym objects
 ---@field object_groups table? Grouped objects for UI display
 local SchemaClass = setmetatable({}, { __index = BaseDbObject })
 SchemaClass.__index = SchemaClass
@@ -25,6 +26,7 @@ function SchemaClass.new(opts)
   self.views = nil
   self.procedures = nil
   self.functions = nil
+  self.synonyms = nil
   self.object_groups = nil
 
   -- Set appropriate icon for schema
@@ -32,7 +34,7 @@ function SchemaClass.new(opts)
   return self
 end
 
----Load all objects in this schema (tables, views, procedures, functions)
+---Load all objects in this schema (tables, views, procedures, functions, synonyms)
 ---@return boolean success
 function SchemaClass:load()
   if self.is_loaded then
@@ -44,6 +46,7 @@ function SchemaClass:load()
   self:load_views()
   self:load_procedures()
   self:load_functions()
+  self:load_synonyms()
 
   -- Create object groups for UI display
   self:create_object_groups()
@@ -182,6 +185,43 @@ function SchemaClass:load_functions()
   return true
 end
 
+---Load synonyms in this schema
+---@return boolean success
+function SchemaClass:load_synonyms()
+  local adapter = self:get_adapter()
+  local db = self.parent
+
+  if not adapter.features.synonyms then
+    self.synonyms = {}
+    return true
+  end
+
+  -- Get synonyms query from adapter
+  local query = adapter:get_synonyms_query(db.db_name, self.schema_name)
+
+  -- Execute query
+  local results = adapter:execute(self:get_server().connection, query)
+
+  -- Parse results
+  local synonyms = adapter:parse_synonyms(results)
+
+  -- Create synonym objects
+  self.synonyms = {}
+  for _, syn_data in ipairs(synonyms) do
+    local SynonymClass = require('ssns.classes.synonym')
+    local syn_obj = SynonymClass.new({
+      name = syn_data.name,
+      schema_name = syn_data.schema,
+      base_object_name = syn_data.base_object_name,
+      base_object_type = syn_data.base_object_type,
+      parent = self,
+    })
+    table.insert(self.synonyms, syn_obj)
+  end
+
+  return true
+end
+
 ---Create object groups for UI display (TABLES, VIEWS, PROCEDURES, etc.)
 function SchemaClass:create_object_groups()
   -- Clear existing children and rebuild with groups
@@ -261,6 +301,23 @@ function SchemaClass:create_object_groups()
 
     funcs_group.is_loaded = true
   end
+
+  -- SYNONYMS group
+  if adapter.features.synonyms and self.synonyms and #self.synonyms > 0 then
+    local synonyms_group = BaseDbObject.new({
+      name = string.format("SYNONYMS (%d)", #self.synonyms),
+      parent = self,
+    })
+    synonyms_group.object_type = "synonym_group"
+
+    -- IMPORTANT: Don't change syn_obj.parent - keep it as schema for hierarchy
+    for _, syn_obj in ipairs(self.synonyms) do
+      syn_obj.schema = self
+      table.insert(synonyms_group.children, syn_obj)
+    end
+
+    synonyms_group.is_loaded = true
+  end
 end
 
 ---Reload all objects in this schema
@@ -277,6 +334,7 @@ function SchemaClass:reload()
   self.views = nil
   self.procedures = nil
   self.functions = nil
+  self.synonyms = nil
   self:clear_children()
   self.is_loaded = false
   return self:load()
@@ -316,18 +374,82 @@ function SchemaClass:find_view(view_name)
   return nil
 end
 
+---Find a synonym by name
+---@param synonym_name string
+---@return SynonymClass?
+function SchemaClass:find_synonym(synonym_name)
+  if not self.synonyms then
+    self:load_synonyms()
+  end
+
+  for _, syn_obj in ipairs(self.synonyms) do
+    if syn_obj.name == synonym_name then
+      return syn_obj
+    end
+  end
+
+  return nil
+end
+
+---Get all synonyms in this schema
+---@return SynonymClass[]
+function SchemaClass:get_synonyms()
+  if not self.synonyms then
+    self:load_synonyms()
+  end
+  return self.synonyms or {}
+end
+
+---Get all tables in this schema
+---@return TableClass[]
+function SchemaClass:get_tables()
+  if not self.tables then
+    self:load_tables()
+  end
+  return self.tables or {}
+end
+
+---Get all views in this schema
+---@return ViewClass[]
+function SchemaClass:get_views()
+  if not self.views then
+    self:load_views()
+  end
+  return self.views or {}
+end
+
+---Get all procedures in this schema
+---@return ProcedureClass[]
+function SchemaClass:get_procedures()
+  if not self.procedures then
+    self:load_procedures()
+  end
+  return self.procedures or {}
+end
+
+---Get all functions in this schema
+---@return FunctionClass[]
+function SchemaClass:get_functions()
+  if not self.functions then
+    self:load_functions()
+  end
+  return self.functions or {}
+end
+
 ---Get all objects of a specific type
----@param object_type string "table", "view", "procedure", "function"
+---@param object_type string "table", "view", "procedure", "function", "synonym"
 ---@return BaseDbObject[]
 function SchemaClass:get_objects_by_type(object_type)
   if object_type == "table" then
-    return self.tables or {}
+    return self:get_tables()
   elseif object_type == "view" then
-    return self.views or {}
+    return self:get_views()
   elseif object_type == "procedure" then
-    return self.procedures or {}
+    return self:get_procedures()
   elseif object_type == "function" then
-    return self.functions or {}
+    return self:get_functions()
+  elseif object_type == "synonym" then
+    return self:get_synonyms()
   end
 
   return {}
@@ -341,6 +463,7 @@ function SchemaClass:get_object_count()
   count = count + (self.views and #self.views or 0)
   count = count + (self.procedures and #self.procedures or 0)
   count = count + (self.functions and #self.functions or 0)
+  count = count + (self.synonyms and #self.synonyms or 0)
   return count
 end
 
@@ -361,12 +484,13 @@ end
 ---@return string
 function SchemaClass:to_string()
   return string.format(
-    "SchemaClass{name=%s, tables=%d, views=%d, procs=%d, funcs=%d}",
+    "SchemaClass{name=%s, tables=%d, views=%d, procs=%d, funcs=%d, synonyms=%d}",
     self.name,
     self.tables and #self.tables or 0,
     self.views and #self.views or 0,
     self.procedures and #self.procedures or 0,
-    self.functions and #self.functions or 0
+    self.functions and #self.functions or 0,
+    self.synonyms and #self.synonyms or 0
   )
 end
 
