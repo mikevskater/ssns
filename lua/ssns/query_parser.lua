@@ -201,7 +201,42 @@ function QueryParser.remove_comments(query)
   return table.concat(result), debug
 end
 
----Extract database name after USE keyword
+---Extract database name from USE statement using Tree-sitter (with fallback)
+---Tries Tree-sitter first, falls back to manual parsing
+---@param chunk string SQL chunk to check for USE statement
+---@return string? database Database name or nil if not found
+function QueryParser.extract_use_database(chunk)
+  -- TRY: Tree-sitter based USE detection
+  local Treesitter = require('ssns.completion.metadata.treesitter')
+  local db = Treesitter.extract_use_database(chunk)
+  if db then
+    return db
+  end
+
+  -- FALLBACK: Use existing regex-based USE detection
+  return QueryParser._extract_use_database_regex(chunk)
+end
+
+---Fallback: Extract database name using regex (original implementation)
+---@param chunk string SQL chunk (single GO-separated section)
+---@return string? database Database name or nil
+function QueryParser._extract_use_database_regex(chunk)
+  -- Try bracketed identifier first: USE [database name with spaces]
+  local db = chunk:match("^%s*[Uu][Ss][Ee]%s+%[([^%]]+)%]")
+  if db then
+    return db
+  end
+
+  -- Try regular identifier: USE database
+  db = chunk:match("^%s*[Uu][Ss][Ee]%s+([%w_]+)")
+  if db then
+    return db
+  end
+
+  return nil
+end
+
+---Extract database name after USE keyword (legacy function, still used internally)
 ---Handles: USE DB, USE [DB], USE DB;
 ---@param query string Full query
 ---@param start_pos number Position after USE keyword
@@ -565,16 +600,39 @@ end
 
 ---Split query by GO separators (SSMS-specific)
 ---GO must be on its own line (with optional whitespace)
+---Uses Tree-sitter to validate GO is not in comment/string, with regex fallback
 ---@param query string The SQL query
 ---@return table batches Array of {sql: string, start_line: number}
 function QueryParser.split_by_go(query)
+  -- TRY: Tree-sitter based GO detection
+  if QueryParser._is_treesitter_available() then
+    local batches = QueryParser._split_by_go_treesitter(query)
+    if batches and #batches > 0 then
+      return batches
+    end
+  end
+
+  -- FALLBACK: Use existing regex-based GO detection
+  return QueryParser._split_by_go_regex(query)
+end
+
+---Helper: Check if Tree-sitter is available
+---@return boolean available True if tree-sitter-sql is available
+function QueryParser._is_treesitter_available()
+  local Treesitter = require('ssns.completion.metadata.treesitter')
+  return Treesitter.is_available()
+end
+
+---Tree-sitter based GO splitting (validates GO is not in comment/string)
+---@param query string The SQL query
+---@return table? batches Array of batches or nil if failed
+function QueryParser._split_by_go_treesitter(query)
   local batches = {}
   local current_batch = {}
   local current_line = 1
   local batch_start_line = 1
 
-  -- Split into lines, preserving blank lines
-  -- We need to split manually to preserve empty lines
+  -- Split into lines
   local lines = {}
   local current_pos = 1
   local query_len = #query
@@ -583,19 +641,153 @@ function QueryParser.split_by_go(query)
     local line_end = query:find("[\r\n]", current_pos)
 
     if not line_end then
-      -- Last line (no newline at end)
       table.insert(lines, query:sub(current_pos))
       break
     end
 
-    -- Extract line (without the newline)
     table.insert(lines, query:sub(current_pos, line_end - 1))
 
-    -- Skip the newline character(s)
     if query:sub(line_end, line_end) == "\r" and query:sub(line_end + 1, line_end + 1) == "\n" then
-      current_pos = line_end + 2  -- Skip \r\n
+      current_pos = line_end + 2
     else
-      current_pos = line_end + 1  -- Skip \n or \r
+      current_pos = line_end + 1
+    end
+  end
+
+  -- Process lines with Tree-sitter validation
+  for _, line in ipairs(lines) do
+    -- Check if line matches GO pattern
+    if line:match("^%s*[Gg][Oo]%s*$") then
+      -- Validate GO is not in comment/string using Tree-sitter
+      if QueryParser._is_go_safe(query, current_line) then
+        -- This is a valid GO separator
+        if #current_batch > 0 then
+          table.insert(batches, {
+            sql = table.concat(current_batch, "\n"),
+            start_line = batch_start_line
+          })
+          current_batch = {}
+        end
+        batch_start_line = current_line + 1
+      else
+        -- GO is in comment/string, treat as regular line
+        table.insert(current_batch, line)
+      end
+    else
+      -- Regular line
+      table.insert(current_batch, line)
+    end
+    current_line = current_line + 1
+  end
+
+  -- Add final batch
+  if #current_batch > 0 then
+    table.insert(batches, {
+      sql = table.concat(current_batch, "\n"),
+      start_line = batch_start_line
+    })
+  end
+
+  -- If no GO found, return entire query
+  if #batches == 0 then
+    return {{sql = query, start_line = 1}}
+  end
+
+  return batches
+end
+
+---Helper: Check if GO statement is in comment or string
+---Uses Tree-sitter to validate the GO is safe to use as separator
+---@param query string Full query text
+---@param line_num number Line number to check (1-indexed)
+---@return boolean is_safe True if GO is not in comment/string
+function QueryParser._is_go_safe(query, line_num)
+  -- Parse query with Tree-sitter
+  local Treesitter = require('ssns.completion.metadata.treesitter')
+  local root = Treesitter.parse_sql(query)
+
+  if not root then
+    -- Can't validate, assume safe (fallback to regex behavior)
+    return true
+  end
+
+  -- Split query into lines to find the GO line
+  local lines = vim.split(query, "\n", { plain = true, trimempty = false })
+  local target_line = lines[line_num]
+
+  if not target_line then
+    return true
+  end
+
+  -- Calculate byte offset of the GO line
+  local byte_offset = 0
+  for i = 1, line_num - 1 do
+    byte_offset = byte_offset + #lines[i] + 1 -- +1 for newline
+  end
+
+  -- Find node at GO position
+  local go_start = byte_offset + (target_line:find("[Gg][Oo]") or 0) - 1
+  local node = root:descendant_for_range(line_num - 1, go_start, line_num - 1, go_start + 2)
+
+  if not node then
+    return true
+  end
+
+  -- Check if node is inside comment or string
+  local node_type = node:type()
+  while node do
+    local current_type = node:type()
+
+    -- Check for comment nodes
+    if current_type == "comment" or
+       current_type == "line_comment" or
+       current_type == "block_comment" then
+      return false
+    end
+
+    -- Check for string literal nodes
+    if current_type == "string" or
+       current_type == "string_literal" or
+       current_type == "quoted_identifier" then
+      return false
+    end
+
+    -- Move to parent
+    node = node:parent()
+  end
+
+  -- GO is safe (not in comment or string)
+  return true
+end
+
+---Fallback: Regex-based GO splitting (original implementation)
+---@param query string The SQL query
+---@return table batches Array of {sql: string, start_line: number}
+function QueryParser._split_by_go_regex(query)
+  local batches = {}
+  local current_batch = {}
+  local current_line = 1
+  local batch_start_line = 1
+
+  -- Split into lines, preserving blank lines
+  local lines = {}
+  local current_pos = 1
+  local query_len = #query
+
+  while current_pos <= query_len do
+    local line_end = query:find("[\r\n]", current_pos)
+
+    if not line_end then
+      table.insert(lines, query:sub(current_pos))
+      break
+    end
+
+    table.insert(lines, query:sub(current_pos, line_end - 1))
+
+    if query:sub(line_end, line_end) == "\r" and query:sub(line_end + 1, line_end + 1) == "\n" then
+      current_pos = line_end + 2
+    else
+      current_pos = line_end + 1
     end
   end
 
@@ -611,7 +803,6 @@ function QueryParser.split_by_go(query)
         })
         current_batch = {}
       end
-      -- Next batch starts on the next line
       batch_start_line = current_line + 1
     else
       -- Regular line (including blank lines!)

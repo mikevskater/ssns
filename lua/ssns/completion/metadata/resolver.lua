@@ -184,8 +184,9 @@ end
 ---Used for SELECT/WHERE/ORDER BY (columns from all tables in query)
 ---@param bufnr number Buffer number
 ---@param connection table Connection context
+---@param cursor_pos table? Optional cursor position for scope-aware resolution
 ---@return table[] tables Array of resolved TableClass/ViewClass objects
-function Resolver.resolve_all_tables_in_query(bufnr, connection)
+function Resolver.resolve_all_tables_in_query(bufnr, connection, cursor_pos)
   if not bufnr or not connection then
     return {}
   end
@@ -229,6 +230,39 @@ function Resolver.resolve_all_tables_in_query(bufnr, connection)
   end
 
   return resolved_tables
+end
+
+---Resolve alias to table using scope tracking (enhanced version)
+---Uses ScopeTracker for nested query support
+---@param alias string Alias to resolve
+---@param bufnr number Buffer number
+---@param cursor_pos table? {row, col} Cursor position (optional)
+---@return string? table_name Resolved table name
+function Resolver.resolve_alias_with_scope(alias, bufnr, cursor_pos)
+  -- Get buffer text
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local query = table.concat(lines, '\n')
+
+  -- Try scope-based resolution
+  local success, result = pcall(function()
+    local ScopeTracker = require('ssns.completion.metadata.scope_tracker')
+    local scope_tree = ScopeTracker.build_scope_tree(query, bufnr)
+
+    -- Get available aliases at cursor position
+    cursor_pos = cursor_pos or vim.api.nvim_win_get_cursor(0)
+    local aliases = ScopeTracker.get_available_aliases(scope_tree, cursor_pos)
+
+    -- Resolve alias
+    return aliases[alias:lower()]
+  end)
+
+  if success and result then
+    return result
+  end
+
+  -- Fallback: Use Context.resolve_alias (flat, non-scope-aware)
+  local Context = require('ssns.completion.context')
+  return Context.resolve_alias(alias, bufnr)
 end
 
 ---Helper: Strip brackets/quotes from identifier
