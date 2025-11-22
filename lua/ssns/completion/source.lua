@@ -148,14 +148,14 @@ function Source:get_completions(ctx, callback)
     ParametersProvider.get_completions(provider_ctx, wrapped_callback)
     return
   elseif context_result.type == Context.Type.DATABASE then
-    -- Database completion (Phase 10.5)
-    -- TODO: Implement in providers/databases.lua
-    wrapped_callback({})
+    -- Database completion
+    local DatabasesProvider = require('ssns.completion.providers.databases')
+    DatabasesProvider.get_completions(provider_ctx, wrapped_callback)
     return
   elseif context_result.type == Context.Type.SCHEMA then
-    -- Schema completion (Phase 10.5)
-    -- TODO: Implement in providers/schemas.lua
-    wrapped_callback({})
+    -- Schema completion
+    local SchemasProvider = require('ssns.completion.providers.schemas')
+    SchemasProvider.get_completions(provider_ctx, wrapped_callback)
     return
   elseif context_result.type == Context.Type.KEYWORD then
     -- Keyword completion (Phase 10.7)
