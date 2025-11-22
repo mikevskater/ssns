@@ -128,6 +128,13 @@ function Source:get_completions(ctx, callback)
   local Context = require('ssns.completion.context')
 
   if context_result.type == Context.Type.TABLE then
+    -- Check if this is a JOIN context (Phase 10.8)
+    if context_result.mode == "join" or context_result.mode == "join_qualified" then
+      local JoinsProvider = require('ssns.completion.providers.joins')
+      JoinsProvider.get_completions(provider_ctx, wrapped_callback)
+      return
+    end
+
     -- Table/view/synonym completion (Phase 10.2)
     local TablesProvider = require('ssns.completion.providers.tables')
     TablesProvider.get_completions(provider_ctx, wrapped_callback)
