@@ -138,14 +138,14 @@ function Source:get_completions(ctx, callback)
     ColumnsProvider.get_completions(provider_ctx, wrapped_callback)
     return
   elseif context_result.type == Context.Type.PROCEDURE then
-    -- Procedure/function completion (Phase 10.5)
-    -- TODO: Implement in providers/procedures.lua
-    wrapped_callback({})
+    -- Procedure/function completion (Phase 10.6)
+    local ProceduresProvider = require('ssns.completion.providers.procedures')
+    ProceduresProvider.get_completions(provider_ctx, wrapped_callback)
     return
   elseif context_result.type == Context.Type.PARAMETER then
-    -- Parameter completion (Phase 10.5)
-    -- TODO: Implement in providers/parameters.lua
-    wrapped_callback({})
+    -- Parameter completion (Phase 10.6)
+    local ParametersProvider = require('ssns.completion.providers.parameters')
+    ParametersProvider.get_completions(provider_ctx, wrapped_callback)
     return
   elseif context_result.type == Context.Type.DATABASE then
     -- Database completion (Phase 10.5)
