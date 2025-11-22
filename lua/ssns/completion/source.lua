@@ -104,9 +104,9 @@ function Source:get_completions(ctx, callback)
     TablesProvider.get_completions(provider_ctx, wrapped_callback)
     return
   elseif context_result.type == Context.Type.COLUMN then
-    -- Column completion (Phase 10.3)
-    -- TODO: Implement in providers/columns.lua
-    wrapped_callback({})
+    -- Column completion (Phase 10.3 Week 2)
+    local ColumnsProvider = require('ssns.completion.providers.columns')
+    ColumnsProvider.get_completions(provider_ctx, wrapped_callback)
     return
   elseif context_result.type == Context.Type.PROCEDURE then
     -- Procedure/function completion (Phase 10.5)
