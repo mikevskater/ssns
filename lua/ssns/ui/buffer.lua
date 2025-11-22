@@ -346,51 +346,43 @@ end
 
 ---Show help in floating window
 function UiBuffer.show_help()
+  local UiFloat = require('ssns.ui.float')
+
   local help_lines = {
     "SSNS - SQL Server NeoVim Studio",
     "",
     "Navigation:",
-    "  <CR>, o    - Expand/collapse node",
-    "  q          - Close SSNS",
+    "  <CR>, o      - Expand/collapse node",
+    "  j, k         - Move cursor up/down",
+    "  q            - Close SSNS window",
     "",
     "Actions:",
-    "  r          - Refresh current node",
-    "  R          - Refresh all servers",
-    "  d          - Toggle connection",
-    "  <Leader>c  - Set lualine color (server/database)",
+    "  r            - Refresh current node",
+    "  R            - Refresh all servers",
+    "  d            - Toggle connection",
+    "  <Leader>c    - Set lualine color (server/database)",
     "",
     "Filtering:",
-    "  f          - Open filter editor for group",
-    "  F          - Clear all filters on group",
-    "  <Leader>a  - Apply filters (in filter editor)",
+    "  f            - Open filter UI for group",
+    "  F            - Clear all filters on group",
+    "",
+    "Query History:",
+    "  <Leader>h    - Open query history panel",
     "",
     "Help:",
-    "  ?          - Show this help",
+    "  ?            - Show this help",
   }
 
-  -- Create floating window
-  local buf = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, help_lines)
-
-  local width = 40
-  local height = #help_lines
-  local row = math.floor((vim.o.lines - height) / 2)
-  local col = math.floor((vim.o.columns - width) / 2)
-
-  local win = vim.api.nvim_open_win(buf, true, {
-    relative = "editor",
-    width = width,
-    height = height,
-    row = row,
-    col = col,
-    style = "minimal",
-    border = "rounded",
+  UiFloat.create(help_lines, {
+    title = "SSNS Help",
+    footer = "Press any key to close",
+    width = 50,
+    keymaps = {
+      ['<CR>'] = function()
+        vim.cmd('close')
+      end,
+    }
   })
-
-  -- Close on any key
-  vim.api.nvim_buf_set_keymap(buf, "n", "<Esc>", "<Cmd>close<CR>", { noremap = true, silent = true })
-  vim.api.nvim_buf_set_keymap(buf, "n", "q", "<Cmd>close<CR>", { noremap = true, silent = true })
-  vim.api.nvim_buf_set_keymap(buf, "n", "<CR>", "<Cmd>close<CR>", { noremap = true, silent = true })
 end
 
 ---Write lines to buffer
