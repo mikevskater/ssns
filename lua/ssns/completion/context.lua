@@ -51,6 +51,8 @@ function Context.detect(bufnr, line_num, col)
   end
 
   -- Priority order (most specific first)
+  -- CRITICAL: Check statement-specific qualified patterns BEFORE generic patterns
+  -- to prevent "UPDATE dbo." from matching as generic "dbo." (column reference)
 
   -- 1. Bracketed identifier: [schema].[table].| or [database].|
   --    Pattern: [word].[word].| or [word].|
@@ -91,7 +93,124 @@ function Context.detect(bufnr, line_num, col)
     }
   end
 
-  -- 3. FROM clause: FROM | or FROM E| or FROM Emp|
+  -- 3. DELETE FROM: DELETE FROM | or DELETE FROM E| or DELETE FROM Emp|
+  -- DELETE FROM with qualification: DELETE FROM schema. or DELETE FROM db.schema.
+  -- MUST be checked BEFORE generic FROM patterns!
+  if before_cursor_lower:match("delete%s+from%s+(%w+)%.(%w+)%.$") then
+    local database, schema = before_cursor_lower:match("delete%s+from%s+(%w+)%.(%w+)%.$")
+    return {
+      type = Context.Type.TABLE,
+      prefix = before_cursor,
+      trigger = ".",
+      database = database,
+      schema = schema,
+      mode = "delete_qualified",
+      omit_schema = true,
+      filter_schema = schema,
+    }
+  end
+
+  if before_cursor_lower:match("delete%s+from%s+(%w+)%.$") then
+    local schema = before_cursor_lower:match("delete%s+from%s+(%w+)%.$")
+    return {
+      type = Context.Type.TABLE,
+      prefix = before_cursor,
+      trigger = ".",
+      schema = schema,
+      mode = "delete_qualified",
+      omit_schema = true,
+      filter_schema = schema,
+    }
+  end
+
+  if before_cursor_lower:match("delete%s+from%s+%w*$") then
+    return {
+      type = Context.Type.TABLE,
+      prefix = before_cursor,
+      trigger = " ",
+      mode = "delete",
+    }
+  end
+
+  -- 4. INSERT INTO: INSERT INTO | or INSERT INTO E| or INSERT INTO Emp|
+  -- INSERT INTO with qualification: INSERT INTO schema. or INSERT INTO db.schema.
+  -- MUST be checked BEFORE generic qualified patterns!
+  if before_cursor_lower:match("insert%s+into%s+(%w+)%.(%w+)%.$") then
+    local database, schema = before_cursor_lower:match("insert%s+into%s+(%w+)%.(%w+)%.$")
+    return {
+      type = Context.Type.TABLE,
+      prefix = before_cursor,
+      trigger = ".",
+      database = database,
+      schema = schema,
+      mode = "insert_qualified",
+      omit_schema = true,
+      filter_schema = schema,
+    }
+  end
+
+  if before_cursor_lower:match("insert%s+into%s+(%w+)%.$") then
+    local schema = before_cursor_lower:match("insert%s+into%s+(%w+)%.$")
+    return {
+      type = Context.Type.TABLE,
+      prefix = before_cursor,
+      trigger = ".",
+      schema = schema,
+      mode = "insert_qualified",
+      omit_schema = true,
+      filter_schema = schema,
+    }
+  end
+
+  if before_cursor_lower:match("insert%s+into%s+%w*$") then
+    return {
+      type = Context.Type.TABLE,
+      prefix = before_cursor,
+      trigger = " ",
+      mode = "insert",
+    }
+  end
+
+  -- 5. UPDATE: UPDATE | or UPDATE E| or UPDATE Emp|
+  -- UPDATE with qualification: UPDATE schema. or UPDATE db.schema.
+  -- MUST be checked BEFORE generic qualified patterns!
+  if before_cursor_lower:match("update%s+(%w+)%.(%w+)%.$") then
+    local database, schema = before_cursor_lower:match("update%s+(%w+)%.(%w+)%.$")
+    return {
+      type = Context.Type.TABLE,
+      prefix = before_cursor,
+      trigger = ".",
+      database = database,
+      schema = schema,
+      mode = "update_qualified",
+      omit_schema = true,
+      filter_schema = schema,
+    }
+  end
+
+  if before_cursor_lower:match("update%s+(%w+)%.$") then
+    local schema = before_cursor_lower:match("update%s+(%w+)%.$")
+    return {
+      type = Context.Type.TABLE,
+      prefix = before_cursor,
+      trigger = ".",
+      schema = schema,
+      mode = "update_qualified",
+      omit_schema = true,
+      filter_schema = schema,
+    }
+  end
+
+  if before_cursor_lower:match("update%s+%w*$") then
+    return {
+      type = Context.Type.TABLE,
+      prefix = before_cursor,
+      trigger = " ",
+      mode = "update",
+    }
+  end
+
+  -- 6. FROM clause: FROM | or FROM E| or FROM Emp|
   if before_cursor_lower:match("from%s+%w*$") then
     return {
       type = Context.Type.TABLE,
@@ -101,7 +220,24 @@ function Context.detect(bufnr, line_num, col)
     }
   end
 
+  -- FROM with qualification: FROM schema. or FROM db.schema.
+  if before_cursor_lower:match("from%s+(%w+)%.(%w+)%.$") then
+    -- Two-level: FROM database.schema.
+    local database, schema = before_cursor_lower:match("from%s+(%w+)%.(%w+)%.$")
+    return {
+      type = Context.Type.TABLE,
+      prefix = before_cursor,
+      trigger = ".",
+      database = database,
+      schema = schema,
+      mode = "from_qualified",
+      omit_schema = true,  -- Schema already typed, don't include in insertText
+      filter_schema = schema,  -- Only show objects from this schema
+    }
+  end
+
   if before_cursor_lower:match("from%s+(%w+)%.$") then
+    -- One-level: FROM schema.
     local schema = before_cursor_lower:match("from%s+(%w+)%.$")
     return {
       type = Context.Type.TABLE,
@@ -109,10 +245,12 @@ function Context.detect(bufnr, line_num, col)
       trigger = ".",
       schema = schema,
       mode = "from_qualified",
+      omit_schema = true,  -- Schema already typed, don't include in insertText
+      filter_schema = schema,  -- Only show objects from this schema
     }
   end
 
-  -- 4. JOIN clause: JOIN | or JOIN D| or JOIN Dep|
+  -- 7. JOIN clause: JOIN | or JOIN D| or JOIN Dep|
   if before_cursor_lower:match("join%s+%w*$") then
     return {
       type = Context.Type.TABLE,
@@ -122,7 +260,24 @@ function Context.detect(bufnr, line_num, col)
     }
   end
 
+  -- JOIN with qualification: JOIN schema. or JOIN db.schema.
+  if before_cursor_lower:match("join%s+(%w+)%.(%w+)%.$") then
+    -- Two-level: JOIN database.schema.
+    local database, schema = before_cursor_lower:match("join%s+(%w+)%.(%w+)%.$")
+    return {
+      type = Context.Type.TABLE,
+      prefix = before_cursor,
+      trigger = ".",
+      database = database,
+      schema = schema,
+      mode = "join_qualified",
+      omit_schema = true,  -- Schema already typed, don't include in insertText
+      filter_schema = schema,  -- Only show objects from this schema
+    }
+  end
+
   if before_cursor_lower:match("join%s+(%w+)%.$") then
+    -- One-level: JOIN schema.
     local schema = before_cursor_lower:match("join%s+(%w+)%.$")
     return {
       type = Context.Type.TABLE,
@@ -130,11 +285,13 @@ function Context.detect(bufnr, line_num, col)
       trigger = ".",
       schema = schema,
       mode = "join_qualified",
+      omit_schema = true,  -- Schema already typed, don't include in insertText
+      filter_schema = schema,  -- Only show objects from this schema
     }
   end
 
-  -- 5. Qualified column reference: table.column| or alias.column|
-  --    Pattern: word followed by dot (AFTER FROM/JOIN patterns)
+  -- 8. Qualified column reference: table.column| or alias.column|
+  --    Pattern: word followed by dot (AFTER statement-specific patterns)
   if before_cursor:match("(%w+)%.$") then
     local ref = before_cursor:match("(%w+)%.$")
     return {
@@ -146,37 +303,42 @@ function Context.detect(bufnr, line_num, col)
     }
   end
 
-  -- 6. INSERT INTO: INSERT INTO | or INSERT INTO E| or INSERT INTO Emp|
-  if before_cursor_lower:match("insert%s+into%s+%w*$") then
-    return {
-      type = Context.Type.TABLE,
-      prefix = before_cursor,
-      trigger = " ",
-      mode = "insert",
-    }
+  -- 9. Qualified table/column reference with partial word: schema.Tab| or table.col|
+  --    Pattern: word.word (no trailing dot)
+  --    This handles cases like "FROM Production.Prod" where user is typing table name
+  --    AFTER checking for qualified patterns with dots
+  if before_cursor:match("(%w+)%.(%w+)$") then
+    -- This could be schema.table or table.column depending on context
+    -- Need to check parent statement type
+    local part1, part2 = before_cursor:match("(%w+)%.(%w+)$")
+
+    -- Check if we're in a table context (FROM, JOIN, INSERT, UPDATE, DELETE)
+    if before_cursor_lower:match("from%s+%w+%.%w+$") or
+       before_cursor_lower:match("join%s+%w+%.%w+$") or
+       before_cursor_lower:match("insert%s+into%s+%w+%.%w+$") or
+       before_cursor_lower:match("update%s+%w+%.%w+$") or
+       before_cursor_lower:match("delete%s+from%s+%w+%.%w+$") then
+      -- This is schema.table (partial table name)
+      return {
+        type = Context.Type.TABLE,
+        prefix = before_cursor,
+        trigger = nil,
+        schema = part1,
+        mode = "qualified_partial",
+      }
+    else
+      -- This is table.column (partial column name)
+      return {
+        type = Context.Type.COLUMN,
+        prefix = before_cursor,
+        trigger = nil,
+        table_ref = part1,
+        mode = "qualified_partial",
+      }
+    end
   end
 
-  -- 7. UPDATE: UPDATE | or UPDATE E| or UPDATE Emp|
-  if before_cursor_lower:match("update%s+%w*$") then
-    return {
-      type = Context.Type.TABLE,
-      prefix = before_cursor,
-      trigger = " ",
-      mode = "update",
-    }
-  end
-
-  -- 8. DELETE FROM: DELETE FROM | or DELETE FROM E| or DELETE FROM Emp|
-  if before_cursor_lower:match("delete%s+from%s+%w*$") then
-    return {
-      type = Context.Type.TABLE,
-      prefix = before_cursor,
-      trigger = " ",
-      mode = "delete",
-    }
-  end
-
-  -- 9. SELECT clause: SELECT | or SELECT E| or SELECT Emp| (column completion)
+  -- 10. SELECT clause: SELECT | or SELECT E| or SELECT Emp| (column completion)
   if before_cursor_lower:match("select%s+%w*$") then
     return {
       type = Context.Type.COLUMN,
@@ -186,7 +348,7 @@ function Context.detect(bufnr, line_num, col)
     }
   end
 
-  -- 10. WHERE clause: WHERE | or WHERE E| or WHERE Emp| (column completion)
+  -- 11. WHERE clause: WHERE | or WHERE E| or WHERE Emp| (column completion)
   if before_cursor_lower:match("where%s+%w*$") then
     return {
       type = Context.Type.COLUMN,
@@ -196,7 +358,7 @@ function Context.detect(bufnr, line_num, col)
     }
   end
 
-  -- 11. ORDER BY clause: ORDER BY | or ORDER BY E| or ORDER BY Emp|
+  -- 12. ORDER BY clause: ORDER BY | or ORDER BY E| or ORDER BY Emp|
   if before_cursor_lower:match("order%s+by%s+%w*$") then
     return {
       type = Context.Type.COLUMN,
@@ -206,7 +368,7 @@ function Context.detect(bufnr, line_num, col)
     }
   end
 
-  -- 12. GROUP BY clause: GROUP BY | or GROUP BY E| or GROUP BY Emp|
+  -- 13. GROUP BY clause: GROUP BY | or GROUP BY E| or GROUP BY Emp|
   if before_cursor_lower:match("group%s+by%s+%w*$") then
     return {
       type = Context.Type.COLUMN,
@@ -216,7 +378,7 @@ function Context.detect(bufnr, line_num, col)
     }
   end
 
-  -- 13. EXEC/EXECUTE: EXEC | or EXEC sp| or EXEC sp_Get| (procedure completion)
+  -- 14. EXEC/EXECUTE: EXEC | or EXEC sp| or EXEC sp_Get| (procedure completion)
   if before_cursor_lower:match("exec%w*%s+%w*$") then
     return {
       type = Context.Type.PROCEDURE,
@@ -226,7 +388,7 @@ function Context.detect(bufnr, line_num, col)
     }
   end
 
-  -- 14. After procedure name: EXEC proc | (parameter completion)
+  -- 15. After procedure name: EXEC proc | (parameter completion)
   local proc_name = before_cursor_lower:match("exec%w*%s+(%w+)%s+$")
   if proc_name then
     return {
@@ -238,7 +400,7 @@ function Context.detect(bufnr, line_num, col)
     }
   end
 
-  -- 15. Default: keyword completion (but try tree-sitter first for multi-line support)
+  -- 16. Default: keyword completion (but try tree-sitter first for multi-line support)
   local regex_result = {
     type = Context.Type.KEYWORD,
     prefix = before_cursor,

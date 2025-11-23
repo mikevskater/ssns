@@ -95,20 +95,25 @@ function TablesProvider._get_completions_impl(ctx)
     show_schema_prefix = true -- Default to true
   end
 
+  -- Get context information for qualification handling
+  local sql_context = ctx.sql_context or {}
+  local omit_schema = sql_context.omit_schema or false -- Don't include schema in insertText if already typed
+  local filter_schema = sql_context.filter_schema -- Only show objects from this schema
+
   local items = {}
 
   -- Get database adapter to check features
   local adapter = database:get_adapter()
 
   -- Collect tables
-  local tables = TablesProvider._collect_tables(database, show_schema_prefix)
+  local tables = TablesProvider._collect_tables(database, show_schema_prefix, omit_schema, filter_schema)
   for _, item in ipairs(tables) do
     table.insert(items, item)
   end
 
   -- Collect views (if database supports them)
   if adapter.features and adapter.features.views then
-    local views = TablesProvider._collect_views(database, show_schema_prefix)
+    local views = TablesProvider._collect_views(database, show_schema_prefix, omit_schema, filter_schema)
     for _, item in ipairs(views) do
       table.insert(items, item)
     end
@@ -116,7 +121,7 @@ function TablesProvider._get_completions_impl(ctx)
 
   -- Collect synonyms (if database supports them)
   if adapter.features and adapter.features.synonyms then
-    local synonyms = TablesProvider._collect_synonyms(database, show_schema_prefix)
+    local synonyms = TablesProvider._collect_synonyms(database, show_schema_prefix, omit_schema, filter_schema)
     for _, item in ipairs(synonyms) do
       table.insert(items, item)
     end
@@ -124,7 +129,7 @@ function TablesProvider._get_completions_impl(ctx)
 
   -- Collect functions (if supported and they can be selected from)
   if adapter.features and adapter.features.functions then
-    local functions = TablesProvider._collect_functions(database, show_schema_prefix)
+    local functions = TablesProvider._collect_functions(database, show_schema_prefix, omit_schema, filter_schema)
     for _, item in ipairs(functions) do
       table.insert(items, item)
     end
@@ -171,8 +176,10 @@ end
 ---Collect table completion items from database
 ---@param database DbClass Database object
 ---@param show_schema_prefix boolean Whether to show schema prefix
+---@param omit_schema boolean Whether to omit schema from insertText (context-aware)
+---@param filter_schema string? Only include tables from this schema
 ---@return table[] items Array of CompletionItems
-function TablesProvider._collect_tables(database, show_schema_prefix)
+function TablesProvider._collect_tables(database, show_schema_prefix, omit_schema, filter_schema)
   local Utils = require('ssns.completion.utils')
   local items = {}
 
@@ -191,11 +198,22 @@ function TablesProvider._collect_tables(database, show_schema_prefix)
 
   -- Iterate through tables in the group
   for _, table_obj in ipairs(tables_group.children) do
+    -- Filter by schema if specified
+    if filter_schema then
+      local obj_schema = (table_obj.schema or table_obj.schema_name or ""):lower()
+      if obj_schema ~= filter_schema:lower() then
+        goto continue
+      end
+    end
+
     -- Create completion item using Utils.format_table
     local item = Utils.format_table(table_obj, {
       show_schema = show_schema_prefix,
+      omit_schema = omit_schema,
     })
     table.insert(items, item)
+
+    ::continue::
   end
 
   return items
@@ -204,8 +222,10 @@ end
 ---Collect view completion items from database
 ---@param database DbClass Database object
 ---@param show_schema_prefix boolean Whether to show schema prefix
+---@param omit_schema boolean Whether to omit schema from insertText (context-aware)
+---@param filter_schema string? Only include views from this schema
 ---@return table[] items Array of CompletionItems
-function TablesProvider._collect_views(database, show_schema_prefix)
+function TablesProvider._collect_views(database, show_schema_prefix, omit_schema, filter_schema)
   local Utils = require('ssns.completion.utils')
   local items = {}
 
@@ -224,11 +244,22 @@ function TablesProvider._collect_views(database, show_schema_prefix)
 
   -- Iterate through views in the group
   for _, view_obj in ipairs(views_group.children) do
+    -- Filter by schema if specified
+    if filter_schema then
+      local obj_schema = (view_obj.schema or view_obj.schema_name or ""):lower()
+      if obj_schema ~= filter_schema:lower() then
+        goto continue
+      end
+    end
+
     -- Create completion item using Utils.format_view
     local item = Utils.format_view(view_obj, {
       show_schema = show_schema_prefix,
+      omit_schema = omit_schema,
     })
     table.insert(items, item)
+
+    ::continue::
   end
 
   return items
@@ -237,8 +268,10 @@ end
 ---Collect synonym completion items from database
 ---@param database DbClass Database object
 ---@param show_schema_prefix boolean Whether to show schema prefix
+---@param omit_schema boolean Whether to omit schema from insertText (context-aware)
+---@param filter_schema string? Only include synonyms from this schema
 ---@return table[] items Array of CompletionItems
-function TablesProvider._collect_synonyms(database, show_schema_prefix)
+function TablesProvider._collect_synonyms(database, show_schema_prefix, omit_schema, filter_schema)
   local Utils = require('ssns.completion.utils')
   local items = {}
 
@@ -257,11 +290,22 @@ function TablesProvider._collect_synonyms(database, show_schema_prefix)
 
   -- Iterate through synonyms in the group
   for _, synonym_obj in ipairs(synonyms_group.children) do
+    -- Filter by schema if specified
+    if filter_schema then
+      local obj_schema = (synonym_obj.schema or synonym_obj.schema_name or ""):lower()
+      if obj_schema ~= filter_schema:lower() then
+        goto continue
+      end
+    end
+
     -- Create completion item using Utils.format_synonym
     local item = Utils.format_synonym(synonym_obj, {
       show_schema = show_schema_prefix,
+      omit_schema = omit_schema,
     })
     table.insert(items, item)
+
+    ::continue::
   end
 
   return items
@@ -270,8 +314,10 @@ end
 ---Collect function completion items from database
 ---@param database DbClass Database object
 ---@param show_schema_prefix boolean Whether to show schema prefix
+---@param omit_schema boolean Whether to omit schema from insertText (context-aware)
+---@param filter_schema string? Only include functions from this schema
 ---@return table[] items Array of CompletionItems
-function TablesProvider._collect_functions(database, show_schema_prefix)
+function TablesProvider._collect_functions(database, show_schema_prefix, omit_schema, filter_schema)
   local Utils = require('ssns.completion.utils')
   local items = {}
 
@@ -294,12 +340,23 @@ function TablesProvider._collect_functions(database, show_schema_prefix)
 
   -- Collect all function objects
   for _, func_obj in ipairs(functions_group.children) do
+    -- Filter by schema if specified
+    if filter_schema then
+      local obj_schema = (func_obj.schema or func_obj.schema_name or ""):lower()
+      if obj_schema ~= filter_schema:lower() then
+        goto continue
+      end
+    end
+
     local item = Utils.format_procedure(func_obj, {
       show_schema = show_schema_prefix,
+      omit_schema = omit_schema,
       priority = 3,  -- Lower priority than tables/views
       with_params = true,
     })
     table.insert(items, item)
+
+    ::continue::
   end
 
   return items

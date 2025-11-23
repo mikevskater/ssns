@@ -59,11 +59,12 @@ end
 
 ---Format a table/view as an LSP CompletionItem
 ---@param table_obj table Table object { name: string, schema: string, type?: string }
----@param opts table? Options { show_schema: boolean? }
+---@param opts table? Options { show_schema: boolean?, omit_schema: boolean? }
 ---@return table completion_item LSP CompletionItem
 function Utils.format_table(table_obj, opts)
   opts = opts or {}
   local show_schema = opts.show_schema ~= false -- Default true
+  local omit_schema = opts.omit_schema or false -- Context override: if true, never include schema in insertText
 
   local label = table_obj.name or table_obj.table_name
   local schema = table_obj.schema or table_obj.schema_name
@@ -88,8 +89,9 @@ function Utils.format_table(table_obj, opts)
   end
 
   -- Build insertText with schema if configured
+  -- IMPORTANT: omit_schema takes precedence (context-aware)
   local insertText = label
-  if show_schema and schema and schema ~= "" then
+  if not omit_schema and show_schema and schema and schema ~= "" then
     insertText = schema .. "." .. label
   end
 
@@ -204,11 +206,12 @@ end
 
 ---Format a stored procedure/function as an LSP CompletionItem
 ---@param proc_obj table Procedure object { name: string, type?: string, return_type?: string, schema?: string }
----@param opts table? Options { show_schema: boolean?, priority: number? }
+---@param opts table? Options { show_schema: boolean?, omit_schema: boolean?, priority: number? }
 ---@return table completion_item LSP CompletionItem
 function Utils.format_procedure(proc_obj, opts)
   opts = opts or {}
   local show_schema = opts.show_schema ~= false -- Default true
+  local omit_schema = opts.omit_schema or false -- Context override: if true, never include schema in insertText
 
   local name = proc_obj.name or proc_obj.procedure_name or proc_obj.function_name
   local schema = proc_obj.schema or proc_obj.schema_name
@@ -253,8 +256,9 @@ function Utils.format_procedure(proc_obj, opts)
   local priority = opts.priority or 2
 
   -- Build insertText with schema if configured
+  -- IMPORTANT: omit_schema takes precedence (context-aware)
   local insertText = name
-  if show_schema and schema and schema ~= "" then
+  if not omit_schema and show_schema and schema and schema ~= "" then
     insertText = schema .. "." .. name
   end
 
@@ -475,6 +479,7 @@ end
 function Utils.format_view(view_obj, opts)
   opts = opts or {}
   local show_schema = opts.show_schema ~= false -- Default true
+  local omit_schema = opts.omit_schema or false -- Context override: if true, never include schema in insertText
 
   local label = view_obj.name or view_obj.view_name
   local schema = view_obj.schema or view_obj.schema_name
@@ -505,8 +510,9 @@ function Utils.format_view(view_obj, opts)
   local priority = 2
 
   -- Build insertText with schema if configured
+  -- IMPORTANT: omit_schema takes precedence (context-aware)
   local insertText = label
-  if show_schema and schema and schema ~= "" then
+  if not omit_schema and show_schema and schema and schema ~= "" then
     insertText = schema .. "." .. label
   end
 
@@ -528,11 +534,12 @@ end
 
 ---Format a synonym as an LSP CompletionItem
 ---@param synonym_obj table Synonym object { name: string, schema: string, synonym_name?: string, schema_name?: string, base_object_name?: string }
----@param opts table? Options { show_schema: boolean? }
+---@param opts table? Options { show_schema: boolean?, omit_schema: boolean? }
 ---@return table completion_item LSP CompletionItem
 function Utils.format_synonym(synonym_obj, opts)
   opts = opts or {}
   local show_schema = opts.show_schema ~= false -- Default true
+  local omit_schema = opts.omit_schema or false -- Context override: if true, never include schema in insertText
 
   local label = synonym_obj.name or synonym_obj.synonym_name
   local schema = synonym_obj.schema or synonym_obj.schema_name
@@ -576,8 +583,9 @@ function Utils.format_synonym(synonym_obj, opts)
   local priority = 3
 
   -- Build insertText with schema if configured
+  -- IMPORTANT: omit_schema takes precedence (context-aware)
   local insertText = label
-  if show_schema and schema and schema ~= "" then
+  if not omit_schema and show_schema and schema and schema ~= "" then
     insertText = schema .. "." .. label
   end
 
