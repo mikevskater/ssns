@@ -94,6 +94,14 @@ function TablesProvider._get_completions_impl(ctx)
     end
   end
 
+  -- Collect functions (if supported and they can be selected from)
+  if adapter.features and adapter.features.functions then
+    local functions = TablesProvider._collect_functions(database, show_schema_prefix)
+    for _, item in ipairs(functions) do
+      table.insert(items, item)
+    end
+  end
+
   -- Sort items by label (case-insensitive)
   table.sort(items, function(a, b)
     return a.label:lower() < b.label:lower()
@@ -194,6 +202,44 @@ function TablesProvider._collect_synonyms(database, show_schema_prefix)
     -- Create completion item using Utils.format_synonym
     local item = Utils.format_synonym(synonym_obj, {
       show_schema = show_schema_prefix,
+    })
+    table.insert(items, item)
+  end
+
+  return items
+end
+
+---Collect function completion items from database
+---@param database DbClass Database object
+---@param show_schema_prefix boolean Whether to show schema prefix
+---@return table[] items Array of CompletionItems
+function TablesProvider._collect_functions(database, show_schema_prefix)
+  local Utils = require('ssns.completion.utils')
+  local items = {}
+
+  if not database or not database.children then
+    return items
+  end
+
+  -- Find the Functions group in database children
+  local functions_group = nil
+  for _, child in ipairs(database.children) do
+    if child.object_type == "functions_group" then
+      functions_group = child
+      break
+    end
+  end
+
+  if not functions_group or not functions_group.children then
+    return items
+  end
+
+  -- Collect all function objects
+  for _, func_obj in ipairs(functions_group.children) do
+    local item = Utils.format_procedure(func_obj, {
+      show_schema = show_schema_prefix,
+      priority = 3,  -- Lower priority than tables/views
+      with_params = true,
     })
     table.insert(items, item)
   end

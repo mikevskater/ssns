@@ -311,11 +311,48 @@ function ServerClass:reload()
   return load_success
 end
 
----Find a database by name
+---Find a database by name (legacy - use get_database instead)
 ---@param database_name string
 ---@return DbClass?
 function ServerClass:find_database(database_name)
-  return self:find_child(database_name)
+  return self:get_database(database_name)
+end
+
+---Get a database by name, traversing the DatabasesGroup wrapper
+---@param database_name string
+---@return DbClass?
+function ServerClass:get_database(database_name)
+  -- Lazy-load the server if not loaded
+  if not self.is_loaded then
+    local success = self:load()
+    if not success then
+      return nil
+    end
+  end
+
+  -- Find the DatabasesGroup in children
+  local databases_group = nil
+  for _, child in ipairs(self.children) do
+    if child.object_type == "databases_group" then
+      databases_group = child
+      break
+    end
+  end
+
+  if not databases_group then
+    return nil
+  end
+
+  -- Search the DatabasesGroup's children for the database by name
+  if databases_group.children then
+    for _, db in ipairs(databases_group.children) do
+      if db.name == database_name then
+        return db
+      end
+    end
+  end
+
+  return nil
 end
 
 ---Get all databases

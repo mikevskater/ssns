@@ -127,6 +127,14 @@ function UiQuery.create_query_buffer(server, database, sql, object_name)
     last_database = database and database.db_name or nil,  -- Initial context from parent
   }
 
+  -- Set buffer variable for completion source to identify database connection
+  -- Handle both ServerClass objects and string names (from history)
+  if server and database then
+    local server_name = type(server) == "string" and server or server.name
+    local db_name = type(database) == "string" and database or database.db_name
+    vim.api.nvim_buf_set_var(bufnr, 'ssns_db_key', string.format("%s:%s", server_name, db_name))
+  end
+
   -- Set buffer-local keymaps
   UiQuery.setup_query_keymaps(bufnr)
 
@@ -256,6 +264,8 @@ function UiQuery.execute_query(bufnr, visual)
   -- Update buffer state with last database used
   if last_database then
     buffer_info.last_database = last_database
+    -- Update buffer variable for completion source
+    vim.api.nvim_buf_set_var(bufnr, 'ssns_db_key', string.format("%s:%s", server.name, last_database))
   end
 
   -- Track query in history

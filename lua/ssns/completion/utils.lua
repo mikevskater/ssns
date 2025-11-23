@@ -87,12 +87,18 @@ function Utils.format_table(table_obj, opts)
     priority = 3
   end
 
+  -- Build insertText with schema if configured
+  local insertText = label
+  if show_schema and schema and schema ~= "" then
+    insertText = schema .. "." .. label
+  end
+
   return {
     label = label,
     kind = Utils.CompletionItemKind.Class,
     detail = detail,
     documentation = nil, -- Can be loaded lazily via resolve()
-    insertText = label,
+    insertText = insertText,
     filterText = label,
     sortText = Utils.generate_sort_text(priority, label),
     data = {
@@ -198,7 +204,7 @@ end
 
 ---Format a stored procedure/function as an LSP CompletionItem
 ---@param proc_obj table Procedure object { name: string, type?: string, return_type?: string, schema?: string }
----@param opts table? Options { show_schema: boolean? }
+---@param opts table? Options { show_schema: boolean?, priority: number? }
 ---@return table completion_item LSP CompletionItem
 function Utils.format_procedure(proc_obj, opts)
   opts = opts or {}
@@ -243,23 +249,35 @@ function Utils.format_procedure(proc_obj, opts)
     value = Utils.format_markdown_docs(name, doc_items)
   }
 
-  -- Sort priority: procedures/functions = 2
-  local priority = 2
+  -- Sort priority: procedures/functions = 2 (can be overridden via opts)
+  local priority = opts.priority or 2
+
+  -- Build insertText with schema if configured
+  local insertText = name
+  if show_schema and schema and schema ~= "" then
+    insertText = schema .. "." .. name
+  end
+
+  -- Generate snippet with parameters if requested
+  local insertTextFormat = nil  -- Default: plain text
+  if opts.with_params then
+    insertText = Utils.generate_parameter_snippet(proc_obj, schema, name)
+    insertTextFormat = 2  -- LSP snippet format
+  end
 
   return {
     label = name,
     kind = Utils.CompletionItemKind.Function,
     detail = detail,
     documentation = documentation,
-    insertText = name,
+    insertText = insertText,
+    insertTextFormat = insertTextFormat,
     filterText = name,
     sortText = Utils.generate_sort_text(priority, name),
     data = {
-      type = "procedure",
-      name = name,
+      type = proc_obj.object_type == "procedure" and "procedure" or "function",
       schema = schema,
-      object_type = obj_type,
-      return_type = return_type,
+      name = name,
     }
   }
 end
@@ -393,6 +411,63 @@ function Utils.format_parameter(param_obj, opts)
   }
 end
 
+--- Generate parameter snippet for procedure/function
+---@param proc_or_func ProcedureClass|FunctionClass The procedure or function object
+---@param schema string? Schema name
+---@param name string The procedure/function name
+---@return string insertText The snippet-formatted insertText
+function Utils.generate_parameter_snippet(proc_or_func, schema, name)
+  -- Build base name with schema
+  local base = name
+  if schema and schema ~= "" then
+    base = schema .. "." .. name
+  end
+
+  -- Get parameters (lazy-loads if needed)
+  local params = proc_or_func:get_parameters()
+
+  -- If no parameters or failed to load, return simple insertText
+  if not params or #params == 0 then
+    return base
+  end
+
+  -- Filter out OUTPUT-only parameters (include IN and INOUT)
+  local input_params = {}
+  for _, param in ipairs(params) do
+    local direction = param.direction or param.mode or "IN"
+    if direction ~= "OUT" then
+      table.insert(input_params, param)
+    end
+  end
+
+  -- If no input parameters, return simple insertText
+  if #input_params == 0 then
+    return base
+  end
+
+  -- Build snippet with placeholders
+  local placeholder_parts = {}
+  for i, param in ipairs(input_params) do
+    local param_name = param.parameter_name or param.name
+
+    -- Build placeholder text
+    local placeholder
+    if param.has_default and param.default_value then
+      -- Parameter has default: show as "@Name = default"
+      placeholder = string.format("%s = %s", param_name, param.default_value)
+    else
+      -- No default: just show parameter name
+      placeholder = param_name
+    end
+
+    -- Create LSP snippet placeholder: ${1:@EmployeeId}
+    table.insert(placeholder_parts, string.format("${%d:%s}", i, placeholder))
+  end
+
+  -- Combine: dbo.sp_Name(${1:@Param1}, ${2:@Param2 = 1})
+  return base .. "(" .. table.concat(placeholder_parts, ", ") .. ")"
+end
+
 ---Format a view as an LSP CompletionItem
 ---@param view_obj table View object { name: string, schema: string, view_name?: string, schema_name?: string }
 ---@param opts table? Options { show_schema: boolean? }
@@ -429,12 +504,18 @@ function Utils.format_view(view_obj, opts)
   -- Sort priority: views = 2 (after tables)
   local priority = 2
 
+  -- Build insertText with schema if configured
+  local insertText = label
+  if show_schema and schema and schema ~= "" then
+    insertText = schema .. "." .. label
+  end
+
   return {
     label = label,
     kind = Utils.CompletionItemKind.Class,
     detail = detail,
     documentation = documentation,
-    insertText = label,
+    insertText = insertText,
     filterText = label,
     sortText = Utils.generate_sort_text(priority, label),
     data = {
@@ -494,12 +575,18 @@ function Utils.format_synonym(synonym_obj, opts)
   -- Sort priority: synonyms = 3 (after tables and views)
   local priority = 3
 
+  -- Build insertText with schema if configured
+  local insertText = label
+  if show_schema and schema and schema ~= "" then
+    insertText = schema .. "." .. label
+  end
+
   return {
     label = label,
     kind = Utils.CompletionItemKind.Reference,
     detail = detail,
     documentation = documentation,
-    insertText = label,
+    insertText = insertText,
     filterText = label,
     sortText = Utils.generate_sort_text(priority, label),
     data = {

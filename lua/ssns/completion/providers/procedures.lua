@@ -78,28 +78,37 @@ function ProceduresProvider._get_procedures(connection)
     database:load()
   end
 
-  -- Iterate through schema children to find procedure_group
-  for _, schema in ipairs(database.children) do
-    if schema.object_type == "schema" then
-      -- Ensure schema is loaded
-      if not schema.is_loaded then
-        schema:load()
-      end
+  -- Find the PROCEDURES group in database children
+  local procedures_group = nil
+  for _, child in ipairs(database.children) do
+    if child.object_type == "procedures_group" then
+      procedures_group = child
+      break
+    end
+  end
 
-      -- Find the PROCEDURES group in schema children
-      for _, child in ipairs(schema.children) do
-        if child.object_type == "procedure_group" then
-          -- Iterate through procedures in the group
-          for _, proc in ipairs(child.children) do
-            -- Format using Utils.format_procedure
-            local item = Utils.format_procedure(proc, {
-              show_schema = Config.ui and Config.ui.show_schema_prefix,
-            })
-            table.insert(items, item)
-          end
-          break -- Found procedures group, move to next schema
-        end
-      end
+  if not procedures_group then
+    return items
+  end
+
+  -- Lazy-load if needed
+  if not procedures_group.is_loaded then
+    procedures_group:load()
+  end
+
+  if not procedures_group.children then
+    return items
+  end
+
+  -- Iterate through procedures in the group
+  for _, proc_obj in ipairs(procedures_group.children) do
+    if proc_obj.object_type == "procedure" then
+      local item = Utils.format_procedure(proc_obj, {
+        show_schema = Config.ui and Config.ui.show_schema_prefix,
+        priority = 1,
+        with_params = true,
+      })
+      table.insert(items, item)
     end
   end
 
@@ -124,31 +133,37 @@ function ProceduresProvider._get_scalar_functions(connection)
     database:load()
   end
 
-  -- Iterate through schema children to find function_group
-  for _, schema in ipairs(database.children) do
-    if schema.object_type == "schema" then
-      -- Ensure schema is loaded
-      if not schema.is_loaded then
-        schema:load()
-      end
+  -- Find the FUNCTIONS group in database children
+  local functions_group = nil
+  for _, child in ipairs(database.children) do
+    if child.object_type == "functions_group" then
+      functions_group = child
+      break
+    end
+  end
 
-      -- Find the FUNCTIONS group in schema children
-      for _, child in ipairs(schema.children) do
-        if child.object_type == "function_group" then
-          -- Iterate through functions, filter for scalar functions
-          for _, func in ipairs(child.children) do
-            -- Only include scalar functions (not table-valued)
-            -- Table-valued functions have types like "TF", "IF", or contain "TABLE"
-            if func.function_type and not func:is_table_valued() then
-              local item = Utils.format_procedure(func, {
-                show_schema = Config.ui and Config.ui.show_schema_prefix,
-              })
-              table.insert(items, item)
-            end
-          end
-          break -- Found functions group, move to next schema
-        end
-      end
+  if not functions_group then
+    return items
+  end
+
+  -- Lazy-load if needed
+  if not functions_group.is_loaded then
+    functions_group:load()
+  end
+
+  if not functions_group.children then
+    return items
+  end
+
+  -- Iterate through scalar functions in the group
+  for _, func_obj in ipairs(functions_group.children) do
+    if func_obj.object_type == "function" and func_obj.function_type == "SCALAR" then
+      local item = Utils.format_procedure(func_obj, {
+        show_schema = Config.ui and Config.ui.show_schema_prefix,
+        priority = 2,
+        with_params = true,
+      })
+      table.insert(items, item)
     end
   end
 
@@ -173,30 +188,38 @@ function ProceduresProvider._get_table_functions(connection)
     database:load()
   end
 
-  -- Iterate through schema children to find function_group
-  for _, schema in ipairs(database.children) do
-    if schema.object_type == "schema" then
-      -- Ensure schema is loaded
-      if not schema.is_loaded then
-        schema:load()
-      end
+  -- Find the FUNCTIONS group in database children
+  local functions_group = nil
+  for _, child in ipairs(database.children) do
+    if child.object_type == "functions_group" then
+      functions_group = child
+      break
+    end
+  end
 
-      -- Find the FUNCTIONS group in schema children
-      for _, child in ipairs(schema.children) do
-        if child.object_type == "function_group" then
-          -- Iterate through functions, filter for table-valued functions
-          for _, func in ipairs(child.children) do
-            -- Only include table-valued functions
-            if func:is_table_valued() then
-              local item = Utils.format_procedure(func, {
-                show_schema = Config.ui and Config.ui.show_schema_prefix,
-              })
-              table.insert(items, item)
-            end
-          end
-          break -- Found functions group, move to next schema
-        end
-      end
+  if not functions_group then
+    return items
+  end
+
+  -- Lazy-load if needed
+  if not functions_group.is_loaded then
+    functions_group:load()
+  end
+
+  if not functions_group.children then
+    return items
+  end
+
+  -- Iterate through table-valued functions in the group
+  for _, func_obj in ipairs(functions_group.children) do
+    if func_obj.object_type == "function" and
+       (func_obj.function_type == "TABLE" or func_obj.function_type == "INLINE_TABLE") then
+      local item = Utils.format_procedure(func_obj, {
+        show_schema = Config.ui and Config.ui.show_schema_prefix,
+        priority = 2,
+        with_params = true,
+      })
+      table.insert(items, item)
     end
   end
 
