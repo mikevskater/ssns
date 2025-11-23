@@ -212,6 +212,71 @@ function Treesitter.extract_table_references(query_text)
   return references or {}
 end
 
+---Extract table references from a specific AST node (scope-aware)
+---Only processes FROM/JOIN clauses within this node's subtree
+---This is more accurate than extract_table_references for complex queries with subqueries/CTEs
+---@param node table Tree-sitter node (e.g., select_statement)
+---@param query_text string The SQL query text for this node
+---@return table[] refs Array of {table, alias?, schema?}
+function Treesitter.extract_table_references_in_scope(node, query_text)
+  local refs = {}
+
+  -- Safety check
+  if not node or not query_text then
+    return refs
+  end
+
+  -- Walk only this node's subtree
+  local function walk(n, depth)
+    if depth > 50 then return end -- Prevent infinite recursion
+
+    local node_type = n:type()
+
+    -- Only process FROM and JOIN clauses within this scope
+    if node_type == "from_clause" or
+       node_type == "from" or
+       node_type == "join_clause" or
+       node_type == "inner_join" or
+       node_type == "left_join" or
+       node_type == "right_join" or
+       node_type == "full_join" or
+       node_type == "cross_join" or
+       node_type:match("join") then -- Catch any other join variants
+
+      -- Extract table reference from this node
+      -- Reuse existing _extract_table_from_node helper
+      local ref = Treesitter._extract_table_from_node(n, query_text)
+      if ref then
+        table.insert(refs, ref)
+      end
+    end
+
+    -- Recurse into children (but NOT into nested SELECT statements)
+    -- This prevents extracting tables from subqueries/CTEs
+    for child in n:iter_children() do
+      local child_type = child:type()
+
+      -- Skip nested SELECT statements (they have their own scope)
+      if child_type ~= "select_statement" and
+         child_type ~= "subquery" and
+         child_type ~= "cte" then
+        walk(child, depth + 1)
+      end
+    end
+  end
+
+  -- Wrap in pcall for safety
+  local success = pcall(function()
+    walk(node, 0)
+  end)
+
+  if not success then
+    return {} -- Silent fallback
+  end
+
+  return refs
+end
+
 ---Helper: Extract table name and alias from a tree node
 ---@param node table Tree-sitter node
 ---@param query_text string Original query text

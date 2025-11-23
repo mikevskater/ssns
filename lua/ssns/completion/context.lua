@@ -510,12 +510,22 @@ end
 ---Parse query for table aliases (FROM/JOIN clauses)
 ---Enhanced with Tree-sitter support, falls back to regex
 ---@param query string The SQL query (can be multi-line)
+---@param scope_node? table Optional tree-sitter node for scope-aware extraction
 ---@return table<string, string> aliases Map of alias -> table_name
-function Context.parse_aliases(query)
+function Context.parse_aliases(query, scope_node)
   -- TRY: Tree-sitter parsing first (more robust, handles comments/strings)
   local Treesitter = require('ssns.completion.metadata.treesitter')
   if Treesitter.is_available() then
-    local refs = Treesitter.extract_table_references(query)
+    local refs
+
+    -- Use scope-aware extraction if node provided
+    if scope_node then
+      refs = Treesitter.extract_table_references_in_scope(scope_node, query)
+    else
+      -- Use global extraction (old behavior)
+      refs = Treesitter.extract_table_references(query)
+    end
+
     if refs and #refs > 0 then
       -- Convert refs to alias map
       local aliases = {}
@@ -557,17 +567,126 @@ function Context.parse_aliases(query)
   return aliases
 end
 
----Resolve alias to table name using query context
----@param alias string The alias to resolve
+---Get the SQL query/statement containing the cursor position
 ---@param bufnr number Buffer number
----@return string? table_name The resolved table name (nil if not found)
-function Context.resolve_alias(alias, bufnr)
-  -- Get all lines from buffer to parse full query
-  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  local query = table.concat(lines, "\n")
+---@param row number Cursor row (1-indexed)
+---@param col number Cursor column (1-indexed)
+---@return string? query_text The SQL query at cursor (nil if not found)
+---@return number? start_line Start line of the query (1-indexed)
+---@return number? end_line End line of the query (1-indexed)
+function Context.get_current_query_at_cursor(bufnr, row, col)
+  local Treesitter = require('ssns.completion.metadata.treesitter')
 
-  -- Parse aliases from query
-  local aliases = Context.parse_aliases(query)
+  -- Check if tree-sitter is available
+  if not Treesitter.is_available() then
+    -- Fallback: return entire buffer
+    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    return table.concat(lines, "\n"), 1, #lines
+  end
+
+  -- Get full buffer content
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local buffer_text = table.concat(lines, "\n")
+
+  -- Parse SQL with tree-sitter
+  local root = Treesitter.parse_sql(buffer_text)
+  if not root then
+    return table.concat(lines, "\n"), 1, #lines
+  end
+
+  -- Convert to 0-indexed for tree-sitter
+  local ts_row = row - 1
+  local ts_col = col - 1
+
+  -- Walk up from cursor to find containing SELECT statement
+  local node = root:descendant_for_range(ts_row, ts_col, ts_row, ts_col)
+  if not node then
+    return table.concat(lines, "\n"), 1, #lines
+  end
+
+  -- Traverse up to find select_statement node
+  local current = node
+  while current do
+    local node_type = current:type()
+
+    if node_type == "select_statement" or
+       node_type == "insert_statement" or
+       node_type == "update_statement" or
+       node_type == "delete_statement" then
+      -- Found the statement containing cursor
+      local start_row, _, end_row, _ = current:range()
+      start_row = start_row + 1  -- Convert to 1-indexed
+      end_row = end_row + 1
+
+      -- Extract query text from this statement only
+      local query_lines = vim.api.nvim_buf_get_lines(bufnr, start_row - 1, end_row, false)
+      return table.concat(query_lines, "\n"), start_row, end_row
+    end
+
+    current = current:parent()
+  end
+
+  -- No statement found, return entire buffer
+  return buffer_text, 1, #lines
+end
+
+---Resolve table alias to actual table name (SCOPE-AWARE VERSION)
+---@param alias string The alias to resolve (e.g., "e" from "e.column")
+---@param bufnr number Buffer number
+---@param cursor_pos? table {row, col} Cursor position (1-indexed) for scope filtering
+---@return string? table_name Resolved table name (e.g., "dbo.Employees") or nil
+function Context.resolve_alias(alias, bufnr, cursor_pos)
+  local Treesitter = require('ssns.completion.metadata.treesitter')
+
+  -- NEW: Get only the query containing cursor
+  local query, start_line, end_line
+  local scope_node = nil
+
+  if cursor_pos then
+    query, start_line, end_line = Context.get_current_query_at_cursor(
+      bufnr, cursor_pos[1], cursor_pos[2]
+    )
+
+    -- If tree-sitter is available, get the scope node for more accurate extraction
+    if Treesitter.is_available() then
+      local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+      local buffer_text = table.concat(lines, "\n")
+      local root = Treesitter.parse_sql(buffer_text)
+
+      if root then
+        -- Convert to 0-indexed for tree-sitter
+        local ts_row = cursor_pos[1] - 1
+        local ts_col = cursor_pos[2] - 1
+
+        -- Walk up from cursor to find containing SELECT/INSERT/UPDATE/DELETE statement
+        local node = root:descendant_for_range(ts_row, ts_col, ts_row, ts_col)
+        if node then
+          local current = node
+          while current do
+            local node_type = current:type()
+
+            if node_type == "select_statement" or
+               node_type == "insert_statement" or
+               node_type == "update_statement" or
+               node_type == "delete_statement" then
+              -- Found the statement scope
+              scope_node = current
+              break
+            end
+
+            current = current:parent()
+          end
+        end
+      end
+    end
+  else
+    -- Fallback: entire buffer (old behavior)
+    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    query = table.concat(lines, "\n")
+  end
+
+  -- Parse aliases from ONLY this query (with optional scope node)
+  local aliases = Context.parse_aliases(query, scope_node)
 
   return aliases[alias:lower()]
 end

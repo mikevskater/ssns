@@ -120,6 +120,7 @@ function Source:get_completions(ctx, callback)
     bufnr = ctx.bufnr,
     connection = connection_ctx,
     sql_context = context_result,
+    cursor_pos = {context_result.line_num, context_result.col},  -- NEW
   }
 
   -- Detect temp tables in buffer (lazy, on-demand)

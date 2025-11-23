@@ -21,9 +21,8 @@ function Resolver.resolve_table(reference, connection, bufnr, cursor_pos)
     return Resolver._resolve_temp_table(reference, bufnr, cursor_pos, connection)
   end
 
-  -- Step 1: Try to resolve as alias first
-  local Context = require('ssns.completion.context')
-  local resolved_name = Context.resolve_alias(reference, bufnr)
+  -- Step 1: Try to resolve as alias first (now FULLY scope-aware with ScopeTracker)
+  local resolved_name = Resolver.resolve_alias_with_scope(reference, bufnr, cursor_pos)
 
   if resolved_name then
     -- Alias was resolved, use the resolved table name
