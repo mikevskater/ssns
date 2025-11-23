@@ -3,6 +3,17 @@
 ---@class MetadataResolver
 local Resolver = {}
 
+local Debug = require('ssns.debug')
+
+-- Helper: Conditional debug logging based on config
+local function debug_log(message)
+  local Config = require('ssns.config')
+  local config = Config.get()
+  if config.completion and config.completion.debug then
+    Debug.log("[RESOLVER] " .. message)
+  end
+end
+
 ---Resolve table/view/synonym reference to actual object
 ---Handles aliases, schema-qualified names, and synonym chains
 ---Enhanced to check buffer cache for temp tables first
@@ -250,11 +261,16 @@ end
 ---@param cursor_pos table? {row, col} Cursor position (optional)
 ---@return string? table_name Resolved table name
 function Resolver.resolve_alias_with_scope(alias, bufnr, cursor_pos)
+  debug_log(string.format("resolve_alias_with_scope: alias=%s, cursor_pos={%s,%s}",
+    alias,
+    cursor_pos and cursor_pos[1] or "nil",
+    cursor_pos and cursor_pos[2] or "nil"))
+
   -- Get buffer text
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local query = table.concat(lines, '\n')
 
-  -- Try scope-based resolution
+  -- Try scope-based resolution with ScopeTracker
   local success, result = pcall(function()
     local ScopeTracker = require('ssns.completion.metadata.scope_tracker')
     local scope_tree = ScopeTracker.build_scope_tree(query, bufnr)
@@ -263,17 +279,25 @@ function Resolver.resolve_alias_with_scope(alias, bufnr, cursor_pos)
     cursor_pos = cursor_pos or vim.api.nvim_win_get_cursor(0)
     local aliases = ScopeTracker.get_available_aliases(scope_tree, cursor_pos)
 
-    -- Resolve alias
+    -- Resolve alias (case-insensitive)
     return aliases[alias:lower()]
   end)
 
+  debug_log(string.format("ScopeTracker result: success=%s, result=%s",
+    tostring(success), tostring(result)))
+
   if success and result then
+    debug_log(string.format("Returning from ScopeTracker: %s", result))
     return result
   end
 
-  -- Fallback: Use Context.resolve_alias (flat, non-scope-aware)
+  -- Fallback: Use Context.resolve_alias (scope-aware with cursor_pos)
+  debug_log("Falling back to Context.resolve_alias")
   local Context = require('ssns.completion.context')
-  return Context.resolve_alias(alias, bufnr)
+  local fallback_result = Context.resolve_alias(alias, bufnr, cursor_pos)
+  debug_log(string.format("Fallback result: %s", tostring(fallback_result)))
+
+  return fallback_result
 end
 
 ---Helper: Strip brackets/quotes from identifier
