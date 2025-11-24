@@ -793,9 +793,17 @@ function ScopeTracker._extract_from_aliases(node, query_text, scope, bufnr, conn
 
       -- Only add alias if it's for a real table (not a subquery, which creates its own scope)
       if #table_parts > 0 and alias then
+        -- Table with explicit alias
         local full_table_name = table.concat(table_parts, ".")
         scope.aliases[alias:lower()] = full_table_name
         debug_log(string.format("Extracted alias: %s -> %s", alias, full_table_name))
+      elseif #table_parts > 0 then
+        -- Table without alias - use table name as both key and value
+        local full_table_name = table.concat(table_parts, ".")
+        -- Extract just the table name (without schema) for the alias key
+        local table_name = full_table_name:match("%.([^%.]+)$") or full_table_name
+        scope.aliases[table_name:lower()] = full_table_name
+        debug_log(string.format("Extracted non-aliased table: %s -> %s", table_name, full_table_name))
       elseif has_subquery and alias then
         debug_log(string.format("Found subquery alias: %s (subquery scope already created)", alias))
       end
@@ -843,9 +851,17 @@ function ScopeTracker._extract_join_aliases(node, query_text, scope, bufnr, conn
       end
 
       if #table_parts > 0 and alias then
+        -- JOIN table with explicit alias
         local full_table_name = table.concat(table_parts, ".")
         scope.aliases[alias:lower()] = full_table_name
         debug_log(string.format("Extracted JOIN alias: %s -> %s", alias, full_table_name))
+      elseif #table_parts > 0 then
+        -- JOIN table without alias - use table name as both key and value
+        local full_table_name = table.concat(table_parts, ".")
+        -- Extract just the table name (without schema) for the alias key
+        local table_name = full_table_name:match("%.([^%.]+)$") or full_table_name
+        scope.aliases[table_name:lower()] = full_table_name
+        debug_log(string.format("Extracted non-aliased JOIN table: %s -> %s", table_name, full_table_name))
       end
     end
   end
