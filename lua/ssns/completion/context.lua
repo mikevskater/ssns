@@ -125,57 +125,41 @@ function Context.detect_with_treesitter(bufnr, row, col)
     Debug.log("[CONTEXT] Sibling recovery failed, continuing with tree walk")
   end
 
-  -- Walk up the tree to find statement context
-  local current = cursor_node
-  local statement_context = nil
+  -- Get text before cursor for prefix extraction
+  local before_cursor = lines[row]:sub(1, col)
 
-  while current do
-    local node_type = current:type()
-    Debug.log(string.format("[CONTEXT] Checking parent node: type='%s'", node_type))
+  -- Step 1: Check for function parameter context (NEW)
+  local func_context = Context._detect_function_parameter_context(cursor_node, lines, row, col)
+  if func_context then
+    Debug.log(string.format("[CONTEXT] Function parameter detected: %s", func_context.function_name or "unknown"))
+    return func_context
+  end
 
-    -- FROM clause context
-    if node_type == "from_clause" or node_type == "from" then
-      statement_context = Context._handle_from_context(current, lines, row, col)
-      break
+  -- Step 2: Find containing statement (boundary)
+  local statement_node = Context._find_containing_statement(cursor_node)
+  if not statement_node then
+    Debug.log("[CONTEXT] No containing statement found")
+    return { type = Context.Type.UNKNOWN, prefix = before_cursor }
+  end
 
-    -- JOIN clause context
-    elseif node_type:match("join") then
-      statement_context = Context._handle_join_context(current, lines, row, col)
-      break
+  -- Step 3: Extract keywords recursively from parent chain (NEW)
+  local query_text = table.concat(lines, "\n")
+  local keyword_stack = Context._extract_keywords_recursive(cursor_node, query_text, statement_node)
 
-    -- WHERE clause context
-    elseif node_type == "where_clause" or node_type == "where" then
-      statement_context = Context._handle_where_context(current, lines, row, col)
-      break
-
-    -- SELECT clause context
-    elseif node_type == "select" or node_type == "select_statement" or node_type == "select_clause" then
-      statement_context = Context._handle_select_context(current, cursor_node, lines, row, col)
-      break
-
-    -- INSERT/UPDATE/DELETE contexts
-    elseif node_type == "insert_statement" then
-      statement_context = Context._handle_insert_context(current, lines, row, col)
-      break
-    elseif node_type == "update_statement" then
-      statement_context = Context._handle_update_context(current, lines, row, col)
-      break
-    elseif node_type == "delete_statement" then
-      statement_context = Context._handle_delete_context(current, lines, row, col)
-      break
+  -- Step 4: Determine context from keywords (NEW)
+  if #keyword_stack > 0 then
+    local context = Context._determine_context_from_keywords(keyword_stack, cursor_node, lines, row, col)
+    if context then
+      return context
     end
-
-    current = current:parent()
   end
 
-  if statement_context then
-    Debug.log(string.format("[CONTEXT] Statement context found: type=%s, mode=%s",
-      tostring(statement_context.type), tostring(statement_context.mode)))
-    return statement_context
-  end
-
-  Debug.log("[CONTEXT] No statement context found")
-  return nil
+  -- Step 5: Fallback to unknown context
+  Debug.log("[CONTEXT] No valid context determined, returning UNKNOWN")
+  return {
+    type = Context.Type.UNKNOWN,
+    prefix = before_cursor,
+  }
 end
 
 ---Handle FROM clause context
@@ -192,21 +176,62 @@ function Context._handle_from_context(node, lines, row, col)
   local before_cursor = current_line:sub(1, col)
   local before_cursor_lower = before_cursor:lower()
 
-  -- Check for schema qualifier (schema.)
-  local schema = before_cursor_lower:match("(%w+)%.$")
-
-  if schema then
-    Debug.log(string.format("[CONTEXT] FROM with schema qualifier: '%s'", schema))
+  -- Check for 3-part name: database.schema. (cross-database table completion)
+  local db, schema = before_cursor_lower:match("(%w+)%.(%w+)%.$")
+  if db and schema then
+    Debug.log(string.format("[CONTEXT] FROM with cross-db qualifier: database='%s', schema='%s'", db, schema))
     return {
       type = Context.Type.TABLE,
-      mode = "from_qualified",
+      mode = "from_cross_db_qualified",
       trigger = ".",
       prefix = before_cursor,
+      database = db,
       schema = schema,
+      filter_database = db,
       filter_schema = schema,
       omit_schema = true,
     }
+  end
+
+  -- Check for 2-part name: qualifier. (could be database. OR schema.)
+  local qualifier = before_cursor_lower:match("(%w+)%.$")
+  if qualifier then
+    -- Heuristic: Check if qualifier is a known schema name
+    local known_schemas = { "dbo", "hr", "public", "sys", "information_schema", "guest" }
+    local is_schema = false
+    for _, s in ipairs(known_schemas) do
+      if qualifier == s:lower() then
+        is_schema = true
+        break
+      end
+    end
+
+    if is_schema then
+      -- It's a schema - return TABLE context
+      Debug.log(string.format("[CONTEXT] FROM with schema qualifier: '%s'", qualifier))
+      return {
+        type = Context.Type.TABLE,
+        mode = "from_qualified",
+        trigger = ".",
+        prefix = before_cursor,
+        schema = qualifier,
+        filter_schema = qualifier,
+        omit_schema = true,
+      }
+    else
+      -- Assume it's a database - return SCHEMA context
+      Debug.log(string.format("[CONTEXT] FROM with database qualifier: '%s'", qualifier))
+      return {
+        type = Context.Type.SCHEMA,
+        mode = "from_cross_db",
+        trigger = ".",
+        prefix = before_cursor,
+        database = qualifier,
+        filter_database = qualifier,
+      }
+    end
   else
+    -- No qualifier - return TABLE context
     Debug.log("[CONTEXT] FROM without qualifier")
     return {
       type = Context.Type.TABLE,
@@ -231,19 +256,57 @@ function Context._handle_join_context(node, lines, row, col)
   local before_cursor = current_line:sub(1, col)
   local before_cursor_lower = before_cursor:lower()
 
-  local schema = before_cursor_lower:match("(%w+)%.$")
-
-  if schema then
-    Debug.log(string.format("[CONTEXT] JOIN with schema qualifier: '%s'", schema))
+  -- Check for 3-part name: database.schema.
+  local db, schema = before_cursor_lower:match("(%w+)%.(%w+)%.$")
+  if db and schema then
+    Debug.log(string.format("[CONTEXT] JOIN with cross-db qualifier: database='%s', schema='%s'", db, schema))
     return {
       type = Context.Type.TABLE,
-      mode = "join_qualified",
+      mode = "join_cross_db_qualified",
       trigger = ".",
       prefix = before_cursor,
+      database = db,
       schema = schema,
+      filter_database = db,
       filter_schema = schema,
       omit_schema = true,
     }
+  end
+
+  -- Check for 2-part name: qualifier.
+  local qualifier = before_cursor_lower:match("(%w+)%.$")
+  if qualifier then
+    local known_schemas = { "dbo", "hr", "public", "sys", "information_schema", "guest" }
+    local is_schema = false
+    for _, s in ipairs(known_schemas) do
+      if qualifier == s:lower() then
+        is_schema = true
+        break
+      end
+    end
+
+    if is_schema then
+      Debug.log(string.format("[CONTEXT] JOIN with schema qualifier: '%s'", qualifier))
+      return {
+        type = Context.Type.TABLE,
+        mode = "join_qualified",
+        trigger = ".",
+        prefix = before_cursor,
+        schema = qualifier,
+        filter_schema = qualifier,
+        omit_schema = true,
+      }
+    else
+      Debug.log(string.format("[CONTEXT] JOIN with database qualifier: '%s'", qualifier))
+      return {
+        type = Context.Type.SCHEMA,
+        mode = "join_cross_db",
+        trigger = ".",
+        prefix = before_cursor,
+        database = qualifier,
+        filter_database = qualifier,
+      }
+    end
   else
     Debug.log("[CONTEXT] JOIN without qualifier")
     return {
@@ -290,8 +353,40 @@ function Context._handle_select_context(select_node, cursor_node, lines, row, co
 
   local current_line = lines[row] or ""
   local before_cursor = current_line:sub(1, col)
+  local before_cursor_lower = before_cursor:lower()
 
-  -- Check if we're after FROM (which means we're in FROM clause, not SELECT list)
+  -- NEW: Check for qualified table reference: schema.table. or alias.
+  local schema, table_name = before_cursor_lower:match("(%w+)%.(%w+)%.$")
+  if schema and table_name then
+    Debug.log(string.format("[CONTEXT] SELECT with qualified table: schema='%s', table='%s'", schema, table_name))
+    return {
+      type = Context.Type.COLUMN,
+      mode = "select_qualified",
+      trigger = ".",
+      prefix = before_cursor,
+      table_ref = schema .. "." .. table_name,
+      schema = schema,
+      filter_table = table_name,
+      omit_table = true,
+    }
+  end
+
+  -- NEW: Check for unqualified table/alias reference: table. or alias.
+  local table_or_alias = before_cursor_lower:match("(%w+)%.$")
+  if table_or_alias then
+    Debug.log(string.format("[CONTEXT] SELECT with table/alias reference: '%s'", table_or_alias))
+    return {
+      type = Context.Type.COLUMN,
+      mode = "select_qualified",
+      trigger = ".",
+      prefix = before_cursor,
+      table_ref = table_or_alias,
+      filter_table = table_or_alias,
+      omit_table = true,
+    }
+  end
+
+  -- EXISTING: Check if we're after FROM (which means we're in FROM clause, not SELECT list)
   -- This handles cases where cursor is between SELECT and FROM
   local has_from = false
   for child in select_node:iter_children() do
@@ -414,6 +509,303 @@ function Context._handle_delete_context(node, lines, row, col)
   end
 end
 
+---Extract SQL keyword from tree-sitter node type
+---@param node_type string Tree-sitter node type (e.g., "keyword_where", "where_clause")
+---@return string? keyword Uppercase SQL keyword (e.g., "WHERE") or nil
+function Context._extract_keyword_from_type(node_type)
+  -- Pattern 1: keyword_ prefix (e.g., "keyword_where" -> "WHERE")
+  local keyword = node_type:match("^keyword_(.+)$")
+  if keyword then
+    return keyword:upper()
+  end
+
+  -- Pattern 2: _clause suffix (e.g., "where_clause" -> "WHERE")
+  keyword = node_type:match("^(.+)_clause$")
+  if keyword then
+    return keyword:upper()
+  end
+
+  -- Pattern 3: Direct keyword mappings
+  local keyword_map = {
+    select = "SELECT",
+    from = "FROM",
+    where = "WHERE",
+    join = "JOIN",
+    inner_join = "INNER JOIN",
+    left_join = "LEFT JOIN",
+    right_join = "RIGHT JOIN",
+    insert_statement = "INSERT",
+    update_statement = "UPDATE",
+    delete_statement = "DELETE",
+  }
+
+  return keyword_map[node_type]
+end
+
+---Extract SQL keyword from node's text content
+---@param node table Tree-sitter node
+---@param query_text string Full query text
+---@return string? keyword Uppercase SQL keyword or nil
+function Context._extract_keyword_from_text(node, query_text)
+  -- Get node text
+  local ok, text = pcall(vim.treesitter.get_node_text, node, query_text)
+  if not ok or not text then
+    return nil
+  end
+
+  -- Trim leading whitespace, convert to uppercase
+  text = text:match("^%s*(.*)"):upper()
+
+  -- Check if text starts with any SQL keyword
+  local keywords = {
+    "INNER JOIN", "LEFT JOIN", "RIGHT JOIN", "OUTER JOIN", "FULL JOIN",
+    "SELECT", "FROM", "WHERE", "JOIN", "INSERT", "UPDATE", "DELETE",
+    "GROUP BY", "ORDER BY", "HAVING"
+  }
+
+  for _, kw in ipairs(keywords) do
+    if text:sub(1, #kw) == kw then
+      return kw
+    end
+  end
+
+  return nil
+end
+
+---Combined keyword detection (try type first, then text)
+---@param node table Tree-sitter node
+---@param query_text string Full query text
+---@return string? keyword Uppercase SQL keyword or nil
+function Context._detect_sql_keyword(node, query_text)
+  -- Fast path: try node type first
+  local keyword = Context._extract_keyword_from_type(node:type())
+  if keyword then
+    return keyword
+  end
+
+  -- Fallback: check node text content
+  return Context._extract_keyword_from_text(node, query_text)
+end
+
+---Find the containing statement node (boundary for scope)
+---@param node table Tree-sitter node
+---@return table? statement_node Statement node or nil
+function Context._find_containing_statement(node)
+  local current = node
+  while current do
+    local node_type = current:type()
+    if node_type == "statement" or
+       node_type == "select_statement" or
+       node_type == "insert_statement" or
+       node_type == "update_statement" or
+       node_type == "delete_statement" then
+      return current
+    end
+    current = current:parent()
+  end
+  return nil
+end
+
+---Walk parent chain collecting SQL keywords
+---@param cursor_node table Tree-sitter node at cursor
+---@param query_text string Full query text
+---@param statement_boundary table? Statement node to stop at
+---@return table keyword_stack Array of {keyword, node, depth}
+function Context._extract_keywords_recursive(cursor_node, query_text, statement_boundary)
+  local Debug = require('ssns.debug')
+  local keyword_stack = {}
+  local current = cursor_node
+  local depth = 0
+  local MAX_DEPTH = 20
+
+  Debug.log(string.format("[CONTEXT] Recursive keyword search: starting at node type='%s'", cursor_node:type()))
+
+  while current and depth < MAX_DEPTH do
+    -- Stop at statement boundary
+    if statement_boundary and current == statement_boundary then
+      break
+    end
+
+    -- Detect keyword
+    local keyword = Context._detect_sql_keyword(current, query_text)
+    if keyword then
+      table.insert(keyword_stack, {
+        keyword = keyword,
+        node = current,
+        depth = depth,
+      })
+    end
+
+    -- Move to parent
+    current = current:parent()
+    depth = depth + 1
+  end
+
+  Debug.log(string.format("[CONTEXT] Keywords found: %d", #keyword_stack))
+  for i, kw_info in ipairs(keyword_stack) do
+    Debug.log(string.format("[CONTEXT]   [%d] %s (depth=%d, node=%s)",
+      i, kw_info.keyword, kw_info.depth, kw_info.node:type()))
+  end
+
+  return keyword_stack
+end
+
+---Detect if cursor is inside function call parentheses (NEW FEATURE)
+---@param cursor_node table Tree-sitter node at cursor
+---@param lines table Buffer lines
+---@param row number Cursor row (1-indexed)
+---@param col number Cursor column (1-indexed)
+---@return table? context Context table or nil
+function Context._detect_function_parameter_context(cursor_node, lines, row, col)
+  local Debug = require('ssns.debug')
+  local current = cursor_node
+  local depth = 0
+  local MAX_DEPTH = 10
+
+  while current and depth < MAX_DEPTH do
+    local node_type = current:type()
+
+    -- Check if we're in argument/parameter list
+    if node_type == "argument_list" or node_type == "parameter_list" then
+      -- Check parent is a function
+      local parent = current:parent()
+      if parent then
+        local parent_type = parent:type()
+        if parent_type == "invocation" or parent_type:match("function") then
+          -- Extract function name from first identifier child
+          local func_name = nil
+          for child in parent:iter_children() do
+            if child:type() == "identifier" then
+              local ok, name = pcall(vim.treesitter.get_node_text, child, table.concat(lines, "\n"))
+              if ok then
+                func_name = name
+              end
+              break
+            end
+          end
+
+          if func_name then
+            Debug.log(string.format("[CONTEXT] Function parameter context detected: %s", func_name))
+
+            local current_line = lines[row] or ""
+            local before_cursor = current_line:sub(1, col)
+
+            return {
+              type = Context.Type.COLUMN,
+              mode = "function_parameter",
+              function_name = func_name,
+              trigger = nil,
+              prefix = before_cursor,
+            }
+          end
+        end
+      end
+    end
+
+    current = current:parent()
+    depth = depth + 1
+  end
+
+  return nil
+end
+
+---Map keywords to context by checking closest keyword first
+---@param keyword_stack table Array of {keyword, node, depth}
+---@param cursor_node table Tree-sitter node at cursor
+---@param lines table Buffer lines
+---@param row number Cursor row (1-indexed)
+---@param col number Cursor column (1-indexed)
+---@return table? context Context table or nil
+function Context._determine_context_from_keywords(keyword_stack, cursor_node, lines, row, col)
+  local Debug = require('ssns.debug')
+
+  -- Iterate keyword_stack (already sorted closest to farthest)
+  for i, kw_info in ipairs(keyword_stack) do
+    local keyword = kw_info.keyword
+
+    Debug.log(string.format("[CONTEXT] Checking keyword: %s", keyword))
+
+    -- WHERE or HAVING
+    if keyword == "WHERE" or keyword == "HAVING" then
+      local context = Context._handle_where_context(kw_info.node, lines, row, col)
+      if context then
+        Debug.log(string.format("[CONTEXT] Context determined from keyword '%s': type=%s, mode=%s",
+          keyword, context.type, context.mode or "none"))
+        return context
+      end
+
+    -- FROM
+    elseif keyword == "FROM" then
+      local context = Context._handle_from_context(kw_info.node, lines, row, col)
+      if context then
+        Debug.log(string.format("[CONTEXT] Context determined from keyword '%s': type=%s, mode=%s",
+          keyword, context.type, context.mode or "none"))
+        return context
+      end
+
+    -- JOIN (any type)
+    elseif keyword:match("JOIN") then
+      local context = Context._handle_join_context(kw_info.node, lines, row, col)
+      if context then
+        Debug.log(string.format("[CONTEXT] Context determined from keyword '%s': type=%s, mode=%s",
+          keyword, context.type, context.mode or "none"))
+        return context
+      end
+
+    -- SELECT
+    elseif keyword == "SELECT" then
+      -- Check if FROM or JOIN exists earlier in stack (lower index = closer to cursor)
+      local has_from_or_join = false
+      for j = 1, i - 1 do
+        local earlier_kw = keyword_stack[j].keyword
+        if earlier_kw == "FROM" or earlier_kw:match("JOIN") then
+          has_from_or_join = true
+          break
+        end
+      end
+
+      -- If FROM/JOIN takes precedence, skip SELECT
+      if not has_from_or_join then
+        local context = Context._handle_select_context(kw_info.node, cursor_node, lines, row, col)
+        if context then
+          Debug.log(string.format("[CONTEXT] Context determined from keyword '%s': type=%s, mode=%s",
+            keyword, context.type, context.mode or "none"))
+          return context
+        end
+      end
+
+    -- INSERT
+    elseif keyword == "INSERT" then
+      local context = Context._handle_insert_context(kw_info.node, lines, row, col)
+      if context then
+        Debug.log(string.format("[CONTEXT] Context determined from keyword '%s': type=%s, mode=%s",
+          keyword, context.type, context.mode or "none"))
+        return context
+      end
+
+    -- UPDATE
+    elseif keyword == "UPDATE" then
+      local context = Context._handle_update_context(kw_info.node, lines, row, col)
+      if context then
+        Debug.log(string.format("[CONTEXT] Context determined from keyword '%s': type=%s, mode=%s",
+          keyword, context.type, context.mode or "none"))
+        return context
+      end
+
+    -- DELETE
+    elseif keyword == "DELETE" then
+      local context = Context._handle_delete_context(kw_info.node, lines, row, col)
+      if context then
+        Debug.log(string.format("[CONTEXT] Context determined from keyword '%s': type=%s, mode=%s",
+          keyword, context.type, context.mode or "none"))
+        return context
+      end
+    end
+  end
+
+  return nil
+end
+
 ---Handle error recovery by checking previous sibling context
 ---@param error_node table Tree-sitter ERROR node
 ---@param lines table Buffer lines
@@ -423,6 +815,40 @@ end
 function Context._handle_error_from_sibling(error_node, lines, row, col)
   local Debug = require('ssns.debug')
   Debug.log("[CONTEXT] ERROR node - checking previous sibling for context")
+
+  -- Step 1: Check ERROR node's own children for keywords (PRIORITY)
+  local has_where_keyword = false
+  local has_join_keyword = false
+  local has_and_or_keyword = false
+
+  for child in error_node:iter_children() do
+    local child_type = child:type()
+
+    if child_type == "keyword_where" then
+      has_where_keyword = true
+      Debug.log("[CONTEXT] ERROR contains WHERE keyword")
+    elseif child_type == "keyword_and" or child_type == "keyword_or" then
+      has_and_or_keyword = true
+      Debug.log(string.format("[CONTEXT] ERROR contains %s keyword", child_type))
+    elseif child_type == "keyword_join" or child_type:match("keyword_.*join") then
+      has_join_keyword = true
+      Debug.log(string.format("[CONTEXT] ERROR contains JOIN keyword: %s", child_type))
+    end
+  end
+
+  -- If ERROR contains WHERE/AND/OR keywords → return COLUMN context
+  if has_where_keyword or has_and_or_keyword then
+    Debug.log("[CONTEXT] ERROR node has WHERE/AND/OR, calling _handle_where_context()")
+    return Context._handle_where_context(error_node, lines, row, col)
+  end
+
+  -- If ERROR contains JOIN keyword → return TABLE context
+  if has_join_keyword then
+    Debug.log("[CONTEXT] ERROR node has JOIN keyword, calling _handle_join_context()")
+    return Context._handle_join_context(error_node, lines, row, col)
+  end
+
+  Debug.log("[CONTEXT] No keywords found in ERROR node, checking previous sibling")
 
   -- Check previous sibling (should be the statement we're continuing from)
   local prev_sibling = error_node:prev_sibling()
