@@ -1,6 +1,5 @@
 *.md
 
-tests/
 sql/
 
 # Ignore Node artifacts in rplugin/node/ssns-db
