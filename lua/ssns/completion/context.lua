@@ -18,420 +18,48 @@ Context.Type = {
   ALIAS = "alias",
 }
 
----Detect SQL context from cursor position
+---Detect SQL context from cursor position using tree-sitter AST analysis
 ---@param bufnr number Buffer number
 ---@param line_num number Line number (1-indexed)
 ---@param col number Column number (1-indexed, byte offset)
 ---@return table context { type: ContextType, prefix: string, trigger?: string, table_ref?: string, alias?: string, schema?: string, database?: string }
 function Context.detect(bufnr, line_num, col)
-  -- CRITICAL: Fetch actual line from buffer (see INTELLISENSE_IMPLEMENTATION_GUIDE.md)
-  -- The ctx.line from blink.cmp may not include the trigger character!
-  local lines = vim.api.nvim_buf_get_lines(bufnr, line_num - 1, line_num, false)
-  if not lines or #lines == 0 then
-    return { type = Context.Type.UNKNOWN, prefix = "" }
-  end
-
-  local line = lines[1]
-  if not line then
-    return { type = Context.Type.UNKNOWN, prefix = "" }
-  end
-
-  -- Get text before cursor
-  local before_cursor = line:sub(1, col)
-  local before_cursor_lower = before_cursor:lower()
-
   local Debug = require('ssns.debug')
-  Debug.log(string.format("[CONTEXT] detect() called: line_num=%d, col=%d, line='%s'",
-    line_num, col, line or "nil"))
 
-  -- Detect trigger character at cursor
-  local trigger = nil
-  if before_cursor:match("%.$") then
-    trigger = "."
-  elseif before_cursor:match("%[$") then
-    trigger = "["
-  elseif before_cursor:match("%s$") then
-    trigger = " "
-  end
+  Debug.log(string.format("[CONTEXT] detect() called: line_num=%d, col=%d", line_num, col))
 
-  -- Priority order (most specific first)
-  -- CRITICAL: Check statement-specific qualified patterns BEFORE generic patterns
-  -- to prevent "UPDATE dbo." from matching as generic "dbo." (column reference)
-
-  -- 1. Bracketed identifier: [schema].[table].| or [database].|
-  --    Pattern: [word].[word].| or [word].|
-  if before_cursor:match("%[([^%]]+)%]%.%[([^%]]+)%]%.$") then
-    local part1, part2 = before_cursor:match("%[([^%]]+)%]%.%[([^%]]+)%]%.$")
-    -- Could be [schema].[table]. or [database].[schema].
-    -- Assume schema.table for now
+  -- Tree-sitter is now REQUIRED
+  local Treesitter = require('ssns.completion.metadata.treesitter')
+  if not Treesitter.is_available() then
+    vim.notify(
+      "SSNS IntelliSense requires tree-sitter SQL parser.\n" ..
+      "Install with: :TSInstall sql",
+      vim.log.levels.ERROR
+    )
     return {
-      type = Context.Type.COLUMN,
-      prefix = before_cursor,
-      trigger = ".",
-      schema = part1,
-      table_ref = part2,
-      mode = "qualified_bracket",
+      type = Context.Type.UNKNOWN,
+      prefix = "",
     }
   end
 
-  if before_cursor:match("%[([^%]]+)%]%.$") then
-    local part1 = before_cursor:match("%[([^%]]+)%]%.$")
-    -- Could be [schema]. or [database].
-    -- Need more context - check if followed by another identifier
-    return {
-      type = Context.Type.SCHEMA,
-      prefix = before_cursor,
-      trigger = ".",
-      database = part1,
-      mode = "qualified_bracket",
-    }
-  end
-
-  -- 2. USE statement: USE | or USE D| or USE Dev|
-  if before_cursor_lower:match("use%s+%w*$") then
-    return {
-      type = Context.Type.DATABASE,
-      prefix = before_cursor,
-      trigger = " ",
-      mode = "use",
-    }
-  end
-
-  -- 3. DELETE FROM: DELETE FROM | or DELETE FROM E| or DELETE FROM Emp|
-  -- DELETE FROM with qualification: DELETE FROM schema. or DELETE FROM db.schema.
-  -- MUST be checked BEFORE generic FROM patterns!
-  if before_cursor_lower:match("delete%s+from%s+(%w+)%.(%w+)%.$") then
-    local database, schema = before_cursor_lower:match("delete%s+from%s+(%w+)%.(%w+)%.$")
-    return {
-      type = Context.Type.TABLE,
-      prefix = before_cursor,
-      trigger = ".",
-      database = database,
-      schema = schema,
-      mode = "delete_qualified",
-      omit_schema = true,
-      filter_schema = schema,
-    }
-  end
-
-  if before_cursor_lower:match("delete%s+from%s+(%w+)%.$") then
-    local schema = before_cursor_lower:match("delete%s+from%s+(%w+)%.$")
-    return {
-      type = Context.Type.TABLE,
-      prefix = before_cursor,
-      trigger = ".",
-      schema = schema,
-      mode = "delete_qualified",
-      omit_schema = true,
-      filter_schema = schema,
-    }
-  end
-
-  if before_cursor_lower:match("delete%s+from%s+%w*$") then
-    return {
-      type = Context.Type.TABLE,
-      prefix = before_cursor,
-      trigger = " ",
-      mode = "delete",
-    }
-  end
-
-  -- 4. INSERT INTO: INSERT INTO | or INSERT INTO E| or INSERT INTO Emp|
-  -- INSERT INTO with qualification: INSERT INTO schema. or INSERT INTO db.schema.
-  -- MUST be checked BEFORE generic qualified patterns!
-  if before_cursor_lower:match("insert%s+into%s+(%w+)%.(%w+)%.$") then
-    local database, schema = before_cursor_lower:match("insert%s+into%s+(%w+)%.(%w+)%.$")
-    return {
-      type = Context.Type.TABLE,
-      prefix = before_cursor,
-      trigger = ".",
-      database = database,
-      schema = schema,
-      mode = "insert_qualified",
-      omit_schema = true,
-      filter_schema = schema,
-    }
-  end
-
-  if before_cursor_lower:match("insert%s+into%s+(%w+)%.$") then
-    local schema = before_cursor_lower:match("insert%s+into%s+(%w+)%.$")
-    return {
-      type = Context.Type.TABLE,
-      prefix = before_cursor,
-      trigger = ".",
-      schema = schema,
-      mode = "insert_qualified",
-      omit_schema = true,
-      filter_schema = schema,
-    }
-  end
-
-  if before_cursor_lower:match("insert%s+into%s+%w*$") then
-    return {
-      type = Context.Type.TABLE,
-      prefix = before_cursor,
-      trigger = " ",
-      mode = "insert",
-    }
-  end
-
-  -- 5. UPDATE: UPDATE | or UPDATE E| or UPDATE Emp|
-  -- UPDATE with qualification: UPDATE schema. or UPDATE db.schema.
-  -- MUST be checked BEFORE generic qualified patterns!
-  if before_cursor_lower:match("update%s+(%w+)%.(%w+)%.$") then
-    local database, schema = before_cursor_lower:match("update%s+(%w+)%.(%w+)%.$")
-    return {
-      type = Context.Type.TABLE,
-      prefix = before_cursor,
-      trigger = ".",
-      database = database,
-      schema = schema,
-      mode = "update_qualified",
-      omit_schema = true,
-      filter_schema = schema,
-    }
-  end
-
-  if before_cursor_lower:match("update%s+(%w+)%.$") then
-    local schema = before_cursor_lower:match("update%s+(%w+)%.$")
-    return {
-      type = Context.Type.TABLE,
-      prefix = before_cursor,
-      trigger = ".",
-      schema = schema,
-      mode = "update_qualified",
-      omit_schema = true,
-      filter_schema = schema,
-    }
-  end
-
-  if before_cursor_lower:match("update%s+%w*$") then
-    return {
-      type = Context.Type.TABLE,
-      prefix = before_cursor,
-      trigger = " ",
-      mode = "update",
-    }
-  end
-
-  -- 6. FROM clause: FROM | or FROM E| or FROM Emp|
-  if before_cursor_lower:match("from%s+%w*$") then
-    return {
-      type = Context.Type.TABLE,
-      prefix = before_cursor,
-      trigger = " ",
-      mode = "from",
-    }
-  end
-
-  -- FROM with qualification: FROM schema. or FROM db.schema.
-  if before_cursor_lower:match("from%s+(%w+)%.(%w+)%.$") then
-    -- Two-level: FROM database.schema.
-    local database, schema = before_cursor_lower:match("from%s+(%w+)%.(%w+)%.$")
-    return {
-      type = Context.Type.TABLE,
-      prefix = before_cursor,
-      trigger = ".",
-      database = database,
-      schema = schema,
-      mode = "from_qualified",
-      omit_schema = true,  -- Schema already typed, don't include in insertText
-      filter_schema = schema,  -- Only show objects from this schema
-    }
-  end
-
-  if before_cursor_lower:match("from%s+(%w+)%.$") then
-    -- One-level: FROM schema.
-    local schema = before_cursor_lower:match("from%s+(%w+)%.$")
-    return {
-      type = Context.Type.TABLE,
-      prefix = before_cursor,
-      trigger = ".",
-      schema = schema,
-      mode = "from_qualified",
-      omit_schema = true,  -- Schema already typed, don't include in insertText
-      filter_schema = schema,  -- Only show objects from this schema
-    }
-  end
-
-  -- 7. JOIN clause: JOIN | or JOIN D| or JOIN Dep|
-  if before_cursor_lower:match("join%s+%w*$") then
-    return {
-      type = Context.Type.TABLE,
-      prefix = before_cursor,
-      trigger = " ",
-      mode = "join",
-    }
-  end
-
-  -- JOIN with qualification: JOIN schema. or JOIN db.schema.
-  if before_cursor_lower:match("join%s+(%w+)%.(%w+)%.$") then
-    -- Two-level: JOIN database.schema.
-    local database, schema = before_cursor_lower:match("join%s+(%w+)%.(%w+)%.$")
-    return {
-      type = Context.Type.TABLE,
-      prefix = before_cursor,
-      trigger = ".",
-      database = database,
-      schema = schema,
-      mode = "join_qualified",
-      omit_schema = true,  -- Schema already typed, don't include in insertText
-      filter_schema = schema,  -- Only show objects from this schema
-    }
-  end
-
-  if before_cursor_lower:match("join%s+(%w+)%.$") then
-    -- One-level: JOIN schema.
-    local schema = before_cursor_lower:match("join%s+(%w+)%.$")
-    return {
-      type = Context.Type.TABLE,
-      prefix = before_cursor,
-      trigger = ".",
-      schema = schema,
-      mode = "join_qualified",
-      omit_schema = true,  -- Schema already typed, don't include in insertText
-      filter_schema = schema,  -- Only show objects from this schema
-    }
-  end
-
-  -- 8. Qualified column reference: table.column| or alias.column|
-  --    Pattern: word followed by dot (AFTER statement-specific patterns)
-  if before_cursor:match("(%w+)%.$") then
-    local ref = before_cursor:match("(%w+)%.$")
-    return {
-      type = Context.Type.COLUMN,
-      prefix = before_cursor,
-      trigger = ".",
-      table_ref = ref,
-      mode = "qualified",
-    }
-  end
-
-  -- 9. Qualified table/column reference with partial word: schema.Tab| or table.col|
-  --    Pattern: word.word (no trailing dot)
-  --    This handles cases like "FROM Production.Prod" where user is typing table name
-  --    AFTER checking for qualified patterns with dots
-  if before_cursor:match("(%w+)%.(%w+)$") then
-    -- This could be schema.table or table.column depending on context
-    -- Need to check parent statement type
-    local part1, part2 = before_cursor:match("(%w+)%.(%w+)$")
-
-    -- Check if we're in a table context (FROM, JOIN, INSERT, UPDATE, DELETE)
-    if before_cursor_lower:match("from%s+%w+%.%w+$") or
-       before_cursor_lower:match("join%s+%w+%.%w+$") or
-       before_cursor_lower:match("insert%s+into%s+%w+%.%w+$") or
-       before_cursor_lower:match("update%s+%w+%.%w+$") or
-       before_cursor_lower:match("delete%s+from%s+%w+%.%w+$") then
-      -- This is schema.table (partial table name)
-      return {
-        type = Context.Type.TABLE,
-        prefix = before_cursor,
-        trigger = nil,
-        schema = part1,
-        mode = "qualified_partial",
-      }
-    else
-      -- This is table.column (partial column name)
-      return {
-        type = Context.Type.COLUMN,
-        prefix = before_cursor,
-        trigger = nil,
-        table_ref = part1,
-        mode = "qualified_partial",
-      }
-    end
-  end
-
-  -- 10. SELECT clause: SELECT | or SELECT E| or SELECT Emp| (column completion)
-  if before_cursor_lower:match("select%s+%w*$") then
-    return {
-      type = Context.Type.COLUMN,
-      prefix = before_cursor,
-      trigger = " ",
-      mode = "select",
-    }
-  end
-
-  -- 11. WHERE clause: WHERE | or WHERE E| or WHERE Emp| (column completion)
-  if before_cursor_lower:match("where%s+%w*$") then
-    return {
-      type = Context.Type.COLUMN,
-      prefix = before_cursor,
-      trigger = " ",
-      mode = "where",
-    }
-  end
-
-  -- 12. ORDER BY clause: ORDER BY | or ORDER BY E| or ORDER BY Emp|
-  if before_cursor_lower:match("order%s+by%s+%w*$") then
-    return {
-      type = Context.Type.COLUMN,
-      prefix = before_cursor,
-      trigger = " ",
-      mode = "order_by",
-    }
-  end
-
-  -- 13. GROUP BY clause: GROUP BY | or GROUP BY E| or GROUP BY Emp|
-  if before_cursor_lower:match("group%s+by%s+%w*$") then
-    return {
-      type = Context.Type.COLUMN,
-      prefix = before_cursor,
-      trigger = " ",
-      mode = "group_by",
-    }
-  end
-
-  -- 14. EXEC/EXECUTE: EXEC | or EXEC sp| or EXEC sp_Get| (procedure completion)
-  if before_cursor_lower:match("exec%w*%s+%w*$") then
-    return {
-      type = Context.Type.PROCEDURE,
-      prefix = before_cursor,
-      trigger = " ",
-      mode = "exec",
-    }
-  end
-
-  -- 15. After procedure name: EXEC proc | (parameter completion)
-  local proc_name = before_cursor_lower:match("exec%w*%s+(%w+)%s+$")
-  if proc_name then
-    return {
-      type = Context.Type.PARAMETER,
-      prefix = before_cursor,
-      trigger = " ",
-      procedure = proc_name,
-      mode = "exec_params",
-    }
-  end
-
-  -- 16. Default: keyword completion (but try tree-sitter first for multi-line support)
-  local Debug = require('ssns.debug')
-  Debug.log("[CONTEXT] All regex patterns failed, attempting tree-sitter fallback")
-
-  local regex_result = {
-    type = Context.Type.KEYWORD,
-    prefix = before_cursor,
-    trigger = nil,
-    mode = "default",
-  }
-
-  -- Try tree-sitter for better multi-line support
+  -- Use tree-sitter for all context detection
   local ts_result = Context.detect_with_treesitter(bufnr, line_num, col)
+
   if ts_result then
-    -- Tree-sitter found a more specific context
-    Debug.log(string.format("[CONTEXT] Returning tree-sitter context: type=%s, mode=%s, schema=%s",
-      tostring(ts_result.type),
-      tostring(ts_result.mode),
-      tostring(ts_result.schema or "nil")))
+    Debug.log(string.format("[CONTEXT] Tree-sitter result: type=%s, mode=%s, schema=%s",
+      tostring(ts_result.type), tostring(ts_result.mode), tostring(ts_result.schema or "nil")))
     return ts_result
   end
 
-  -- Fall back to keyword completion
-  Debug.log("[CONTEXT] Returning keyword completion (fallback)")
-  return regex_result
+  -- Fallback to unknown context
+  Debug.log("[CONTEXT] Tree-sitter returned nil, using UNKNOWN context")
+  return {
+    type = Context.Type.UNKNOWN,
+    prefix = "",
+  }
 end
 
---- Detect completion context using tree-sitter (for multi-line queries)
+--- Detect completion context using tree-sitter AST analysis
 ---@param bufnr number Buffer number
 ---@param row number Cursor row (1-indexed)
 ---@param col number Cursor column (1-indexed)
@@ -440,232 +68,320 @@ function Context.detect_with_treesitter(bufnr, row, col)
   local Debug = require('ssns.debug')
   local Treesitter = require('ssns.completion.metadata.treesitter')
 
-  Debug.log(string.format("[CONTEXT] detect_with_treesitter() called: bufnr=%d, line_num=%d, col=%d",
+  Debug.log(string.format("[CONTEXT] detect_with_treesitter() called: bufnr=%d, row=%d, col=%d",
     bufnr, row, col))
 
-  -- Check if tree-sitter is available
-  local ts_available = Treesitter.is_available()
-  Debug.log(string.format("[CONTEXT] Tree-sitter available: %s", tostring(ts_available)))
-
-  if not ts_available then
-    Debug.log("[CONTEXT] Tree-sitter not available, returning nil")
-    return nil
-  end
-
-  -- Get full buffer content
+  -- Get full buffer text
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  local query_text = table.concat(lines, "\n")
+  local text = table.concat(lines, "\n")
 
-  -- Parse SQL
-  local root = Treesitter.parse_sql(query_text)
-  if not root then
-    Debug.log("[CONTEXT] Tree-sitter parse returned nil")
+  -- Parse SQL with tree-sitter
+  local ok, parser = pcall(vim.treesitter.get_string_parser, text, "sql")
+  if not ok then
+    Debug.log("[CONTEXT] Failed to parse SQL with tree-sitter")
     return nil
   end
 
-  Debug.log("[CONTEXT] Tree-sitter parse successful")
+  local tree = parser:parse()[1]
+  local root = tree:root()
 
-  -- Convert to 0-indexed for tree-sitter
-  local ts_row = row - 1
-  local ts_col = col - 1
+  -- Get node at cursor position (0-indexed for tree-sitter)
+  local cursor_node = root:named_descendant_for_range(row - 1, col - 1, row - 1, col - 1)
 
-  -- Find node at cursor position
-  local node = root:descendant_for_range(ts_row, ts_col, ts_row, ts_col)
-  if not node then
+  if not cursor_node then
     Debug.log("[CONTEXT] No node found at cursor position")
     return nil
   end
 
-  Debug.log(string.format("[CONTEXT] Found node at cursor: type=%s", node:type()))
+  Debug.log(string.format("[CONTEXT] Node at cursor: type='%s'", cursor_node:type()))
 
-  -- Walk up parent chain to find statement context
-  local current = node
+  -- Walk up the tree to find statement context
+  local current = cursor_node
+  local statement_context = nil
+
   while current do
     local node_type = current:type()
+    Debug.log(string.format("[CONTEXT] Checking parent node: type='%s'", node_type))
 
-    Debug.log(string.format("[CONTEXT] Checking parent node: type=%s", node_type))
-
-    -- Check for FROM clause context (table completion)
+    -- FROM clause context
     if node_type == "from_clause" or node_type == "from" then
-      Debug.log("[CONTEXT] Tree-sitter detected FROM clause, extracting schema from current line")
+      statement_context = Context._handle_from_context(current, lines, row, col)
+      break
 
-      -- Try to extract schema qualifier from current position
-      -- Look backwards from cursor for identifier.| pattern
-      local current_line = lines[row] or ""
-      local before_cursor = current_line:sub(1, col)
-      local before_cursor_lower = before_cursor:lower()
+    -- JOIN clause context
+    elseif node_type:match("join") then
+      statement_context = Context._handle_join_context(current, lines, row, col)
+      break
 
-      -- Check if cursor is after schema qualifier (schema.)
-      local schema = before_cursor_lower:match("(%w+)%.$")
+    -- WHERE clause context
+    elseif node_type == "where_clause" or node_type == "where" then
+      statement_context = Context._handle_where_context(current, lines, row, col)
+      break
 
-      if schema then
-        -- Qualified FROM: FROM schema.|
-        Debug.log(string.format("[CONTEXT] Schema extracted: '%s'", schema))
-        return {
-          type = Context.Type.TABLE,
-          mode = "from_qualified",
-          trigger = ".",
-          prefix = before_cursor,
-          schema = schema,
-          filter_schema = schema,
-          omit_schema = true,  -- Schema already typed
-        }
-      else
-        -- Unqualified FROM: FROM |
-        Debug.log("[CONTEXT] No schema qualifier found, returning unqualified FROM")
-        return {
-          type = Context.Type.TABLE,
-          mode = "from",
-          trigger = nil,
-          prefix = before_cursor,
-        }
-      end
+    -- SELECT clause context
+    elseif node_type == "select" or node_type == "select_statement" or node_type == "select_clause" then
+      statement_context = Context._handle_select_context(current, cursor_node, lines, row, col)
+      break
+
+    -- INSERT/UPDATE/DELETE contexts
+    elseif node_type == "insert_statement" then
+      statement_context = Context._handle_insert_context(current, lines, row, col)
+      break
+    elseif node_type == "update_statement" then
+      statement_context = Context._handle_update_context(current, lines, row, col)
+      break
+    elseif node_type == "delete_statement" then
+      statement_context = Context._handle_delete_context(current, lines, row, col)
+      break
     end
 
-    -- Check for JOIN clause context (table completion)
-    if node_type:match("join") then  -- Matches inner_join, left_join, etc.
-      Debug.log("[CONTEXT] Tree-sitter detected JOIN clause, extracting schema from current line")
-
-      -- Try to extract schema qualifier from current position
-      local current_line = lines[row] or ""
-      local before_cursor = current_line:sub(1, col)
-      local before_cursor_lower = before_cursor:lower()
-
-      -- Check if cursor is after schema qualifier (schema.)
-      local schema = before_cursor_lower:match("(%w+)%.$")
-
-      if schema then
-        -- Qualified JOIN: JOIN schema.|
-        Debug.log(string.format("[CONTEXT] Schema extracted: '%s'", schema))
-        return {
-          type = Context.Type.TABLE,
-          mode = "join_qualified",
-          trigger = ".",
-          prefix = before_cursor,
-          schema = schema,
-          filter_schema = schema,
-          omit_schema = true,  -- Schema already typed
-        }
-      else
-        -- Unqualified JOIN: JOIN |
-        Debug.log("[CONTEXT] No schema qualifier found, returning unqualified JOIN")
-        return {
-          type = Context.Type.TABLE,
-          mode = "join",
-          trigger = nil,
-          prefix = before_cursor,
-        }
-      end
-    end
-
-    -- Check for WHERE clause context (column completion)
-    if node_type == "where_clause" or node_type == "where" then
-      return {
-        type = Context.Type.COLUMN,
-        mode = "where",
-        trigger = nil,
-        prefix = lines[row]:sub(1, col),
-      }
-    end
-
-    -- Check for SELECT clause context (column completion)
-    if node_type == "select_clause" or node_type == "select" then
-      return {
-        type = Context.Type.COLUMN,
-        mode = "select",
-        trigger = nil,
-        prefix = lines[row]:sub(1, col),
-      }
-    end
-
-    -- Check for ORDER BY clause context (column completion)
-    if node_type == "order_by_clause" or node_type == "order_by" then
-      return {
-        type = Context.Type.COLUMN,
-        mode = "order_by",
-        trigger = nil,
-        prefix = lines[row]:sub(1, col),
-      }
-    end
-
-    -- Check for GROUP BY clause context (column completion)
-    if node_type == "group_by_clause" or node_type == "group_by" then
-      return {
-        type = Context.Type.COLUMN,
-        mode = "group_by",
-        trigger = nil,
-        prefix = lines[row]:sub(1, col),
-      }
-    end
-
-    -- Check for EXEC/EXECUTE context (procedure completion)
-    if node_type == "execute_statement" or node_type == "exec_statement" then
-      return {
-        type = Context.Type.PROCEDURE,
-        mode = "exec",
-        trigger = nil,
-        prefix = lines[row]:sub(1, col),
-      }
-    end
-
-    -- Check for function call context (might be parameters)
-    if node_type == "function_call" then
-      -- Check if cursor is inside parentheses (parameters)
-      local parent = current:parent()
-      if parent and parent:type() == "arguments" then
-        return {
-          type = Context.Type.PARAMETER,
-          mode = "function",
-          trigger = nil,
-          prefix = lines[row]:sub(1, col),
-        }
-      end
-    end
-
-    -- Check for field reference (table.column or schema.table)
-    if node_type == "field_reference" or node_type == "object_reference" then
-      -- This handles qualified references like "dbo.table" or "e.column"
-      local text = vim.treesitter.get_node_text(current, query_text)
-
-      -- Check if ends with dot (waiting for next part)
-      if text:match("%.$") or col == current:end_() + 1 then
-        -- Count dots to determine if schema.table or table.column
-        local dots = 0
-        for _ in text:gmatch("%.") do dots = dots + 1 end
-
-        if dots == 1 then
-          -- Could be schema.table or table.column - need parent context
-          local parent = current:parent()
-          if parent and (parent:type():match("from") or parent:type():match("join")) then
-            -- In FROM/JOIN: schema.table context
-            return {
-              type = Context.Type.TABLE,
-              mode = "from_qualified",
-              trigger = ".",
-              prefix = lines[row]:sub(1, col),
-              schema = text:match("^([^%.]+)"),
-            }
-          else
-            -- In SELECT/WHERE: table.column context
-            return {
-              type = Context.Type.COLUMN,
-              mode = "qualified",
-              trigger = ".",
-              prefix = lines[row]:sub(1, col),
-              table_ref = text:match("^([^%.]+)"),
-            }
-          end
-        end
-      end
-    end
-
-    -- Move to parent
     current = current:parent()
   end
 
-  Debug.log("[CONTEXT] Tree-sitter: No specific context found, returning nil")
-  -- No specific context found, return nil to use fallback
+  if statement_context then
+    Debug.log(string.format("[CONTEXT] Statement context found: type=%s, mode=%s",
+      tostring(statement_context.type), tostring(statement_context.mode)))
+    return statement_context
+  end
+
+  Debug.log("[CONTEXT] No statement context found")
   return nil
+end
+
+---Handle FROM clause context
+---@param node table Tree-sitter node
+---@param lines table Buffer lines
+---@param row number Cursor row (1-indexed)
+---@param col number Cursor column (1-indexed)
+---@return table context Context information
+function Context._handle_from_context(node, lines, row, col)
+  local Debug = require('ssns.debug')
+  Debug.log("[CONTEXT] Handling FROM context")
+
+  local current_line = lines[row] or ""
+  local before_cursor = current_line:sub(1, col)
+  local before_cursor_lower = before_cursor:lower()
+
+  -- Check for schema qualifier (schema.)
+  local schema = before_cursor_lower:match("(%w+)%.$")
+
+  if schema then
+    Debug.log(string.format("[CONTEXT] FROM with schema qualifier: '%s'", schema))
+    return {
+      type = Context.Type.TABLE,
+      mode = "from_qualified",
+      trigger = ".",
+      prefix = before_cursor,
+      schema = schema,
+      filter_schema = schema,
+      omit_schema = true,
+    }
+  else
+    Debug.log("[CONTEXT] FROM without qualifier")
+    return {
+      type = Context.Type.TABLE,
+      mode = "from",
+      trigger = nil,
+      prefix = before_cursor,
+    }
+  end
+end
+
+---Handle JOIN clause context
+---@param node table Tree-sitter node
+---@param lines table Buffer lines
+---@param row number Cursor row (1-indexed)
+---@param col number Cursor column (1-indexed)
+---@return table context Context information
+function Context._handle_join_context(node, lines, row, col)
+  local Debug = require('ssns.debug')
+  Debug.log("[CONTEXT] Handling JOIN context")
+
+  local current_line = lines[row] or ""
+  local before_cursor = current_line:sub(1, col)
+  local before_cursor_lower = before_cursor:lower()
+
+  local schema = before_cursor_lower:match("(%w+)%.$")
+
+  if schema then
+    Debug.log(string.format("[CONTEXT] JOIN with schema qualifier: '%s'", schema))
+    return {
+      type = Context.Type.TABLE,
+      mode = "join_qualified",
+      trigger = ".",
+      prefix = before_cursor,
+      schema = schema,
+      filter_schema = schema,
+      omit_schema = true,
+    }
+  else
+    Debug.log("[CONTEXT] JOIN without qualifier")
+    return {
+      type = Context.Type.TABLE,
+      mode = "join",
+      trigger = nil,
+      prefix = before_cursor,
+    }
+  end
+end
+
+---Handle WHERE clause context
+---@param node table Tree-sitter node
+---@param lines table Buffer lines
+---@param row number Cursor row (1-indexed)
+---@param col number Cursor column (1-indexed)
+---@return table context Context information
+function Context._handle_where_context(node, lines, row, col)
+  local Debug = require('ssns.debug')
+  Debug.log("[CONTEXT] Handling WHERE context")
+
+  local current_line = lines[row] or ""
+  local before_cursor = current_line:sub(1, col)
+
+  -- WHERE context is always column completion
+  return {
+    type = Context.Type.COLUMN,
+    mode = "where",
+    trigger = nil,
+    prefix = before_cursor,
+  }
+end
+
+---Handle SELECT clause context
+---@param select_node table Tree-sitter node (SELECT statement)
+---@param cursor_node table Tree-sitter node at cursor
+---@param lines table Buffer lines
+---@param row number Cursor row (1-indexed)
+---@param col number Cursor column (1-indexed)
+---@return table context Context information
+function Context._handle_select_context(select_node, cursor_node, lines, row, col)
+  local Debug = require('ssns.debug')
+  Debug.log("[CONTEXT] Handling SELECT context")
+
+  local current_line = lines[row] or ""
+  local before_cursor = current_line:sub(1, col)
+
+  -- Check if we're after FROM (which means we're in FROM clause, not SELECT list)
+  -- This handles cases where cursor is between SELECT and FROM
+  local has_from = false
+  for child in select_node:iter_children() do
+    if child:type() == "from_clause" or child:type() == "from" then
+      has_from = true
+      local from_row = child:start()
+      if from_row < row - 1 then
+        -- FROM is before cursor, we might be in FROM context
+        -- Let FROM handler take over
+        return Context._handle_from_context(child, lines, row, col)
+      end
+    end
+  end
+
+  -- In SELECT list - column completion
+  return {
+    type = Context.Type.COLUMN,
+    mode = "select",
+    trigger = nil,
+    prefix = before_cursor,
+  }
+end
+
+---Handle INSERT context
+---@param node table Tree-sitter node
+---@param lines table Buffer lines
+---@param row number Cursor row (1-indexed)
+---@param col number Cursor column (1-indexed)
+---@return table context Context information
+function Context._handle_insert_context(node, lines, row, col)
+  local current_line = lines[row] or ""
+  local before_cursor = current_line:sub(1, col)
+  local before_cursor_lower = before_cursor:lower()
+
+  local schema = before_cursor_lower:match("into%s+(%w+)%.$")
+
+  if schema then
+    return {
+      type = Context.Type.TABLE,
+      mode = "insert_qualified",
+      trigger = ".",
+      prefix = before_cursor,
+      schema = schema,
+      filter_schema = schema,
+      omit_schema = true,
+    }
+  else
+    return {
+      type = Context.Type.TABLE,
+      mode = "insert",
+      trigger = nil,
+      prefix = before_cursor,
+    }
+  end
+end
+
+---Handle UPDATE context
+---@param node table Tree-sitter node
+---@param lines table Buffer lines
+---@param row number Cursor row (1-indexed)
+---@param col number Cursor column (1-indexed)
+---@return table context Context information
+function Context._handle_update_context(node, lines, row, col)
+  local current_line = lines[row] or ""
+  local before_cursor = current_line:sub(1, col)
+  local before_cursor_lower = before_cursor:lower()
+
+  local schema = before_cursor_lower:match("update%s+(%w+)%.$")
+
+  if schema then
+    return {
+      type = Context.Type.TABLE,
+      mode = "update_qualified",
+      trigger = ".",
+      prefix = before_cursor,
+      schema = schema,
+      filter_schema = schema,
+      omit_schema = true,
+    }
+  else
+    return {
+      type = Context.Type.TABLE,
+      mode = "update",
+      trigger = nil,
+      prefix = before_cursor,
+    }
+  end
+end
+
+---Handle DELETE context
+---@param node table Tree-sitter node
+---@param lines table Buffer lines
+---@param row number Cursor row (1-indexed)
+---@param col number Cursor column (1-indexed)
+---@return table context Context information
+function Context._handle_delete_context(node, lines, row, col)
+  local current_line = lines[row] or ""
+  local before_cursor = current_line:sub(1, col)
+  local before_cursor_lower = before_cursor:lower()
+
+  local schema = before_cursor_lower:match("from%s+(%w+)%.$")
+
+  if schema then
+    return {
+      type = Context.Type.TABLE,
+      mode = "delete_qualified",
+      trigger = ".",
+      prefix = before_cursor,
+      schema = schema,
+      filter_schema = schema,
+      omit_schema = true,
+    }
+  else
+    return {
+      type = Context.Type.TABLE,
+      mode = "delete",
+      trigger = nil,
+      prefix = before_cursor,
+    }
+  end
 end
 
 ---Get statement type from line (SELECT, INSERT, UPDATE, DELETE, EXEC, etc.)

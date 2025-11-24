@@ -46,6 +46,17 @@ function Ssns.setup(user_config)
     )
   end
 
+  -- Check tree-sitter availability for IntelliSense
+  local Treesitter = require('ssns.completion.metadata.treesitter')
+  if not Treesitter.is_available() then
+    vim.notify(
+      "SSNS Warning: Tree-sitter SQL parser not found.\n" ..
+      "IntelliSense requires tree-sitter. Install with:\n" ..
+      "  :TSInstall sql",
+      vim.log.levels.WARN
+    )
+  end
+
   -- Setup UI highlights
   local Highlights = require('ssns.ui.highlights')
   Highlights.setup()
