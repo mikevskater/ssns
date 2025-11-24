@@ -86,7 +86,16 @@ function Context.detect_with_treesitter(bufnr, row, col)
   local root = tree:root()
 
   -- Get node at cursor position (0-indexed for tree-sitter)
-  local cursor_node = root:named_descendant_for_range(row - 1, col - 1, row - 1, col - 1)
+  -- Clamp column to line length to handle cursor at/beyond end of line
+  local line_text = lines[row] or ""
+  local max_col = math.max(0, #line_text - 1) -- Last valid 0-indexed position
+  local ts_row = row - 1
+  local ts_col = math.min(col - 1, max_col) -- Clamp to valid range
+
+  Debug.log(string.format("[CONTEXT] Tree-sitter position: row=%d, col=%d (clamped from %d)",
+    ts_row, ts_col, col - 1))
+
+  local cursor_node = root:named_descendant_for_range(ts_row, ts_col, ts_row, ts_col)
 
   if not cursor_node then
     Debug.log("[CONTEXT] No node found at cursor position")
@@ -95,10 +104,19 @@ function Context.detect_with_treesitter(bufnr, row, col)
 
   Debug.log(string.format("[CONTEXT] Node at cursor: type='%s'", cursor_node:type()))
 
-  -- Check if we're in an ERROR node (incomplete SQL)
+  -- Check if we're in an ERROR node or child of ERROR node (incomplete SQL)
+  local error_node = nil
   if cursor_node:type() == "ERROR" then
-    Debug.log("[CONTEXT] ERROR node detected, checking siblings for context")
-    local sibling_result = Context._handle_error_from_sibling(cursor_node, lines, row, col)
+    error_node = cursor_node
+    Debug.log("[CONTEXT] Cursor is on ERROR node")
+  elseif cursor_node:parent() and cursor_node:parent():type() == "ERROR" then
+    error_node = cursor_node:parent()
+    Debug.log("[CONTEXT] Cursor is child of ERROR node")
+  end
+
+  if error_node then
+    Debug.log("[CONTEXT] ERROR context detected, checking siblings for context")
+    local sibling_result = Context._handle_error_from_sibling(error_node, lines, row, col)
     if sibling_result then
       Debug.log(string.format("[CONTEXT] Sibling recovery successful: type=%s, mode=%s",
         tostring(sibling_result.type), tostring(sibling_result.mode)))
