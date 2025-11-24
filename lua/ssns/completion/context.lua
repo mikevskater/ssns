@@ -95,6 +95,18 @@ function Context.detect_with_treesitter(bufnr, row, col)
 
   Debug.log(string.format("[CONTEXT] Node at cursor: type='%s'", cursor_node:type()))
 
+  -- Check if we're in an ERROR node (incomplete SQL)
+  if cursor_node:type() == "ERROR" then
+    Debug.log("[CONTEXT] ERROR node detected, checking siblings for context")
+    local sibling_result = Context._handle_error_from_sibling(cursor_node, lines, row, col)
+    if sibling_result then
+      Debug.log(string.format("[CONTEXT] Sibling recovery successful: type=%s, mode=%s",
+        tostring(sibling_result.type), tostring(sibling_result.mode)))
+      return sibling_result
+    end
+    Debug.log("[CONTEXT] Sibling recovery failed, continuing with tree walk")
+  end
+
   -- Walk up the tree to find statement context
   local current = cursor_node
   local statement_context = nil
@@ -382,6 +394,72 @@ function Context._handle_delete_context(node, lines, row, col)
       prefix = before_cursor,
     }
   end
+end
+
+---Handle error recovery by checking previous sibling context
+---@param error_node table Tree-sitter ERROR node
+---@param lines table Buffer lines
+---@param row number Cursor row (1-indexed)
+---@param col number Cursor column (1-indexed)
+---@return table? Context information (nil if no context found)
+function Context._handle_error_from_sibling(error_node, lines, row, col)
+  local Debug = require('ssns.debug')
+  Debug.log("[CONTEXT] ERROR node - checking previous sibling for context")
+
+  -- Check previous sibling (should be the statement we're continuing from)
+  local prev_sibling = error_node:prev_sibling()
+  if not prev_sibling then
+    Debug.log("[CONTEXT] No previous sibling found")
+    return nil
+  end
+
+  Debug.log(string.format("[CONTEXT] Previous sibling type: %s", prev_sibling:type()))
+
+  -- If previous sibling is a statement, find the last meaningful clause
+  if prev_sibling:type() == "statement" then
+    -- Walk through children to find context nodes (from, where, select, etc.)
+    local last_context_node = nil
+    local last_context_type = nil
+
+    for child in prev_sibling:iter_children() do
+      local child_type = child:type()
+      Debug.log(string.format("[CONTEXT] Statement child: %s", child_type))
+
+      if child_type == "from" or child_type == "from_clause" then
+        last_context_node = child
+        last_context_type = "from"
+      elseif child_type:match("join") then
+        last_context_node = child
+        last_context_type = "join"
+      elseif child_type == "where" or child_type == "where_clause" then
+        last_context_node = child
+        last_context_type = "where"
+      elseif child_type == "select" or child_type == "select_statement" or child_type == "select_clause" then
+        last_context_node = child
+        last_context_type = "select"
+      end
+    end
+
+    -- Use the last context node found
+    if last_context_node and last_context_type then
+      Debug.log(string.format("[CONTEXT] Found context in prev sibling: %s", last_context_type))
+
+      -- Call the appropriate handler
+      if last_context_type == "from" then
+        return Context._handle_from_context(last_context_node, lines, row, col)
+      elseif last_context_type == "join" then
+        return Context._handle_join_context(last_context_node, lines, row, col)
+      elseif last_context_type == "where" then
+        return Context._handle_where_context(last_context_node, lines, row, col)
+      elseif last_context_type == "select" then
+        -- For select, we need to pass cursor_node too, use error_node as cursor
+        return Context._handle_select_context(last_context_node, error_node, lines, row, col)
+      end
+    end
+  end
+
+  Debug.log("[CONTEXT] No usable context found in previous sibling")
+  return nil
 end
 
 ---Get statement type from line (SELECT, INSERT, UPDATE, DELETE, EXEC, etc.)
