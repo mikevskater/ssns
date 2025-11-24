@@ -40,6 +40,10 @@ function Context.detect(bufnr, line_num, col)
   local before_cursor = line:sub(1, col)
   local before_cursor_lower = before_cursor:lower()
 
+  local Debug = require('ssns.debug')
+  Debug.log(string.format("[CONTEXT] detect() called: line_num=%d, col=%d, line='%s'",
+    line_num, col, line or "nil"))
+
   -- Detect trigger character at cursor
   local trigger = nil
   if before_cursor:match("%.$") then
@@ -401,6 +405,9 @@ function Context.detect(bufnr, line_num, col)
   end
 
   -- 16. Default: keyword completion (but try tree-sitter first for multi-line support)
+  local Debug = require('ssns.debug')
+  Debug.log("[CONTEXT] All regex patterns failed, attempting tree-sitter fallback")
+
   local regex_result = {
     type = Context.Type.KEYWORD,
     prefix = before_cursor,
@@ -412,10 +419,15 @@ function Context.detect(bufnr, line_num, col)
   local ts_result = Context.detect_with_treesitter(bufnr, line_num, col)
   if ts_result then
     -- Tree-sitter found a more specific context
+    Debug.log(string.format("[CONTEXT] Returning tree-sitter context: type=%s, mode=%s, schema=%s",
+      tostring(ts_result.type),
+      tostring(ts_result.mode),
+      tostring(ts_result.schema or "nil")))
     return ts_result
   end
 
   -- Fall back to keyword completion
+  Debug.log("[CONTEXT] Returning keyword completion (fallback)")
   return regex_result
 end
 
@@ -428,21 +440,21 @@ function Context.detect_with_treesitter(bufnr, row, col)
   local Debug = require('ssns.debug')
   local Treesitter = require('ssns.completion.metadata.treesitter')
 
-  Debug.log("[CONTEXT] detect_with_treesitter called: bufnr=" .. bufnr .. ", row=" .. row .. ", col=" .. col)
+  Debug.log(string.format("[CONTEXT] detect_with_treesitter() called: bufnr=%d, line_num=%d, col=%d",
+    bufnr, row, col))
 
   -- Check if tree-sitter is available
-  if not Treesitter.is_available() then
-    Debug.log("[CONTEXT] Tree-sitter NOT available")
+  local ts_available = Treesitter.is_available()
+  Debug.log(string.format("[CONTEXT] Tree-sitter available: %s", tostring(ts_available)))
+
+  if not ts_available then
+    Debug.log("[CONTEXT] Tree-sitter not available, returning nil")
     return nil
   end
-
-  Debug.log("[CONTEXT] Tree-sitter IS available")
 
   -- Get full buffer content
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local query_text = table.concat(lines, "\n")
-
-  Debug.log("[CONTEXT] Full query text: " .. query_text:sub(1, 200))  -- First 200 chars
 
   -- Parse SQL
   local root = Treesitter.parse_sql(query_text)
@@ -464,33 +476,86 @@ function Context.detect_with_treesitter(bufnr, row, col)
     return nil
   end
 
-  Debug.log("[CONTEXT] Found node at cursor: type=" .. node:type())
+  Debug.log(string.format("[CONTEXT] Found node at cursor: type=%s", node:type()))
 
   -- Walk up parent chain to find statement context
   local current = node
   while current do
     local node_type = current:type()
 
-    Debug.log("[CONTEXT] Checking parent node: type=" .. node_type)
+    Debug.log(string.format("[CONTEXT] Checking parent node: type=%s", node_type))
 
     -- Check for FROM clause context (table completion)
     if node_type == "from_clause" or node_type == "from" then
-      return {
-        type = Context.Type.TABLE,
-        mode = "from",
-        trigger = nil,
-        prefix = lines[row]:sub(1, col),
-      }
+      Debug.log("[CONTEXT] Tree-sitter detected FROM clause, extracting schema from current line")
+
+      -- Try to extract schema qualifier from current position
+      -- Look backwards from cursor for identifier.| pattern
+      local current_line = lines[row] or ""
+      local before_cursor = current_line:sub(1, col)
+      local before_cursor_lower = before_cursor:lower()
+
+      -- Check if cursor is after schema qualifier (schema.)
+      local schema = before_cursor_lower:match("(%w+)%.$")
+
+      if schema then
+        -- Qualified FROM: FROM schema.|
+        Debug.log(string.format("[CONTEXT] Schema extracted: '%s'", schema))
+        return {
+          type = Context.Type.TABLE,
+          mode = "from_qualified",
+          trigger = ".",
+          prefix = before_cursor,
+          schema = schema,
+          filter_schema = schema,
+          omit_schema = true,  -- Schema already typed
+        }
+      else
+        -- Unqualified FROM: FROM |
+        Debug.log("[CONTEXT] No schema qualifier found, returning unqualified FROM")
+        return {
+          type = Context.Type.TABLE,
+          mode = "from",
+          trigger = nil,
+          prefix = before_cursor,
+        }
+      end
     end
 
     -- Check for JOIN clause context (table completion)
     if node_type:match("join") then  -- Matches inner_join, left_join, etc.
-      return {
-        type = Context.Type.TABLE,
-        mode = "join",
-        trigger = nil,
-        prefix = lines[row]:sub(1, col),
-      }
+      Debug.log("[CONTEXT] Tree-sitter detected JOIN clause, extracting schema from current line")
+
+      -- Try to extract schema qualifier from current position
+      local current_line = lines[row] or ""
+      local before_cursor = current_line:sub(1, col)
+      local before_cursor_lower = before_cursor:lower()
+
+      -- Check if cursor is after schema qualifier (schema.)
+      local schema = before_cursor_lower:match("(%w+)%.$")
+
+      if schema then
+        -- Qualified JOIN: JOIN schema.|
+        Debug.log(string.format("[CONTEXT] Schema extracted: '%s'", schema))
+        return {
+          type = Context.Type.TABLE,
+          mode = "join_qualified",
+          trigger = ".",
+          prefix = before_cursor,
+          schema = schema,
+          filter_schema = schema,
+          omit_schema = true,  -- Schema already typed
+        }
+      else
+        -- Unqualified JOIN: JOIN |
+        Debug.log("[CONTEXT] No schema qualifier found, returning unqualified JOIN")
+        return {
+          type = Context.Type.TABLE,
+          mode = "join",
+          trigger = nil,
+          prefix = before_cursor,
+        }
+      end
     end
 
     -- Check for WHERE clause context (column completion)

@@ -10,13 +10,19 @@ local _availability_cache = nil
 ---Check if tree-sitter-sql parser is available
 ---@return boolean available True if tree-sitter-sql is installed and functional
 function Treesitter.is_available()
+  local Debug = require('ssns.debug')
+
   -- Return cached result if already checked
   if _availability_cache ~= nil then
+    Debug.log(string.format("[TREESITTER] Returning cached availability: %s", tostring(_availability_cache)))
     return _availability_cache
   end
 
   -- Check if vim.treesitter API is available (Neovim >= 0.9)
-  if not vim.treesitter or not vim.treesitter.get_parser then
+  local has_ts_api = vim.treesitter and vim.treesitter.get_parser
+  Debug.log(string.format("[TREESITTER] vim.treesitter API available: %s", tostring(has_ts_api)))
+
+  if not has_ts_api then
     _availability_cache = false
     return false
   end
@@ -34,6 +40,8 @@ function Treesitter.is_available()
     end
     return true
   end)
+
+  Debug.log(string.format("[TREESITTER] SQL parser available: %s", tostring(success)))
 
   _availability_cache = success
   return success
