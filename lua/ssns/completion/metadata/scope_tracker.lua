@@ -15,6 +15,34 @@ local function debug_log(message)
   end
 end
 
+---Helper function to recursively find nodes of specified types within a node (including ERROR nodes)
+---@param node table Tree-sitter node to search
+---@param target_types string[] Array of node types to find (can include patterns)
+---@param results table[] Array to collect results (modified in place)
+---@return table[] results Array of matching nodes
+function ScopeTracker._find_nodes_recursive(node, target_types, results)
+  results = results or {}
+
+  if not node then return results end
+
+  local node_type = node:type()
+
+  -- Check if this node is one of our target types
+  for _, target in ipairs(target_types) do
+    if node_type == target or node_type:match(target) then
+      table.insert(results, node)
+      debug_log(string.format("[SCOPE] _find_nodes_recursive: found %s node", node_type))
+    end
+  end
+
+  -- Always recurse into children (including ERROR nodes)
+  for child in node:iter_children() do
+    ScopeTracker._find_nodes_recursive(child, target_types, results)
+  end
+
+  return results
+end
+
 ---@class QueryScope
 ---@field type string Scope type: "global", "cte", "subquery", "derived", "main"
 ---@field start_pos table {row, col} Start position in buffer (1-indexed)
@@ -95,10 +123,25 @@ function ScopeTracker._build_scope_tree_recursive(node, query_text, parent_scope
     -- FIRST: Check if this statement has CTEs (direct cte children)
     local has_ctes = false
     for child in node:iter_children() do
-      if child:type() == "cte" then
+      local child_type = child:type()
+
+      -- Search ERROR nodes for cte
+      if child_type == "ERROR" then
+        debug_log("[SCOPE] Found ERROR node in _build_scope_tree_recursive (CTE check), searching inside")
+        local found_ctes = ScopeTracker._find_nodes_recursive(child, {"cte"}, {})
+        if #found_ctes > 0 then
+          has_ctes = true
+          break
+        end
+        goto continue
+      end
+
+      if child_type == "cte" then
         has_ctes = true
         break
       end
+
+      ::continue::
     end
 
     -- If statement has CTEs, extract them to parent scope
@@ -106,9 +149,24 @@ function ScopeTracker._build_scope_tree_recursive(node, query_text, parent_scope
     if has_ctes then
       debug_log("Statement has CTE children, extracting to parent scope")
       for child in node:iter_children() do
-        if child:type() == "cte" then
+        local child_type = child:type()
+
+        -- Search ERROR nodes for cte
+        if child_type == "ERROR" then
+          debug_log("[SCOPE] Found ERROR node in _build_scope_tree_recursive (CTE extraction), searching inside")
+          local found_ctes = ScopeTracker._find_nodes_recursive(child, {"cte"}, {})
+          for _, cte_node in ipairs(found_ctes) do
+            debug_log("[SCOPE] Found CTE inside ERROR node")
+            ScopeTracker._extract_single_cte(cte_node, query_text, parent_scope, bufnr, connection)
+          end
+          goto continue
+        end
+
+        if child_type == "cte" then
           ScopeTracker._extract_single_cte(child, query_text, parent_scope, bufnr, connection)
         end
+
+        ::continue::
       end
     end
 
@@ -128,7 +186,22 @@ function ScopeTracker._build_scope_tree_recursive(node, query_text, parent_scope
 
   -- Recurse to children
   for child in node:iter_children() do
+    local child_type = child:type()
+
+    -- Search ERROR nodes for statement/cte
+    if child_type == "ERROR" then
+      debug_log("[SCOPE] Found ERROR node in _build_scope_tree_recursive (recursion), searching inside")
+      local found_nodes = ScopeTracker._find_nodes_recursive(child, {"statement", "cte"}, {})
+      for _, found_node in ipairs(found_nodes) do
+        debug_log(string.format("[SCOPE] Found %s inside ERROR node", found_node:type()))
+        ScopeTracker._build_scope_tree_recursive(found_node, query_text, parent_scope, bufnr, connection)
+      end
+      goto continue
+    end
+
     ScopeTracker._build_scope_tree_recursive(child, query_text, parent_scope, bufnr, connection)
+
+    ::continue::
   end
 end
 
@@ -144,6 +217,19 @@ local function find_cte_select_statement(cte_node, query_text)
   for child in cte_node:iter_children() do
     local child_type = child:type()
 
+    -- Search ERROR nodes for select/subquery/statement
+    if child_type == "ERROR" then
+      debug_log("[SCOPE] Found ERROR node in find_cte_select_statement, searching inside")
+      local found_nodes = ScopeTracker._find_nodes_recursive(child, {"select", "subquery", "statement"}, {})
+      for _, found_node in ipairs(found_nodes) do
+        debug_log(string.format("[SCOPE] Found %s inside ERROR node", found_node:type()))
+        local select_text = vim.treesitter.get_node_text(found_node, query_text)
+        select_text = select_text:gsub("^%s*%(", ""):gsub("%)%s*$", "")
+        return select_text
+      end
+      goto continue
+    end
+
     -- Look for subquery or statement containing SELECT
     if child_type == "subquery" or child_type == "statement" or child_type:match("select") then
       -- Extract text for this node
@@ -152,6 +238,8 @@ local function find_cte_select_statement(cte_node, query_text)
       select_text = select_text:gsub("^%s*%(", ""):gsub("%)%s*$", "")
       return select_text
     end
+
+    ::continue::
   end
 
   return nil
@@ -442,6 +530,32 @@ function ScopeTracker._extract_single_cte(cte_node, query_text, scope, bufnr, co
   for cte_child in cte_node:iter_children() do
     local cte_child_type = cte_child:type()
 
+    -- Search ERROR nodes for identifier/column_list
+    if cte_child_type == "ERROR" then
+      debug_log("[SCOPE] Found ERROR node in _extract_single_cte, searching inside")
+      local found_nodes = ScopeTracker._find_nodes_recursive(cte_child, {"identifier", "column_list"}, {})
+      for _, found_node in ipairs(found_nodes) do
+        local found_type = found_node:type()
+        debug_log(string.format("[SCOPE] Found %s inside ERROR node", found_type))
+
+        if found_type == "identifier" and not cte_name then
+          cte_name = vim.treesitter.get_node_text(found_node, query_text)
+          cte_name = ScopeTracker._clean_identifier(cte_name)
+        elseif found_type == "identifier" and cte_name and not found_as then
+          local col_name = vim.treesitter.get_node_text(found_node, query_text)
+          table.insert(cte_columns, ScopeTracker._clean_identifier(col_name))
+        elseif found_type == "column_list" then
+          for col_child in found_node:iter_children() do
+            if col_child:type() == "identifier" then
+              local col_name = vim.treesitter.get_node_text(col_child, query_text)
+              table.insert(cte_columns, ScopeTracker._clean_identifier(col_name))
+            end
+          end
+        end
+      end
+      goto continue
+    end
+
     if cte_child_type == "identifier" and not cte_name then
       -- First identifier is the CTE name
       cte_name = vim.treesitter.get_node_text(cte_child, query_text)
@@ -456,12 +570,16 @@ function ScopeTracker._extract_single_cte(cte_node, query_text, scope, bufnr, co
     elseif cte_child_type == "column_list" then
       -- Some parsers might wrap columns in column_list node
       for col_child in cte_child:iter_children() do
-        if col_child:type() == "identifier" then
+        local col_child_type = col_child:type()
+
+        if col_child_type == "identifier" then
           local col_name = vim.treesitter.get_node_text(col_child, query_text)
           table.insert(cte_columns, ScopeTracker._clean_identifier(col_name))
         end
       end
     end
+
+    ::continue::
   end
 
   -- Check if CTE definition uses SELECT * (when no explicit column list)
@@ -510,9 +628,24 @@ function ScopeTracker._extract_ctes(node, query_text, scope, bufnr, connection)
   -- CTEs are visible to all queries after their definition
 
   for child in node:iter_children() do
-    if child:type() == "cte" or child:type() == "common_table_expression" then
+    local child_type = child:type()
+
+    -- Search ERROR nodes for cte/common_table_expression
+    if child_type == "ERROR" then
+      debug_log("[SCOPE] Found ERROR node in _extract_ctes, searching inside")
+      local found_nodes = ScopeTracker._find_nodes_recursive(child, {"cte", "common_table_expression"}, {})
+      for _, found_node in ipairs(found_nodes) do
+        debug_log(string.format("[SCOPE] Found %s inside ERROR node", found_node:type()))
+        ScopeTracker._extract_single_cte(found_node, query_text, scope, bufnr, connection)
+      end
+      goto continue
+    end
+
+    if child_type == "cte" or child_type == "common_table_expression" then
       ScopeTracker._extract_single_cte(child, query_text, scope, bufnr, connection)
     end
+
+    ::continue::
   end
 end
 
@@ -531,11 +664,27 @@ function ScopeTracker._extract_select_scope(node, query_text, parent_scope, bufn
   -- Check if this statement contains a set_operation (UNION, INTERSECT, EXCEPT)
   -- If so, extract each SELECT as a separate scope instead of one statement scope
   for child in node:iter_children() do
-    if child:type() == "set_operation" then
+    local child_type = child:type()
+
+    -- Search ERROR nodes for set_operation
+    if child_type == "ERROR" then
+      debug_log("[SCOPE] Found ERROR node in _extract_select_scope (set_operation check), searching inside")
+      local found_nodes = ScopeTracker._find_nodes_recursive(child, {"set_operation"}, {})
+      for _, found_node in ipairs(found_nodes) do
+        debug_log("[SCOPE] Found set_operation inside ERROR node")
+        ScopeTracker._extract_set_operation_scopes(found_node, query_text, parent_scope, bufnr, connection)
+        return
+      end
+      goto continue
+    end
+
+    if child_type == "set_operation" then
       debug_log("Found set_operation (UNION/INTERSECT/EXCEPT), extracting each SELECT separately")
       ScopeTracker._extract_set_operation_scopes(child, query_text, parent_scope, bufnr, connection)
       return  -- Don't create a single scope for the whole statement
     end
+
+    ::continue::
   end
 
   -- Determine scope type
@@ -584,7 +733,22 @@ function ScopeTracker._extract_select_scope(node, query_text, parent_scope, bufn
 
   -- Recurse into nested statements (e.g., subqueries)
   for child in node:iter_children() do
+    local child_type = child:type()
+
+    -- Search ERROR nodes for statement/subquery
+    if child_type == "ERROR" then
+      debug_log("[SCOPE] Found ERROR node in _extract_select_scope (recursion), searching inside")
+      local found_nodes = ScopeTracker._find_nodes_recursive(child, {"statement", "subquery"}, {})
+      for _, found_node in ipairs(found_nodes) do
+        debug_log(string.format("[SCOPE] Found %s inside ERROR node", found_node:type()))
+        ScopeTracker._build_scope_tree_recursive(found_node, query_text, select_scope, bufnr, connection)
+      end
+      goto continue
+    end
+
     ScopeTracker._build_scope_tree_recursive(child, query_text, select_scope, bufnr, connection)
+
+    ::continue::
   end
 end
 
@@ -612,6 +776,23 @@ function ScopeTracker._extract_set_operation_scopes(node, query_text, parent_sco
 
   for child in node:iter_children() do
     local child_type = child:type()
+
+    -- Search ERROR nodes for select/from
+    if child_type == "ERROR" then
+      debug_log("[SCOPE] Found ERROR node in _extract_set_operation_scopes, searching inside")
+      local found_nodes = ScopeTracker._find_nodes_recursive(child, {"select", "from"}, {})
+      for _, found_node in ipairs(found_nodes) do
+        local found_type = found_node:type()
+        debug_log(string.format("[SCOPE] Found %s inside ERROR node", found_type))
+
+        if found_type == "select" then
+          current_select = found_node
+        elseif found_type == "from" then
+          current_from = found_node
+        end
+      end
+      goto continue
+    end
 
     if child_type == "select" then
       -- Save the current SELECT
@@ -649,7 +830,22 @@ function ScopeTracker._extract_set_operation_scopes(node, query_text, parent_sco
 
         -- Process nested subqueries in the SELECT
         for select_child in current_select:iter_children() do
+          local select_child_type = select_child:type()
+
+          -- Search ERROR nodes for statement/subquery
+          if select_child_type == "ERROR" then
+            debug_log("[SCOPE] Found ERROR node in _extract_set_operation_scopes (SELECT recursion), searching inside")
+            local inner_found = ScopeTracker._find_nodes_recursive(select_child, {"statement", "subquery"}, {})
+            for _, inner_node in ipairs(inner_found) do
+              debug_log(string.format("[SCOPE] Found %s inside ERROR node", inner_node:type()))
+              ScopeTracker._build_scope_tree_recursive(inner_node, query_text, select_scope, bufnr, connection)
+            end
+            goto continue_inner
+          end
+
           ScopeTracker._build_scope_tree_recursive(select_child, query_text, select_scope, bufnr, connection)
+
+          ::continue_inner::
         end
 
         debug_log(string.format("Extracted set_operation scope aliases: %s", vim.inspect(select_scope.aliases)))
@@ -659,6 +855,8 @@ function ScopeTracker._extract_set_operation_scopes(node, query_text, parent_sco
         current_from = nil
       end
     end
+
+    ::continue::
   end
 end
 
@@ -699,6 +897,27 @@ function ScopeTracker._extract_subquery_scope(node, query_text, parent_scope, bu
   for child in node:iter_children() do
     local child_type = child:type()
 
+    -- Search ERROR nodes for from/join/select
+    if child_type == "ERROR" then
+      debug_log("[SCOPE] Found ERROR node in _extract_subquery_scope, searching inside")
+      local found_nodes = ScopeTracker._find_nodes_recursive(child, {"from", "join", "select"}, {})
+      for _, found_node in ipairs(found_nodes) do
+        local found_type = found_node:type()
+        debug_log(string.format("[SCOPE] Found %s inside ERROR node", found_type))
+
+        if found_type == "from" then
+          ScopeTracker._extract_from_aliases(found_node, query_text, subquery_scope, bufnr, connection)
+        elseif found_type:match("join") then
+          ScopeTracker._extract_join_aliases(found_node, query_text, subquery_scope, bufnr, connection)
+        elseif found_type == "select" then
+          for select_child in found_node:iter_children() do
+            ScopeTracker._build_scope_tree_recursive(select_child, query_text, subquery_scope, bufnr, connection)
+          end
+        end
+      end
+      goto continue
+    end
+
     if child_type == "from" then
       debug_log("Found FROM in subquery")
       ScopeTracker._extract_from_aliases(child, query_text, subquery_scope, bufnr, connection)
@@ -708,9 +927,26 @@ function ScopeTracker._extract_subquery_scope(node, query_text, parent_scope, bu
     elseif child_type == "select" then
       -- Process nested subqueries within the SELECT
       for select_child in child:iter_children() do
+        local select_child_type = select_child:type()
+
+        -- Search ERROR nodes for statement/subquery
+        if select_child_type == "ERROR" then
+          debug_log("[SCOPE] Found ERROR node in _extract_subquery_scope (SELECT recursion), searching inside")
+          local inner_found = ScopeTracker._find_nodes_recursive(select_child, {"statement", "subquery"}, {})
+          for _, inner_node in ipairs(inner_found) do
+            debug_log(string.format("[SCOPE] Found %s inside ERROR node", inner_node:type()))
+            ScopeTracker._build_scope_tree_recursive(inner_node, query_text, subquery_scope, bufnr, connection)
+          end
+          goto continue_inner
+        end
+
         ScopeTracker._build_scope_tree_recursive(select_child, query_text, subquery_scope, bufnr, connection)
+
+        ::continue_inner::
       end
     end
+
+    ::continue::
   end
 
   debug_log(string.format("Extracted subquery aliases: %s", vim.inspect(subquery_scope.aliases)))
@@ -726,8 +962,30 @@ end
 function ScopeTracker._extract_aliases_from_statement(node, query_text, scope, bufnr, connection)
   -- Walk children to find FROM and JOIN clauses
   -- NOTE: In real AST, FROM is a SIBLING of SELECT, not a child of SELECT
+  debug_log("[SCOPE] _extract_aliases_from_statement: iterating children of node type=" .. node:type())
+
+  local child_count = 0
   for child in node:iter_children() do
+    child_count = child_count + 1
     local child_type = child:type()
+    debug_log(string.format("[SCOPE] _extract_aliases_from_statement: child #%d type=%s", child_count, child_type))
+
+    -- Search ERROR nodes for from/join
+    if child_type == "ERROR" then
+      debug_log("[SCOPE] Found ERROR node in _extract_aliases_from_statement, searching inside for FROM/JOIN")
+      local found_nodes = ScopeTracker._find_nodes_recursive(child, {"from", "join"}, {})
+      for _, found_node in ipairs(found_nodes) do
+        local found_type = found_node:type()
+        debug_log(string.format("[SCOPE] Found %s inside ERROR node", found_type))
+
+        if found_type == "from" then
+          ScopeTracker._extract_from_aliases(found_node, query_text, scope, bufnr, connection)
+        elseif found_type:match("join") then
+          ScopeTracker._extract_join_aliases(found_node, query_text, scope, bufnr, connection)
+        end
+      end
+      goto continue
+    end
 
     if child_type == "from" then
       debug_log(string.format("Found FROM clause at %s", child_type))
@@ -735,6 +993,19 @@ function ScopeTracker._extract_aliases_from_statement(node, query_text, scope, b
     elseif child_type:match("join") then
       debug_log(string.format("Found JOIN clause at %s", child_type))
       ScopeTracker._extract_join_aliases(child, query_text, scope, bufnr, connection)
+    end
+
+    ::continue::
+  end
+
+  debug_log(string.format("[SCOPE] _extract_aliases_from_statement: finished, processed %d children", child_count))
+
+  -- Regex fallback: If no aliases found but query contains FROM/JOIN keywords
+  if vim.tbl_isempty(scope.aliases) then
+    local query_lower = query_text:lower()
+    if query_lower:match("%s+from%s+") or query_lower:match("%s+join%s+") then
+      debug_log("[SCOPE] No aliases found via tree-sitter, falling back to regex")
+      ScopeTracker._extract_aliases_regex_fallback(query_text, scope)
     end
   end
 end
@@ -765,6 +1036,51 @@ function ScopeTracker._extract_from_aliases(node, query_text, scope, bufnr, conn
   for child in node:iter_children() do
     local child_type = child:type()
 
+    -- Search ERROR nodes for relation/join
+    if child_type == "ERROR" then
+      debug_log("[SCOPE] Found ERROR node in _extract_from_aliases, searching inside")
+      local found_nodes = ScopeTracker._find_nodes_recursive(child, {"relation", "join"}, {})
+      for _, found_node in ipairs(found_nodes) do
+        local found_type = found_node:type()
+        debug_log(string.format("[SCOPE] Found %s inside ERROR node", found_type))
+
+        if found_type == "relation" then
+          -- Process relation found in ERROR node
+          local table_parts = {}
+          local alias = nil
+          local has_subquery = false
+
+          for relation_child in found_node:iter_children() do
+            local relation_child_type = relation_child:type()
+
+            if relation_child_type == "object_reference" then
+              local table_name = vim.treesitter.get_node_text(relation_child, query_text)
+              table.insert(table_parts, table_name)
+            elseif relation_child_type == "subquery" then
+              has_subquery = true
+              ScopeTracker._extract_subquery_scope(relation_child, query_text, scope, bufnr, connection)
+            elseif relation_child_type == "identifier" then
+              alias = vim.treesitter.get_node_text(relation_child, query_text)
+            end
+          end
+
+          if #table_parts > 0 and alias then
+            local full_table_name = table.concat(table_parts, ".")
+            scope.aliases[alias:lower()] = full_table_name
+            debug_log(string.format("Extracted alias from ERROR: %s -> %s", alias, full_table_name))
+          elseif #table_parts > 0 then
+            local full_table_name = table.concat(table_parts, ".")
+            local table_name = full_table_name:match("%.([^%.]+)$") or full_table_name
+            scope.aliases[table_name:lower()] = full_table_name
+            debug_log(string.format("Extracted non-aliased table from ERROR: %s -> %s", table_name, full_table_name))
+          end
+        elseif found_type:match("join") then
+          ScopeTracker._extract_join_aliases(found_node, query_text, scope, bufnr, connection)
+        end
+      end
+      goto continue
+    end
+
     if child_type == "relation" then
       -- Found a table reference (main FROM table)
       local table_parts = {}
@@ -775,6 +1091,27 @@ function ScopeTracker._extract_from_aliases(node, query_text, scope, bufnr, conn
       -- OR: subquery + identifier (alias as sibling)
       for relation_child in child:iter_children() do
         local relation_child_type = relation_child:type()
+
+        -- Search ERROR nodes in relation for object_reference/identifier
+        if relation_child_type == "ERROR" then
+          debug_log("[SCOPE] Found ERROR node in _extract_from_aliases (relation), searching inside")
+          local inner_found = ScopeTracker._find_nodes_recursive(relation_child, {"object_reference", "identifier", "subquery"}, {})
+          for _, inner_node in ipairs(inner_found) do
+            local inner_type = inner_node:type()
+            debug_log(string.format("[SCOPE] Found %s inside ERROR node", inner_type))
+
+            if inner_type == "object_reference" then
+              local table_name = vim.treesitter.get_node_text(inner_node, query_text)
+              table.insert(table_parts, table_name)
+            elseif inner_type == "subquery" then
+              has_subquery = true
+              ScopeTracker._extract_subquery_scope(inner_node, query_text, scope, bufnr, connection)
+            elseif inner_type == "identifier" then
+              alias = vim.treesitter.get_node_text(inner_node, query_text)
+            end
+          end
+          goto continue_inner
+        end
 
         if relation_child_type == "object_reference" then
           -- Extract table name (may be schema.table)
@@ -789,6 +1126,8 @@ function ScopeTracker._extract_from_aliases(node, query_text, scope, bufnr, conn
           -- This is the alias (for table OR subquery)
           alias = vim.treesitter.get_node_text(relation_child, query_text)
         end
+
+        ::continue_inner::
       end
 
       -- Only add alias if it's for a real table (not a subquery, which creates its own scope)
@@ -812,6 +1151,8 @@ function ScopeTracker._extract_from_aliases(node, query_text, scope, bufnr, conn
       debug_log(string.format("Found JOIN as child of FROM: %s", child_type))
       ScopeTracker._extract_join_aliases(child, query_text, scope, bufnr, connection)
     end
+
+    ::continue::
   end
 end
 
@@ -831,6 +1172,42 @@ function ScopeTracker._extract_join_aliases(node, query_text, scope, bufnr, conn
   for child in node:iter_children() do
     local child_type = child:type()
 
+    -- Search ERROR nodes for relation
+    if child_type == "ERROR" then
+      debug_log("[SCOPE] Found ERROR node in _extract_join_aliases, searching inside")
+      local found_nodes = ScopeTracker._find_nodes_recursive(child, {"relation"}, {})
+      for _, found_node in ipairs(found_nodes) do
+        debug_log("[SCOPE] Found relation inside ERROR node")
+
+        -- Process relation found in ERROR node
+        local table_parts = {}
+        local alias = nil
+
+        for relation_child in found_node:iter_children() do
+          local relation_child_type = relation_child:type()
+
+          if relation_child_type == "object_reference" then
+            local table_name = vim.treesitter.get_node_text(relation_child, query_text)
+            table.insert(table_parts, table_name)
+          elseif relation_child_type == "identifier" then
+            alias = vim.treesitter.get_node_text(relation_child, query_text)
+          end
+        end
+
+        if #table_parts > 0 and alias then
+          local full_table_name = table.concat(table_parts, ".")
+          scope.aliases[alias:lower()] = full_table_name
+          debug_log(string.format("Extracted JOIN alias from ERROR: %s -> %s", alias, full_table_name))
+        elseif #table_parts > 0 then
+          local full_table_name = table.concat(table_parts, ".")
+          local table_name = full_table_name:match("%.([^%.]+)$") or full_table_name
+          scope.aliases[table_name:lower()] = full_table_name
+          debug_log(string.format("Extracted non-aliased JOIN table from ERROR: %s -> %s", table_name, full_table_name))
+        end
+      end
+      goto continue
+    end
+
     if child_type == "relation" then
       -- Found a table reference in the JOIN
       local table_parts = {}
@@ -840,6 +1217,24 @@ function ScopeTracker._extract_join_aliases(node, query_text, scope, bufnr, conn
       for relation_child in child:iter_children() do
         local relation_child_type = relation_child:type()
 
+        -- Search ERROR nodes in relation for object_reference/identifier
+        if relation_child_type == "ERROR" then
+          debug_log("[SCOPE] Found ERROR node in _extract_join_aliases (relation), searching inside")
+          local inner_found = ScopeTracker._find_nodes_recursive(relation_child, {"object_reference", "identifier"}, {})
+          for _, inner_node in ipairs(inner_found) do
+            local inner_type = inner_node:type()
+            debug_log(string.format("[SCOPE] Found %s inside ERROR node", inner_type))
+
+            if inner_type == "object_reference" then
+              local table_name = vim.treesitter.get_node_text(inner_node, query_text)
+              table.insert(table_parts, table_name)
+            elseif inner_type == "identifier" then
+              alias = vim.treesitter.get_node_text(inner_node, query_text)
+            end
+          end
+          goto continue_inner
+        end
+
         if relation_child_type == "object_reference" then
           -- Extract table name (may be schema.table)
           local table_name = vim.treesitter.get_node_text(relation_child, query_text)
@@ -848,6 +1243,8 @@ function ScopeTracker._extract_join_aliases(node, query_text, scope, bufnr, conn
           -- This is the alias
           alias = vim.treesitter.get_node_text(relation_child, query_text)
         end
+
+        ::continue_inner::
       end
 
       if #table_parts > 0 and alias then
@@ -864,6 +1261,8 @@ function ScopeTracker._extract_join_aliases(node, query_text, scope, bufnr, conn
         debug_log(string.format("Extracted non-aliased JOIN table: %s -> %s", table_name, full_table_name))
       end
     end
+
+    ::continue::
   end
 end
 
@@ -1054,6 +1453,55 @@ function ScopeTracker._clean_identifier(identifier)
   cleaned = cleaned:gsub("^`(.-)`$", "%1")
 
   return cleaned
+end
+
+---Regex fallback for extracting aliases when tree-sitter fails
+---@param query_text string SQL query text
+---@param scope QueryScope Scope to add aliases to
+function ScopeTracker._extract_aliases_regex_fallback(query_text, scope)
+  local query_lower = query_text:lower()
+
+  -- SQL keywords to skip (avoid treating keywords as aliases)
+  local sql_keywords = {
+    where = true, join = true, inner = true, left = true, right = true,
+    outer = true, cross = true, on = true, ["and"] = true, ["or"] = true,
+    group = true, order = true, having = true, limit = true, offset = true,
+    union = true, except = true, intersect = true, as = true,
+  }
+
+  -- Pattern 1: FROM [schema.]table AS alias
+  for schema_table, alias in query_lower:gmatch("from%s+([%w%[%]%.]+)%s+as%s+(%w+)") do
+    if not sql_keywords[alias] then
+      debug_log(string.format("[SCOPE] Regex fallback found: %s -> %s (FROM with AS)", alias, schema_table))
+      scope.aliases[alias] = schema_table
+    end
+  end
+
+  -- Pattern 2: FROM [schema.]table alias (without AS)
+  for schema_table, alias in query_lower:gmatch("from%s+([%w%[%]%.]+)%s+(%w+)") do
+    if not sql_keywords[alias] and not scope.aliases[alias] then
+      debug_log(string.format("[SCOPE] Regex fallback found: %s -> %s (FROM without AS)", alias, schema_table))
+      scope.aliases[alias] = schema_table
+    end
+  end
+
+  -- Pattern 3: JOIN [schema.]table AS alias
+  for schema_table, alias in query_lower:gmatch("join%s+([%w%[%]%.]+)%s+as%s+(%w+)") do
+    if not sql_keywords[alias] then
+      debug_log(string.format("[SCOPE] Regex fallback found JOIN: %s -> %s (with AS)", alias, schema_table))
+      scope.aliases[alias] = schema_table
+    end
+  end
+
+  -- Pattern 4: JOIN [schema.]table alias (without AS)
+  for schema_table, alias in query_lower:gmatch("join%s+([%w%[%]%.]+)%s+(%w+)") do
+    if not sql_keywords[alias] and not scope.aliases[alias] then
+      debug_log(string.format("[SCOPE] Regex fallback found JOIN: %s -> %s (without AS)", alias, schema_table))
+      scope.aliases[alias] = schema_table
+    end
+  end
+
+  debug_log(string.format("[SCOPE] Regex fallback extracted %d aliases", vim.tbl_count(scope.aliases)))
 end
 
 return ScopeTracker

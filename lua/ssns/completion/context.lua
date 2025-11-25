@@ -458,8 +458,69 @@ function Context._handle_where_context(node, lines, row, col)
 
   local current_line = lines[row] or ""
   local before_cursor = current_line:sub(1, col)
+  local before_cursor_lower = before_cursor:lower()
 
-  -- WHERE context is always column completion
+  -- NEW: Check for qualified table reference: schema.table.
+  local schema, table_name = before_cursor_lower:match("(%w+)%.(%w+)%.$")
+  if schema and table_name then
+    Debug.log(string.format("[CONTEXT] WHERE with qualified reference: %s.%s", schema, table_name))
+    local context = {
+      type = Context.Type.COLUMN,
+      mode = "where_qualified",
+      trigger = ".",
+      prefix = before_cursor,
+      table_ref = schema .. "." .. table_name,
+      filter_table = table_name,
+      omit_table = true,
+    }
+    context.scope_tree = Context._current_scope_tree
+    context.tables_in_scope = Context._current_tables_in_scope
+    context.aliases = Context._current_aliases
+    context.ctes = Context._current_ctes
+    return context
+  end
+
+  -- NEW: Check for unqualified table/alias reference: alias. or table.
+  local table_or_alias = before_cursor_lower:match("(%w+)%.$")
+  if table_or_alias then
+    -- Check if it's a known alias in scope
+    local is_known_alias = Context._current_aliases and Context._current_aliases[table_or_alias]
+
+    -- Check if it's a known table in scope
+    local is_known_table = false
+    if Context._current_tables_in_scope then
+      for _, tbl in ipairs(Context._current_tables_in_scope) do
+        local tbl_name = tbl.table or tbl.name or ""
+        if tbl_name:lower() == table_or_alias then
+          is_known_table = true
+          break
+        end
+      end
+    end
+
+    if is_known_alias or is_known_table then
+      Debug.log(string.format("[CONTEXT] WHERE with alias/table reference: '%s' (alias=%s, table=%s)",
+        table_or_alias, tostring(is_known_alias ~= nil), tostring(is_known_table)))
+      local context = {
+        type = Context.Type.COLUMN,
+        mode = "where_qualified",
+        trigger = ".",
+        prefix = before_cursor,
+        table_ref = table_or_alias,
+        filter_table = table_or_alias,
+        omit_table = true,
+      }
+      context.scope_tree = Context._current_scope_tree
+      context.tables_in_scope = Context._current_tables_in_scope
+      context.aliases = Context._current_aliases
+      context.ctes = Context._current_ctes
+      return context
+    else
+      Debug.log(string.format("[CONTEXT] WHERE reference '%s' not found in aliases/tables", table_or_alias))
+    end
+  end
+
+  -- Default: WHERE context without qualification (original behavior)
   local context = {
     type = Context.Type.COLUMN,
     mode = "where",
@@ -1000,6 +1061,132 @@ function Context._determine_context_from_keywords(keyword_stack, cursor_node, li
   return nil
 end
 
+---Find the last SQL keyword node that precedes the cursor position
+---@param root_node any Tree-sitter root node
+---@param cursor_row number 0-indexed row
+---@param cursor_col number 0-indexed column
+---@param lines table|nil Buffer lines (optional, for extracting node text without buffer dependency)
+---@return string|nil keyword_type The type of the last keyword found (where, from, select, join, etc.)
+---@return any|nil keyword_node The actual node
+function Context._find_last_keyword_before_cursor(root_node, cursor_row, cursor_col, lines)
+  local Debug = require('ssns.debug')
+  local last_keyword_type = nil
+  local last_keyword_node = nil
+  local last_keyword_start_pos = {-1, -1}  -- {row, col} - use START position, not END
+
+  -- SQL keyword node types to look for
+  local keyword_types = {
+    ["keyword_where"] = "where",
+    ["keyword_from"] = "from",
+    ["keyword_select"] = "select",
+    ["keyword_join"] = "join",
+    ["keyword_inner"] = "join",
+    ["keyword_left"] = "join",
+    ["keyword_right"] = "join",
+    ["keyword_outer"] = "join",
+    ["keyword_cross"] = "join",
+    ["keyword_and"] = "where",  -- AND/OR are WHERE clause continuations
+    ["keyword_or"] = "where",
+    ["where"] = "where",
+    ["where_clause"] = "where",
+    ["from"] = "from",
+    ["from_clause"] = "from",
+    ["select"] = "select",
+    ["select_clause"] = "select",
+  }
+
+  -- Recursive function to traverse all nodes
+  local function traverse(node)
+    if not node then return end
+
+    local node_type = node:type()
+    local start_row, start_col, end_row, end_col = node:range()
+
+    -- Check if this node ends before cursor
+    local ends_before_cursor = (end_row < cursor_row) or
+                               (end_row == cursor_row and end_col <= cursor_col)
+
+    -- Check if this is a keyword node type
+    local keyword_context = keyword_types[node_type]
+
+    -- Also check node text for keyword patterns (handles cases where grammar doesn't create keyword_ nodes)
+    if not keyword_context and ends_before_cursor then
+      -- Extract node text safely (from lines if available, otherwise use pcall with get_node_text)
+      local node_text = ""
+      if lines then
+        -- Extract text from lines table using node range (0-indexed)
+        if start_row == end_row then
+          -- Single-line node
+          local line = lines[start_row + 1]  -- lines is 1-indexed
+          if line then
+            node_text = line:sub(start_col + 1, end_col):lower()
+          end
+        else
+          -- Multi-line node (rare for keywords, but handle it)
+          local parts = {}
+          for i = start_row, end_row do
+            local line = lines[i + 1]  -- lines is 1-indexed
+            if line then
+              if i == start_row then
+                table.insert(parts, line:sub(start_col + 1))
+              elseif i == end_row then
+                table.insert(parts, line:sub(1, end_col))
+              else
+                table.insert(parts, line)
+              end
+            end
+          end
+          node_text = table.concat(parts, "\n"):lower()
+        end
+      else
+        -- Fallback to get_node_text with pcall (buffer-dependent)
+        local success, result = pcall(function()
+          return vim.treesitter.get_node_text(node, 0)
+        end)
+        if success and result then
+          node_text = result:lower()
+        end
+      end
+
+      if node_text == "where" then keyword_context = "where"
+      elseif node_text == "from" then keyword_context = "from"
+      elseif node_text == "select" then keyword_context = "select"
+      elseif node_text == "join" or node_text == "inner" or node_text == "left" or
+             node_text == "right" or node_text == "cross" then keyword_context = "join"
+      elseif node_text == "and" or node_text == "or" then keyword_context = "where"
+      end
+    end
+
+    if keyword_context and ends_before_cursor then
+      -- Check if this keyword STARTS later than our current last keyword
+      -- (the keyword that starts latest and ends before cursor is most relevant)
+      local is_later = (start_row > last_keyword_start_pos[1]) or
+                       (start_row == last_keyword_start_pos[1] and start_col > last_keyword_start_pos[2])
+
+      if is_later then
+        last_keyword_type = keyword_context
+        last_keyword_node = node
+        last_keyword_start_pos = {start_row, start_col}
+        Debug.log(string.format("[CONTEXT] Found keyword '%s' at (%d,%d)-(%d,%d)",
+          node_type, start_row, start_col, end_row, end_col))
+      end
+    end
+
+    -- Recurse into children
+    for child in node:iter_children() do
+      traverse(child)
+    end
+  end
+
+  traverse(root_node)
+
+  if last_keyword_type then
+    Debug.log(string.format("[CONTEXT] Last keyword before cursor: %s", last_keyword_type))
+  end
+
+  return last_keyword_type, last_keyword_node
+end
+
 ---Handle error recovery by checking previous sibling context
 ---@param error_node table Tree-sitter ERROR node
 ---@param lines table Buffer lines
@@ -1042,7 +1229,31 @@ function Context._handle_error_from_sibling(error_node, lines, row, col)
     return Context._handle_join_context(error_node, lines, row, col)
   end
 
-  Debug.log("[CONTEXT] No keywords found in ERROR node, checking previous sibling")
+  -- NEW: Use tree-sitter traversal to find the last keyword before cursor
+  -- Get the root node for traversal
+  local root_node = error_node
+  while root_node:parent() do
+    root_node = root_node:parent()
+  end
+
+  -- Find the last SQL keyword that precedes the cursor
+  local last_keyword, keyword_node = Context._find_last_keyword_before_cursor(root_node, row - 1, col, lines)
+
+  if last_keyword == "where" then
+    Debug.log("[CONTEXT] Tree-sitter found WHERE context before cursor")
+    return Context._handle_where_context(error_node, lines, row, col)
+  elseif last_keyword == "join" then
+    Debug.log("[CONTEXT] Tree-sitter found JOIN context before cursor")
+    return Context._handle_join_context(error_node, lines, row, col)
+  elseif last_keyword == "from" then
+    Debug.log("[CONTEXT] Tree-sitter found FROM context before cursor")
+    return Context._handle_from_context(keyword_node or error_node, lines, row, col)
+  elseif last_keyword == "select" then
+    Debug.log("[CONTEXT] Tree-sitter found SELECT context before cursor")
+    return Context._handle_select_context(keyword_node or error_node, error_node, lines, row, col)
+  end
+
+  Debug.log("[CONTEXT] No keywords found via tree-sitter, checking previous sibling")
 
   -- Check previous sibling (should be the statement we're continuing from)
   local prev_sibling = error_node:prev_sibling()

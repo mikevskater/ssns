@@ -107,8 +107,12 @@ function ColumnsProvider._get_completions_impl(ctx)
   end
 
   -- Route based on context mode
-  if sql_context.mode == "qualified" then
+  if sql_context.mode == "qualified" or
+     sql_context.mode == "select_qualified" or
+     sql_context.mode == "where_qualified" then
     -- Pattern: table.| or alias.|
+    local Debug = require('ssns.debug')
+    Debug.log(string.format("[COLUMNS] Routing mode '%s' to _get_qualified_columns", sql_context.mode or "nil"))
     return ColumnsProvider._get_qualified_columns(sql_context, connection, sql_context)
 
   elseif sql_context.mode == "select" or sql_context.mode == "where" or
