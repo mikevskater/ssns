@@ -1,6 +1,13 @@
 ---SQL context detection for intelligent completion
 ---Analyzes cursor position and SQL syntax to determine what kind of completion to provide
 ---Uses Tree-sitter for robust parsing with regex fallback
+---
+---Integration with statement_cache.lua (Phase 10):
+---  - statement_cache provides PRIMARY source for scope information (tables, aliases, CTEs, temp tables)
+---  - Handles multi-statement isolation via GO batch tracking
+---  - Automatically maintained via autocmds (requires StatementCache.setup() during plugin init)
+---  - Falls back to scope_tracker.lua if statement cache unavailable
+---
 ---@class CompletionContext
 local Context = {}
 
@@ -104,69 +111,134 @@ function Context.detect_with_treesitter(bufnr, row, col)
 
   Debug.log(string.format("[CONTEXT] Node at cursor: type='%s'", cursor_node:type()))
 
-  -- NEW: Build scope tree for alias/CTE/table resolution (Phase 2.1)
+  -- NEW: Try statement cache FIRST for multi-statement-aware scope info (Phase 10)
+  local stmt_context = nil
   local scope_tree = nil
   local cursor_scope = nil
   local aliases = {}
   local ctes = {}
   local tables_in_scope = nil
 
-  -- Try to build scope tree (graceful failure if not available)
-  local success, result = pcall(function()
-    local ScopeTracker = require('ssns.completion.metadata.scope_tracker')
-    return ScopeTracker.build_scope_tree(text, bufnr, nil) -- connection optional
+  local success_stmt, result_stmt = pcall(function()
+    local StatementCache = require('ssns.completion.statement_cache')
+    return StatementCache.get_context_at_position(bufnr, row, col)
   end)
 
-  if success and result then
-    scope_tree = result
-    Debug.log("[CONTEXT] Scope tree built successfully")
+  if success_stmt and result_stmt then
+    stmt_context = result_stmt
+    Debug.log("[CONTEXT] Statement cache context found")
 
-    -- Get scope at cursor position
-    local cursor_pos = {row, col}
-    local ScopeTracker = require('ssns.completion.metadata.scope_tracker')
-    cursor_scope = ScopeTracker.get_scope_at_cursor(scope_tree, cursor_pos)
-
-    if cursor_scope then
-      Debug.log(string.format("[CONTEXT] Cursor scope type: %s", cursor_scope.type))
-    end
-
-    -- Extract aliases at cursor position
-    local alias_success, alias_result = pcall(function()
-      return ScopeTracker.get_available_aliases(scope_tree, cursor_pos)
-    end)
-
-    if alias_success and alias_result then
-      aliases = alias_result
-      Debug.log(string.format("[CONTEXT] Aliases at cursor: %d", vim.tbl_count(aliases)))
-    end
-
-    -- Extract CTEs at cursor position
-    local cte_success, cte_result = pcall(function()
-      return ScopeTracker.get_available_ctes(scope_tree, cursor_pos)
-    end)
-
-    if cte_success and cte_result then
-      ctes = cte_result
-      Debug.log(string.format("[CONTEXT] CTEs at cursor: %d", vim.tbl_count(ctes)))
-    end
-
-    -- Extract table references in current scope
-    if cursor_scope and cursor_scope.aliases then
-      tables_in_scope = {}
-      for alias, table_name in pairs(cursor_scope.aliases) do
-        table.insert(tables_in_scope, {
-          alias = alias,
-          table = table_name,
-          scope = cursor_scope.type
-        })
+    -- Convert statement cache format to existing format for backward compatibility
+    -- Build aliases map
+    for alias, tbl_ref in pairs(stmt_context.aliases or {}) do
+      -- tbl_ref can be a table or a TableReference object
+      if type(tbl_ref) == "table" then
+        local full_name = tbl_ref.schema and (tbl_ref.schema .. "." .. tbl_ref.name) or tbl_ref.name
+        aliases[alias:lower()] = full_name
+      else
+        aliases[alias:lower()] = tostring(tbl_ref)
       end
-      Debug.log(string.format("[CONTEXT] Tables in scope: %d", #tables_in_scope))
     end
-  else
-    Debug.log("[CONTEXT] Scope tree building failed or unavailable, continuing without scope info")
+
+    -- Build CTEs map
+    for name, cte_info in pairs(stmt_context.ctes or {}) do
+      ctes[name:lower()] = {
+        name = cte_info.name,
+        columns = cte_info.columns,
+      }
+    end
+
+    -- Build tables_in_scope array
+    tables_in_scope = {}
+    for _, tbl in ipairs(stmt_context.tables or {}) do
+      local table_name = tbl.schema and (tbl.schema .. "." .. tbl.name) or tbl.name
+      table.insert(tables_in_scope, {
+        alias = tbl.alias,
+        table = table_name,
+        scope = stmt_context.subquery and "subquery" or "statement",
+        is_cte = tbl.is_cte,
+        is_temp_table = tbl.is_temp_table,
+      })
+    end
+
+    -- Add temp tables as available tables
+    for name, temp_info in pairs(stmt_context.temp_tables or {}) do
+      table.insert(tables_in_scope, {
+        alias = name,
+        table = name,
+        scope = "temp_table",
+        is_temp = true,
+        is_global = temp_info.is_global,
+        columns = temp_info.columns,
+      })
+    end
+
+    Debug.log(string.format("[CONTEXT] Statement cache: %d aliases, %d CTEs, %d tables, %d temp tables",
+      vim.tbl_count(aliases), vim.tbl_count(ctes), #tables_in_scope, vim.tbl_count(stmt_context.temp_tables or {})))
+  end
+
+  -- FALLBACK: If statement cache didn't provide context, try tree-sitter scope tracker
+  if not stmt_context then
+    Debug.log("[CONTEXT] Statement cache unavailable, falling back to scope_tracker")
+
+    -- Try to build scope tree (graceful failure if not available)
+    local success, result = pcall(function()
+      local ScopeTracker = require('ssns.completion.metadata.scope_tracker')
+      return ScopeTracker.build_scope_tree(text, bufnr, nil) -- connection optional
+    end)
+
+    if success and result then
+      scope_tree = result
+      Debug.log("[CONTEXT] Scope tree built successfully")
+
+      -- Get scope at cursor position
+      local cursor_pos = {row, col}
+      local ScopeTracker = require('ssns.completion.metadata.scope_tracker')
+      cursor_scope = ScopeTracker.get_scope_at_cursor(scope_tree, cursor_pos)
+
+      if cursor_scope then
+        Debug.log(string.format("[CONTEXT] Cursor scope type: %s", cursor_scope.type))
+      end
+
+      -- Extract aliases at cursor position
+      local alias_success, alias_result = pcall(function()
+        return ScopeTracker.get_available_aliases(scope_tree, cursor_pos)
+      end)
+
+      if alias_success and alias_result then
+        aliases = alias_result
+        Debug.log(string.format("[CONTEXT] Aliases at cursor: %d", vim.tbl_count(aliases)))
+      end
+
+      -- Extract CTEs at cursor position
+      local cte_success, cte_result = pcall(function()
+        return ScopeTracker.get_available_ctes(scope_tree, cursor_pos)
+      end)
+
+      if cte_success and cte_result then
+        ctes = cte_result
+        Debug.log(string.format("[CONTEXT] CTEs at cursor: %d", vim.tbl_count(ctes)))
+      end
+
+      -- Extract table references in current scope
+      if cursor_scope and cursor_scope.aliases then
+        tables_in_scope = {}
+        for alias, table_name in pairs(cursor_scope.aliases) do
+          table.insert(tables_in_scope, {
+            alias = alias,
+            table = table_name,
+            scope = cursor_scope.type
+          })
+        end
+        Debug.log(string.format("[CONTEXT] Tables in scope: %d", #tables_in_scope))
+      end
+    else
+      Debug.log("[CONTEXT] Scope tree building failed or unavailable, continuing without scope info")
+    end
   end
 
   -- Store scope info for handlers to access
+  Context._current_stmt_context = stmt_context
   Context._current_scope_tree = scope_tree
   Context._current_aliases = aliases
   Context._current_ctes = ctes
@@ -208,7 +280,8 @@ function Context.detect_with_treesitter(bufnr, row, col)
   if not statement_node then
     Debug.log("[CONTEXT] No containing statement found")
     local context = { type = Context.Type.UNKNOWN, prefix = before_cursor }
-    -- Inject scope information (Phase 2.1)
+    -- Inject scope information (Phase 2.1 + Phase 10)
+    context.stmt_context = stmt_context
     context.scope_tree = scope_tree
     context.tables_in_scope = tables_in_scope
     context.aliases = aliases
@@ -234,7 +307,8 @@ function Context.detect_with_treesitter(bufnr, row, col)
     type = Context.Type.UNKNOWN,
     prefix = before_cursor,
   }
-  -- Inject scope information (Phase 2.1)
+  -- Inject scope information (Phase 2.1 + Phase 10)
+  context.stmt_context = stmt_context
   context.scope_tree = scope_tree
   context.tables_in_scope = tables_in_scope
   context.aliases = aliases
@@ -271,7 +345,8 @@ function Context._handle_from_context(node, lines, row, col)
       filter_schema = schema,
       omit_schema = true,
     }
-    -- Inject scope information (Phase 2.1)
+    -- Inject scope information (Phase 2.1 + Phase 10)
+    context.stmt_context = Context._current_stmt_context
     context.scope_tree = Context._current_scope_tree
     context.tables_in_scope = Context._current_tables_in_scope
     context.aliases = Context._current_aliases
@@ -304,7 +379,8 @@ function Context._handle_from_context(node, lines, row, col)
         filter_schema = qualifier,
         omit_schema = true,
       }
-      -- Inject scope information (Phase 2.1)
+      -- Inject scope information (Phase 2.1 + Phase 10)
+      context.stmt_context = Context._current_stmt_context
       context.scope_tree = Context._current_scope_tree
       context.tables_in_scope = Context._current_tables_in_scope
       context.aliases = Context._current_aliases
@@ -321,7 +397,8 @@ function Context._handle_from_context(node, lines, row, col)
         database = qualifier,
         filter_database = qualifier,
       }
-      -- Inject scope information (Phase 2.1)
+      -- Inject scope information (Phase 2.1 + Phase 10)
+      context.stmt_context = Context._current_stmt_context
       context.scope_tree = Context._current_scope_tree
       context.tables_in_scope = Context._current_tables_in_scope
       context.aliases = Context._current_aliases
@@ -337,7 +414,8 @@ function Context._handle_from_context(node, lines, row, col)
       trigger = nil,
       prefix = before_cursor,
     }
-    -- Inject scope information (Phase 2.1)
+    -- Inject scope information (Phase 2.1 + Phase 10)
+    context.stmt_context = Context._current_stmt_context
     context.scope_tree = Context._current_scope_tree
     context.tables_in_scope = Context._current_tables_in_scope
     context.aliases = Context._current_aliases
@@ -375,7 +453,8 @@ function Context._handle_join_context(node, lines, row, col)
       filter_schema = schema,
       omit_schema = true,
     }
-    -- Inject scope information (Phase 2.1)
+    -- Inject scope information (Phase 2.1 + Phase 10)
+    context.stmt_context = Context._current_stmt_context
     context.scope_tree = Context._current_scope_tree
     context.tables_in_scope = Context._current_tables_in_scope
     context.aliases = Context._current_aliases
@@ -406,7 +485,8 @@ function Context._handle_join_context(node, lines, row, col)
         filter_schema = qualifier,
         omit_schema = true,
       }
-      -- Inject scope information (Phase 2.1)
+      -- Inject scope information (Phase 2.1 + Phase 10)
+      context.stmt_context = Context._current_stmt_context
       context.scope_tree = Context._current_scope_tree
       context.tables_in_scope = Context._current_tables_in_scope
       context.aliases = Context._current_aliases
@@ -422,7 +502,8 @@ function Context._handle_join_context(node, lines, row, col)
         database = qualifier,
         filter_database = qualifier,
       }
-      -- Inject scope information (Phase 2.1)
+      -- Inject scope information (Phase 2.1 + Phase 10)
+      context.stmt_context = Context._current_stmt_context
       context.scope_tree = Context._current_scope_tree
       context.tables_in_scope = Context._current_tables_in_scope
       context.aliases = Context._current_aliases
@@ -437,7 +518,8 @@ function Context._handle_join_context(node, lines, row, col)
       trigger = nil,
       prefix = before_cursor,
     }
-    -- Inject scope information (Phase 2.1)
+    -- Inject scope information (Phase 2.1 + Phase 10)
+    context.stmt_context = Context._current_stmt_context
     context.scope_tree = Context._current_scope_tree
     context.tables_in_scope = Context._current_tables_in_scope
     context.aliases = Context._current_aliases
@@ -564,7 +646,8 @@ function Context._handle_select_context(select_node, cursor_node, lines, row, co
       filter_table = table_name,
       omit_table = true,
     }
-    -- Inject scope information (Phase 2.1)
+    -- Inject scope information (Phase 2.1 + Phase 10)
+    context.stmt_context = Context._current_stmt_context
     context.scope_tree = Context._current_scope_tree
     context.tables_in_scope = Context._current_tables_in_scope
     context.aliases = Context._current_aliases
@@ -585,7 +668,8 @@ function Context._handle_select_context(select_node, cursor_node, lines, row, co
       filter_table = table_or_alias,
       omit_table = true,
     }
-    -- Inject scope information (Phase 2.1)
+    -- Inject scope information (Phase 2.1 + Phase 10)
+    context.stmt_context = Context._current_stmt_context
     context.scope_tree = Context._current_scope_tree
     context.tables_in_scope = Context._current_tables_in_scope
     context.aliases = Context._current_aliases
@@ -646,7 +730,8 @@ function Context._handle_insert_context(node, lines, row, col)
       filter_schema = schema,
       omit_schema = true,
     }
-    -- Inject scope information (Phase 2.1)
+    -- Inject scope information (Phase 2.1 + Phase 10)
+    context.stmt_context = Context._current_stmt_context
     context.scope_tree = Context._current_scope_tree
     context.tables_in_scope = Context._current_tables_in_scope
     context.aliases = Context._current_aliases
@@ -659,7 +744,8 @@ function Context._handle_insert_context(node, lines, row, col)
       trigger = nil,
       prefix = before_cursor,
     }
-    -- Inject scope information (Phase 2.1)
+    -- Inject scope information (Phase 2.1 + Phase 10)
+    context.stmt_context = Context._current_stmt_context
     context.scope_tree = Context._current_scope_tree
     context.tables_in_scope = Context._current_tables_in_scope
     context.aliases = Context._current_aliases
@@ -691,7 +777,8 @@ function Context._handle_update_context(node, lines, row, col)
       filter_schema = schema,
       omit_schema = true,
     }
-    -- Inject scope information (Phase 2.1)
+    -- Inject scope information (Phase 2.1 + Phase 10)
+    context.stmt_context = Context._current_stmt_context
     context.scope_tree = Context._current_scope_tree
     context.tables_in_scope = Context._current_tables_in_scope
     context.aliases = Context._current_aliases
@@ -704,7 +791,8 @@ function Context._handle_update_context(node, lines, row, col)
       trigger = nil,
       prefix = before_cursor,
     }
-    -- Inject scope information (Phase 2.1)
+    -- Inject scope information (Phase 2.1 + Phase 10)
+    context.stmt_context = Context._current_stmt_context
     context.scope_tree = Context._current_scope_tree
     context.tables_in_scope = Context._current_tables_in_scope
     context.aliases = Context._current_aliases
@@ -736,7 +824,8 @@ function Context._handle_delete_context(node, lines, row, col)
       filter_schema = schema,
       omit_schema = true,
     }
-    -- Inject scope information (Phase 2.1)
+    -- Inject scope information (Phase 2.1 + Phase 10)
+    context.stmt_context = Context._current_stmt_context
     context.scope_tree = Context._current_scope_tree
     context.tables_in_scope = Context._current_tables_in_scope
     context.aliases = Context._current_aliases
@@ -749,7 +838,8 @@ function Context._handle_delete_context(node, lines, row, col)
       trigger = nil,
       prefix = before_cursor,
     }
-    -- Inject scope information (Phase 2.1)
+    -- Inject scope information (Phase 2.1 + Phase 10)
+    context.stmt_context = Context._current_stmt_context
     context.scope_tree = Context._current_scope_tree
     context.tables_in_scope = Context._current_tables_in_scope
     context.aliases = Context._current_aliases
@@ -946,7 +1036,8 @@ function Context._detect_function_parameter_context(cursor_node, lines, row, col
               trigger = nil,
               prefix = before_cursor,
             }
-            -- Inject scope information (Phase 2.1)
+            -- Inject scope information (Phase 2.1 + Phase 10)
+            context.stmt_context = Context._current_stmt_context
             context.scope_tree = Context._current_scope_tree
             context.tables_in_scope = Context._current_tables_in_scope
             context.aliases = Context._current_aliases

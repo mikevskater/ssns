@@ -191,11 +191,24 @@ function ScopeTracker._build_scope_tree_recursive(node, query_text, parent_scope
     -- Search ERROR nodes for statement/cte
     if child_type == "ERROR" then
       debug_log("[SCOPE] Found ERROR node in _build_scope_tree_recursive (recursion), searching inside")
+
+      -- First, look for properly wrapped statements
       local found_nodes = ScopeTracker._find_nodes_recursive(child, {"statement", "cte"}, {})
       for _, found_node in ipairs(found_nodes) do
         debug_log(string.format("[SCOPE] Found %s inside ERROR node", found_node:type()))
         ScopeTracker._build_scope_tree_recursive(found_node, query_text, parent_scope, bufnr, connection)
       end
+
+      -- If no statements found, look for bare select nodes (incomplete statements)
+      if #found_nodes == 0 then
+        local select_nodes = ScopeTracker._find_nodes_recursive(child, {"select"}, {})
+        for _, select_node in ipairs(select_nodes) do
+          debug_log("[SCOPE] Found bare select node in ERROR - creating scope from ERROR bounds")
+          -- Create scope using ERROR node bounds (since select bounds are incomplete)
+          ScopeTracker._extract_error_select_scope(child, select_node, query_text, parent_scope, bufnr, connection)
+        end
+      end
+
       goto continue
     end
 
@@ -785,6 +798,46 @@ function ScopeTracker._extract_select_scope(node, query_text, parent_scope, bufn
   end
 end
 
+---Extract scope for a SELECT statement inside an ERROR node
+---Since tree-sitter misparsed it, use ERROR bounds and regex for tables
+---@param error_node table Tree-sitter ERROR node
+---@param select_node table Tree-sitter select node inside the ERROR
+---@param query_text string Original query text
+---@param parent_scope QueryScope Parent scope to add children to
+---@param bufnr number Buffer number
+---@param connection table? Optional connection context
+function ScopeTracker._extract_error_select_scope(error_node, select_node, query_text, parent_scope, bufnr, connection)
+  local start_row, start_col, end_row, end_col = error_node:range()
+
+  debug_log(string.format("_extract_error_select_scope: Creating scope from ERROR at lines %d-%d",
+    start_row + 1, end_row + 1))
+
+  -- Create scope using ERROR node bounds
+  local select_scope = {
+    type = "main",
+    start_pos = {start_row + 1, start_col + 1},
+    end_pos = {end_row + 1, end_col},
+    aliases = {},
+    ctes = {},
+    parent = parent_scope,
+    children = {},
+    temp_tables = {},
+  }
+
+  debug_log(string.format("Created ERROR scope: start={%d,%d}, end={%d,%d}",
+    select_scope.start_pos[1], select_scope.start_pos[2],
+    select_scope.end_pos[1], select_scope.end_pos[2]))
+
+  -- Add to parent
+  table.insert(parent_scope.children, select_scope)
+
+  -- Extract tables using regex on ERROR node text (tree-sitter misparsed it)
+  local error_text = vim.treesitter.get_node_text(error_node, query_text)
+  ScopeTracker._extract_aliases_regex_fallback(error_text, select_scope)
+
+  debug_log(string.format("Extracted aliases from ERROR: %s", vim.inspect(select_scope.aliases)))
+end
+
 ---Extract scopes from a set_operation node (UNION, INTERSECT, EXCEPT)
 ---Each SELECT in the set operation gets its own scope
 ---@param node table Tree-sitter node (set_operation)
@@ -1136,6 +1189,7 @@ function ScopeTracker._extract_from_aliases(node, query_text, scope, bufnr, conn
       local table_parts = {}
       local alias = nil
       local has_subquery = false
+      local encountered_select_error = false  -- Flag to detect multi-statement confusion
 
       -- Get children of relation: object_reference + optional identifier (alias)
       -- OR: subquery + identifier (alias as sibling)
@@ -1144,6 +1198,14 @@ function ScopeTracker._extract_from_aliases(node, query_text, scope, bufnr, conn
 
         -- Search ERROR nodes in relation for object_reference/identifier
         if relation_child_type == "ERROR" then
+          -- Check if ERROR contains SELECT keyword (indicates multi-statement confusion)
+          local error_text = vim.treesitter.get_node_text(relation_child, query_text)
+          if error_text:lower():match("^%s*select") then
+            debug_log("[SCOPE] ERROR node contains SELECT - multi-statement detected, stopping relation processing")
+            encountered_select_error = true
+            break  -- Stop processing this relation - what follows is a different statement
+          end
+
           debug_log("[SCOPE] Found ERROR node in _extract_from_aliases (relation), searching inside")
           local inner_found = ScopeTracker._find_nodes_recursive(relation_child, {"object_reference", "identifier", "subquery"}, {})
           for _, inner_node in ipairs(inner_found) do
@@ -1174,7 +1236,13 @@ function ScopeTracker._extract_from_aliases(node, query_text, scope, bufnr, conn
           ScopeTracker._extract_subquery_scope(relation_child, query_text, scope, bufnr, connection)
         elseif relation_child_type == "identifier" then
           -- This is the alias (for table OR subquery)
-          alias = vim.treesitter.get_node_text(relation_child, query_text)
+          -- But skip if we've already found a table and encountered a SELECT error
+          if not encountered_select_error then
+            alias = vim.treesitter.get_node_text(relation_child, query_text)
+          else
+            debug_log(string.format("[SCOPE] Skipping identifier '%s' after SELECT error",
+              vim.treesitter.get_node_text(relation_child, query_text)))
+          end
         end
 
         ::continue_inner::
@@ -1567,6 +1635,26 @@ function ScopeTracker._extract_aliases_regex_fallback(query_text, scope)
     local table_name = schema_table:match("%.([^%.]+)$") or schema_table
     if not scope.aliases[table_name] then
       debug_log(string.format("[SCOPE] Regex fallback found non-aliased JOIN: %s -> %s", table_name, schema_table))
+      scope.aliases[table_name] = schema_table
+    end
+  end
+
+  -- Pattern 7: FROM [schema.]table at end of text (no trailing keyword)
+  -- This handles incomplete queries like: SELECT  FROM dbo.EMPLOYEES
+  for schema_table in query_lower:gmatch("from%s+([%w%[%]%.]+)%s*$") do
+    local table_name = schema_table:match("%.([^%.]+)$") or schema_table
+    if not scope.aliases[table_name] then
+      debug_log(string.format("[SCOPE] Regex fallback found non-aliased FROM at end: %s -> %s", table_name, schema_table))
+      scope.aliases[table_name] = schema_table
+    end
+  end
+
+  -- Pattern 8: FROM [schema.]table followed by newline or semicolon
+  -- This handles multi-statement queries like: SELECT * FROM dbo.EMPLOYEES\nSELECT...
+  for schema_table in query_lower:gmatch("from%s+([%w%[%]%.]+)%s*[\n;]") do
+    local table_name = schema_table:match("%.([^%.]+)$") or schema_table
+    if not scope.aliases[table_name] then
+      debug_log(string.format("[SCOPE] Regex fallback found non-aliased FROM before newline/;: %s -> %s", table_name, schema_table))
       scope.aliases[table_name] = schema_table
     end
   end
