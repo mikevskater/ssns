@@ -819,20 +819,30 @@ function ParserState:parse_subquery(known_ctes)
     end
   end
 
-  -- Parse nested subqueries (look for "( SELECT")
-  local saved_pos = self.pos
+  -- Parse nested subqueries (look for "( SELECT") while tracking paren depth
+  -- This scans remaining tokens in this subquery for nested subqueries in WHERE, CASE, etc.
+  -- We track paren depth to know when we've exited this subquery's scope
+  local scan_depth = 0
   while self:current() do
     if self:is_type("paren_open") then
+      scan_depth = scan_depth + 1
       self:advance()
       if self:is_keyword("SELECT") then
         local nested = self:parse_subquery(known_ctes)
         if nested then
           table.insert(subquery.subqueries, nested)
         end
+        -- After parse_subquery, we should be at or past the closing ) of that nested subquery
+        -- Decrement depth since we consumed that subquery
+        scan_depth = scan_depth - 1
       end
     elseif self:is_type("paren_close") then
-      -- End of subquery
-      break
+      if scan_depth <= 0 then
+        -- This is the closing ) of the current subquery - don't consume it
+        break
+      end
+      scan_depth = scan_depth - 1
+      self:advance()
     else
       self:advance()
     end
@@ -906,6 +916,9 @@ function ParserState:parse_with_clause()
       subqueries = {},
     }
 
+    -- Register CTE name BEFORE parsing body so recursive self-references are filtered
+    cte_names[cte_name] = true
+
     if self:is_keyword("SELECT") then
       local subquery = self:parse_subquery(cte_names)
       if subquery then
@@ -924,7 +937,6 @@ function ParserState:parse_with_clause()
     end
 
     table.insert(ctes, cte)
-    cte_names[cte_name] = true
 
     -- Check for comma (multiple CTEs)
     if self:is_type("comma") then

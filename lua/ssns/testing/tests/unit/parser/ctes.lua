@@ -630,7 +630,7 @@ SELECT * FROM EmployeeCTE e JOIN DeptCTE d ON e.DeptId = d.Id]],
         expected = {
             chunks = {
                 {
-                    statement_type = "WITH",
+                    statement_type = "SELECT",  -- CTE queries report as SELECT for completion
                     ctes = {
                         {
                             name = "LargeDepts",
@@ -669,7 +669,7 @@ JOIN Departments d ON ds.DeptId = d.Id]],
         expected = {
             chunks = {
                 {
-                    statement_type = "WITH",
+                    statement_type = "SELECT",  -- CTE queries report as SELECT for completion
                     ctes = {
                         { name = "ActiveEmps", tables = {{ name = "Employees" }} },
                         {

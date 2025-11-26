@@ -698,7 +698,7 @@ SELECT * FROM HighValueCustomers]],
         expected = {
             chunks = {
                 {
-                    statement_type = "WITH",
+                    statement_type = "SELECT",  -- CTE queries report as SELECT for completion
                     ctes = {
                         { name = "Customers2024", tables = { { name = "Customers" } } },
                         { name = "CustomerOrders", tables = { { name = "Orders", alias = "o" } } },
@@ -2247,7 +2247,7 @@ ORDER BY ct.Tier, mo.MonthlyTotal DESC]],
         expected = {
             chunks = {
                 {
-                    statement_type = "WITH",
+                    statement_type = "SELECT",  -- CTE queries report as SELECT for completion
                     ctes = {
                         { name = "MonthlyOrders", tables = { { name = "Orders" } } },
                         { name = "CustomerTiers" }
