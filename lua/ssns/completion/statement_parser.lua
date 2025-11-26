@@ -492,6 +492,11 @@ function ParserState:parse_from_clause(known_ctes, paren_depth, subqueries)
         self:advance()
       end
 
+      -- Skip the JOIN keyword itself (if present after modifiers)
+      if self:is_keyword("JOIN") then
+        self:advance()
+      end
+
       -- Handle APPLY (CROSS APPLY, OUTER APPLY) - T-SQL specific
       -- APPLY takes a table-valued function or subquery, not a regular table
       if self:is_keyword("APPLY") then
@@ -563,7 +568,27 @@ function ParserState:parse_from_clause(known_ctes, paren_depth, subqueries)
       break
     elseif paren_depth == 0 and is_statement_starter(token.text) then
       -- New statement starting
-      break
+      -- BUT: WITH in FROM clause context is a table hint, not a CTE starter
+      if token.text:upper() == "WITH" then
+        -- This is a table hint (WITH NOLOCK), not a new statement
+        -- Skip it and continue parsing
+        self:advance()  -- consume WITH
+        if self:is_type("paren_open") then
+          -- Skip parenthesized hints like (NOLOCK, INDEX(...))
+          local hint_depth = 1
+          self:advance() -- consume (
+          while self:current() and hint_depth > 0 do
+            if self:is_type("paren_open") then
+              hint_depth = hint_depth + 1
+            elseif self:is_type("paren_close") then
+              hint_depth = hint_depth - 1
+            end
+            self:advance()
+          end
+        end
+      else
+        break
+      end
     elseif paren_depth == 0 and (token.text:upper() == "UNION" or token.text:upper() == "INTERSECT" or token.text:upper() == "EXCEPT") then
       -- Set operations - stop parsing FROM clause, let caller handle
       break
