@@ -262,9 +262,13 @@ function ParserState:parse_alias()
   -- Check for AS keyword
   local has_as = self:consume_keyword("AS")
 
-  -- Next token should be identifier
+  -- Next token should be identifier (but not GO batch separator)
   local token = self:current()
   if token and (token.type == "identifier" or token.type == "bracket_id") then
+    -- Don't treat GO as an alias
+    if token.text:upper() == "GO" then
+      return nil
+    end
     local alias = strip_brackets(token.text)
     self:advance()
     return alias
@@ -452,6 +456,9 @@ function ParserState:parse_from_clause(known_ctes, paren_depth, subqueries)
           table.insert(tables, table_ref)
         end
       end
+    elseif token.type == "go" or (token.type == "identifier" and token.text:upper() == "GO") then
+      -- GO batch separator - stop parsing FROM clause
+      break
     elseif paren_depth == 0 and is_statement_starter(token.text) then
       -- New statement starting
       break
@@ -759,11 +766,15 @@ function ParserState:parse_statement(known_ctes, temp_tables)
   end
 
   -- Find subqueries in the rest of the statement
+  -- Track the last token that belongs to this statement for end position
+  -- Initialize to previous token (what we last consumed before this loop)
+  local last_statement_token = self.pos > 1 and self.tokens[self.pos - 1] or start_token
+
   while self:current() do
     local token = self:current()
 
-    -- Check for GO or new statement
-    if token.type == "go" then
+    -- Check for GO batch separator (can be "go" type or identifier "GO")
+    if token.type == "go" or (token.type == "identifier" and token.text:upper() == "GO") then
       break
     end
 
@@ -808,6 +819,9 @@ function ParserState:parse_statement(known_ctes, temp_tables)
       end
     end
 
+    -- Update last_statement_token before we advance
+    last_statement_token = token
+
     if token.type == "paren_open" then
       paren_depth = paren_depth + 1
       self:advance()
@@ -832,17 +846,10 @@ function ParserState:parse_statement(known_ctes, temp_tables)
     end
   end
 
-  -- Record end position
-  local end_token = self:current()
-  if end_token then
-    chunk.end_line = end_token.line
-    chunk.end_col = end_token.col
-  else
-    local last_token = self.tokens[#self.tokens]
-    if last_token then
-      chunk.end_line = last_token.line
-      chunk.end_col = last_token.col
-    end
+  -- Record end position using the last token that was part of this statement
+  if last_statement_token then
+    chunk.end_line = last_statement_token.line
+    chunk.end_col = last_statement_token.col + #last_statement_token.text - 1
   end
 
   return chunk
