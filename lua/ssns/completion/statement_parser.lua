@@ -894,6 +894,84 @@ function ParserState:parse_statement(known_ctes, temp_tables)
         table.insert(chunk.tables, table_ref)
       end
     end
+  elseif self:is_keyword("MERGE") then
+    chunk.statement_type = "MERGE"
+    self:advance()  -- consume MERGE
+
+    -- Parse MERGE INTO target_table [AS alias]
+    if self:is_keyword("INTO") then
+      self:advance()
+      local target = self:parse_table_reference(known_ctes)
+      if target and not target.is_cte then
+        table.insert(chunk.tables, target)
+      end
+    end
+
+    -- Parse USING source (table or subquery)
+    if self:is_keyword("USING") then
+      self:advance()
+
+      -- Check for subquery: USING (SELECT ...)
+      if self:is_type("paren_open") then
+        self:advance()  -- consume (
+        if self:is_keyword("SELECT") then
+          local subquery = self:parse_subquery(known_ctes)
+          if subquery then
+            if self:is_type("paren_close") then
+              self:advance()
+              subquery.alias = self:parse_alias()
+            end
+            table.insert(chunk.subqueries, subquery)
+          end
+        else
+          -- Skip non-SELECT content (VALUES, etc.)
+          local pd = 1
+          while self:current() and pd > 0 do
+            if self:is_type("paren_open") then pd = pd + 1
+            elseif self:is_type("paren_close") then pd = pd - 1
+            end
+            self:advance()
+          end
+          self:parse_alias()
+        end
+      else
+        -- Simple table reference: USING SourceTable s
+        local source = self:parse_table_reference(known_ctes)
+        if source and not source.is_cte then
+          table.insert(chunk.tables, source)
+        end
+      end
+    end
+
+    -- Skip rest of MERGE (ON condition, WHEN clauses with UPDATE/DELETE/INSERT)
+    local merge_depth = 0
+    while self:current() do
+      local tok = self:current()
+      if not tok then break end
+
+      local upper = tok.text:upper()
+
+      if self:is_type("paren_open") then
+        merge_depth = merge_depth + 1
+      elseif self:is_type("paren_close") then
+        merge_depth = merge_depth - 1
+      end
+
+      if merge_depth == 0 then
+        if tok.type == "semicolon" or upper == "GO" then
+          break
+        end
+        -- Break on new statements (NOT UPDATE/DELETE/INSERT - they're part of WHEN)
+        if upper == "SELECT" or upper == "CREATE" or upper == "ALTER" or
+           upper == "DROP" or upper == "TRUNCATE" or upper == "WITH" or
+           upper == "EXEC" or upper == "EXECUTE" or upper == "DECLARE" or
+           upper == "MERGE" then
+          break
+        end
+      end
+
+      self:advance()
+    end
   elseif self:is_keyword("EXEC") or self:is_keyword("EXECUTE") then
     chunk.statement_type = "EXEC"
     self:advance()
