@@ -112,6 +112,10 @@ function Tokenizer.tokenize(text)
     return {}
   end
 
+  -- Preprocess: replace tabs with spaces to avoid tokenizing issues
+  -- Tabs can cause stray operators when adjacent to tokens
+  text = text:gsub("\t", " ")
+
   local tokens = {}
   local state = STATE.NORMAL
   local current_token = ""

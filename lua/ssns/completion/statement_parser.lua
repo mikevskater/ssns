@@ -300,8 +300,9 @@ function ParserState:parse_select_columns(paren_depth)
   while self:current() do
     local token = self:current()
 
-    -- Stop at FROM keyword at same paren depth
-    if paren_depth == 0 and self:is_keyword("FROM") then
+    -- Stop at FROM or INTO keyword at same paren depth
+    -- INTO is needed for SELECT...INTO table patterns
+    if paren_depth == 0 and (self:is_keyword("FROM") or self:is_keyword("INTO")) then
       break
     end
 
@@ -611,12 +612,21 @@ function ParserState:parse_statement(known_ctes, temp_tables)
 
     -- Check for INTO
     if self:is_keyword("INTO") then
-      chunk.statement_type = "SELECT_INTO"
+      -- Don't change statement_type, keep as "SELECT"
+      -- The temp_table_name field indicates this is SELECT INTO
       self:advance()
 
       local qualified = self:parse_qualified_identifier()
       if qualified then
-        chunk.temp_table_name = qualified.name
+        -- Build full qualified name for temp_table_name
+        local full_name = qualified.name
+        if qualified.schema then
+          full_name = qualified.schema .. "." .. full_name
+        end
+        if qualified.database then
+          full_name = qualified.database .. "." .. full_name
+        end
+        chunk.temp_table_name = full_name
 
         -- Store temp table info
         if is_temp_table(qualified.name) and chunk.columns then
@@ -639,7 +649,30 @@ function ParserState:parse_statement(known_ctes, temp_tables)
     in_insert = true
     self:advance()
 
-    -- Skip until we find SELECT or VALUES
+    -- Extract INSERT INTO table
+    if self:is_keyword("INTO") then
+      self:advance()
+      local table_ref = self:parse_table_reference(known_ctes)
+      if table_ref then
+        table.insert(chunk.tables, table_ref)
+      end
+    end
+
+    -- Skip column list if present (...)
+    if self:is_type("paren_open") then
+      local paren_count = 1
+      self:advance()
+      while self:current() and paren_count > 0 do
+        if self:is_type("paren_open") then
+          paren_count = paren_count + 1
+        elseif self:is_type("paren_close") then
+          paren_count = paren_count - 1
+        end
+        self:advance()
+      end
+    end
+
+    -- Continue to find SELECT or VALUES for INSERT...SELECT
     while self:current() and not self:is_keyword("SELECT") and not self:is_keyword("VALUES") do
       self:advance()
     end
@@ -653,15 +686,34 @@ function ParserState:parse_statement(known_ctes, temp_tables)
 
       if self:is_keyword("FROM") then
         in_from = true
-        chunk.tables = self:parse_from_clause(known_ctes, paren_depth)
+        -- Add FROM clause tables to existing tables (preserve INSERT target)
+        local from_tables = self:parse_from_clause(known_ctes, paren_depth)
+        for _, t in ipairs(from_tables) do
+          table.insert(chunk.tables, t)
+        end
       end
     end
   elseif self:is_keyword("UPDATE") then
     chunk.statement_type = "UPDATE"
     self:advance()
+
+    -- Extract UPDATE table
+    local table_ref = self:parse_table_reference(known_ctes)
+    if table_ref then
+      table.insert(chunk.tables, table_ref)
+    end
   elseif self:is_keyword("DELETE") then
     chunk.statement_type = "DELETE"
     self:advance()
+
+    -- Extract DELETE FROM table
+    if self:is_keyword("FROM") then
+      self:advance()
+      local table_ref = self:parse_table_reference(known_ctes)
+      if table_ref then
+        table.insert(chunk.tables, table_ref)
+      end
+    end
   elseif self:is_keyword("EXEC") or self:is_keyword("EXECUTE") then
     chunk.statement_type = "EXEC"
     self:advance()
