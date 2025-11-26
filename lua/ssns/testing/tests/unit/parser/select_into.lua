@@ -329,7 +329,7 @@ return {
         expected = {
             chunks = {
                 {
-                    statement_type = "WITH",
+                    statement_type = "SELECT",  -- CTE queries still report as SELECT for completion
                     temp_table_name = "#TempData",
                     ctes = {
                         {
@@ -478,18 +478,25 @@ WHERE Active = 1]],
     },
 
     -- With UNION
+    -- Each SELECT in UNION is its own chunk for autocompletion scoping
+    -- SELECT INTO with UNION: the INTO must be in the first SELECT (SQL Server syntax)
     {
         id = 2576,
         type = "parser",
         name = "SELECT INTO from UNION",
-        input = "SELECT Id, Name FROM Employees UNION SELECT Id, Name FROM Contractors INTO #AllWorkers",
+        input = "SELECT Id, Name INTO #AllWorkers FROM Employees UNION SELECT Id, Name FROM Contractors",
         expected = {
             chunks = {
                 {
                     statement_type = "SELECT",
                     temp_table_name = "#AllWorkers",
                     tables = {
-                        { name = "Employees" },
+                        { name = "Employees" }
+                    }
+                },
+                {
+                    statement_type = "SELECT",
+                    tables = {
                         { name = "Contractors" }
                     }
                 }

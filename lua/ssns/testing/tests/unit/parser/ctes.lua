@@ -117,7 +117,7 @@ return {
         expected = {
             chunks = {
                 {
-                    statement_type = "WITH",
+                    statement_type = "SELECT",  -- CTE queries still report as SELECT for completion
                     ctes = {
                         {
                             name = "EmployeeCTE",
@@ -137,7 +137,7 @@ return {
         expected = {
             chunks = {
                 {
-                    statement_type = "WITH",
+                    statement_type = "SELECT",  -- CTE queries still report as SELECT for completion
                     ctes = {
                         {
                             name = "cte1",
@@ -186,7 +186,7 @@ return {
         expected = {
             chunks = {
                 {
-                    statement_type = "WITH",
+                    statement_type = "SELECT",  -- CTE queries still report as SELECT for completion
                     ctes = {
                         {
                             name = "OrgChart",
@@ -320,7 +320,7 @@ return {
         expected = {
             chunks = {
                 {
-                    statement_type = "WITH",
+                    statement_type = "SELECT",  -- CTE queries still report as SELECT for completion
                     ctes = {
                         {
                             name = "CTE",
@@ -669,7 +669,7 @@ JOIN Departments d ON ds.DeptId = d.Id]],
         expected = {
             chunks = {
                 {
-                    statement_type = "WITH",
+                    statement_type = "SELECT",  -- CTE queries still report as SELECT for completion
                     ctes = {
                         { name = "ActiveEmps", tables = {{ name = "Employees" }} },
                         {

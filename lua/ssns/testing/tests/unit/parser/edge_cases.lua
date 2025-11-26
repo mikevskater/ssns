@@ -528,6 +528,7 @@ return {
     },
 
     -- UNION statements
+    -- Each SELECT in a UNION is its own chunk for proper autocompletion scoping
     {
         id = 2632,
         type = "parser",
@@ -536,9 +537,14 @@ return {
         expected = {
             chunks = {
                 {
-                    statement_type = "UNION",
+                    statement_type = "SELECT",
                     tables = {
-                        { name = "Employees" },
+                        { name = "Employees" }
+                    }
+                },
+                {
+                    statement_type = "SELECT",
+                    tables = {
                         { name = "Contractors" }
                     }
                 }
@@ -553,9 +559,14 @@ return {
         expected = {
             chunks = {
                 {
-                    statement_type = "UNION",
+                    statement_type = "SELECT",
                     tables = {
-                        { name = "Employees" },
+                        { name = "Employees" }
+                    }
+                },
+                {
+                    statement_type = "SELECT",
+                    tables = {
                         { name = "Contractors" }
                     }
                 }
@@ -570,10 +581,20 @@ return {
         expected = {
             chunks = {
                 {
-                    statement_type = "UNION",
+                    statement_type = "SELECT",
                     tables = {
-                        { name = "T1" },
-                        { name = "T2" },
+                        { name = "T1" }
+                    }
+                },
+                {
+                    statement_type = "SELECT",
+                    tables = {
+                        { name = "T2" }
+                    }
+                },
+                {
+                    statement_type = "SELECT",
+                    tables = {
                         { name = "T3" }
                     }
                 }
@@ -590,9 +611,14 @@ return {
         expected = {
             chunks = {
                 {
-                    statement_type = "INTERSECT",
+                    statement_type = "SELECT",
                     tables = {
-                        { name = "Employees" },
+                        { name = "Employees" }
+                    }
+                },
+                {
+                    statement_type = "SELECT",
+                    tables = {
                         { name = "Contractors" }
                     }
                 }
@@ -607,9 +633,14 @@ return {
         expected = {
             chunks = {
                 {
-                    statement_type = "EXCEPT",
+                    statement_type = "SELECT",
                     tables = {
-                        { name = "Employees" },
+                        { name = "Employees" }
+                    }
+                },
+                {
+                    statement_type = "SELECT",
+                    tables = {
                         { name = "Contractors" }
                     }
                 }
@@ -879,7 +910,7 @@ ORDER BY e.Name
         expected = {
             chunks = {
                 {
-                    statement_type = "WITH",
+                    statement_type = "SELECT",  -- CTE queries still report as SELECT for completion
                     temp_table_name = "#EmployeeReport",
                     ctes = {
                         { name = "ActiveEmployees" },

@@ -17,8 +17,8 @@ return {
                     tables = {
                         { name = "Employees", alias = "e" }
                     }
-                }
-                -- Only checking first chunk - it should NOT have Departments
+                },
+                {}  -- Second chunk exists, but we only verify first chunk
             }
         }
     },
@@ -80,7 +80,8 @@ return {
                     tables = {
                         { name = "Employees" }
                     }
-                }
+                },
+                {}  -- Second chunk exists, but we only verify first chunk
             }
         }
     },
@@ -405,7 +406,7 @@ SELECT * FROM T5]],
         input = "WITH cte AS (SELECT * FROM Employees) SELECT * FROM cte\nSELECT * FROM Departments",
         expected = {
             chunks = {
-                { statement_type = "WITH" },  -- CTE statement
+                { statement_type = "SELECT" },  -- CTE queries report as SELECT
                 { statement_type = "SELECT", tables = {{ name = "Departments" }} }  -- Separate statement
             }
         }
