@@ -780,11 +780,10 @@ function ParserState:parse_statement(known_ctes, temp_tables)
     chunk.statement_type = "UPDATE"
     self:advance()
 
-    -- Extract UPDATE table
-    local table_ref = self:parse_table_reference(known_ctes)
-    if table_ref then
-      table.insert(chunk.tables, table_ref)
-    end
+    -- Extract UPDATE target (could be table in simple UPDATE, or alias in extended UPDATE with FROM)
+    -- We'll hold onto it temporarily and only add it if there's no FROM clause
+    local update_target = self:parse_table_reference(known_ctes)
+    chunk.update_target = update_target
   elseif self:is_keyword("DELETE") then
     chunk.statement_type = "DELETE"
     self:advance()
@@ -854,6 +853,16 @@ function ParserState:parse_statement(known_ctes, temp_tables)
       break
     end
 
+    -- Handle FROM clause in UPDATE statements (extended UPDATE syntax)
+    if paren_depth == 0 and upper_text == "FROM" and chunk.statement_type == "UPDATE" then
+      -- Extended UPDATE syntax: UPDATE alias SET ... FROM table alias
+      -- Parse FROM clause to get the actual tables
+      chunk.tables = self:parse_from_clause(known_ctes, paren_depth, chunk.subqueries)
+      -- Mark that we found a FROM clause so we don't add update_target later
+      chunk.has_from_clause = true
+      goto continue_loop
+    end
+
     if paren_depth == 0 and is_statement_starter(token.text) then
       -- SET is part of UPDATE syntax, not a new statement
       if upper_text == "SET" and chunk.statement_type == "UPDATE" then
@@ -910,6 +919,13 @@ function ParserState:parse_statement(known_ctes, temp_tables)
     else
       self:advance()
     end
+
+    ::continue_loop::
+  end
+
+  -- For UPDATE statements: if no FROM clause was found, the update_target is the actual table
+  if chunk.statement_type == "UPDATE" and chunk.update_target and not chunk.has_from_clause then
+    table.insert(chunk.tables, chunk.update_target)
   end
 
   -- Record end position using the last token that was part of this statement
