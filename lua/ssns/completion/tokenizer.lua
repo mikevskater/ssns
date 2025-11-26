@@ -43,6 +43,44 @@ local SQL_KEYWORDS = {
   END = true, DECLARE = true, SET = true, EXEC = true, EXECUTE = true,
   BEGIN = true, COMMIT = true, ROLLBACK = true, TRUNCATE = true,
   MERGE = true, VALUES = true, OUTPUT = true, RETURNS = true, RETURN = true,
+
+  -- APPLY (T-SQL)
+  APPLY = true,
+
+  -- Type conversion / NULL handling
+  CAST = true, COALESCE = true, NULLIF = true, CONVERT = true,
+
+  -- Pagination (PostgreSQL, MySQL, SQLite)
+  LIMIT = true, OFFSET = true, FETCH = true, NEXT = true, FIRST = true, ONLY = true,
+
+  -- Window functions
+  OVER = true, PARTITION = true, ROWS = true, RANGE = true, UNBOUNDED = true, PRECEDING = true, FOLLOWING = true, CURRENT = true, ROW = true,
+
+  -- T-SQL specific
+  PIVOT = true, UNPIVOT = true, OPENXML = true, OPENJSON = true,
+
+  -- PostgreSQL specific
+  RETURNING = true, LATERAL = true, ILIKE = true,
+
+  -- SQLite specific
+  PRAGMA = true, VACUUM = true, ATTACH = true, DETACH = true, GLOB = true,
+
+  -- Control flow
+  IF = true, WHILE = true, FOR = true, LOOP = true, CONTINUE = true, BREAK = true, GOTO = true,
+
+  -- Constraints
+  CONSTRAINT = true, PRIMARY = true, FOREIGN = true, KEY = true, REFERENCES = true, CHECK = true, UNIQUE = true, DEFAULT = true,
+
+  -- Other common
+  ASC = true, DESC = true, NULLS = true, LAST = true,
+  NATURAL = true, USING = true,
+  SOME = true, ESCAPE = true,
+  GRANT = true, REVOKE = true,
+  SCHEMA = true, DATABASE = true, USE = true,
+  TEMPORARY = true, TEMP = true,
+  CASCADE = true, RESTRICT = true,
+  NO = true, ACTION = true,
+  COLLATE = true,
 }
 
 -- Single-character operators (parser combines if needed)

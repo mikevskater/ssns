@@ -462,6 +462,56 @@ function ParserState:parse_from_clause(known_ctes, paren_depth, subqueries)
         self:advance()
       end
 
+      -- Handle APPLY (CROSS APPLY, OUTER APPLY) - T-SQL specific
+      -- APPLY takes a table-valued function or subquery, not a regular table
+      if self:is_keyword("APPLY") then
+        self:advance()  -- consume APPLY
+
+        -- Check for subquery: CROSS APPLY (SELECT ...)
+        if self:is_type("paren_open") then
+          self:advance()  -- consume (
+          if self:is_keyword("SELECT") then
+            -- Parse as subquery
+            local subquery = self:parse_subquery(known_ctes)
+            if subquery then
+              table.insert(subqueries, subquery)
+            end
+          else
+            -- Skip parenthesized function call: CROSS APPLY dbo.fn(...) or CROSS APPLY (VALUES...)
+            local paren_depth_apply = 1
+            while self:current() and paren_depth_apply > 0 do
+              if self:is_type("paren_open") then
+                paren_depth_apply = paren_depth_apply + 1
+              elseif self:is_type("paren_close") then
+                paren_depth_apply = paren_depth_apply - 1
+              end
+              self:advance()
+            end
+          end
+        else
+          -- Table-valued function without subquery: CROSS APPLY dbo.GetOrders(e.Id) AS o
+          -- Skip the function name
+          self:parse_qualified_identifier()
+          -- Skip function arguments if present
+          if self:is_type("paren_open") then
+            local paren_depth_apply = 1
+            self:advance()
+            while self:current() and paren_depth_apply > 0 do
+              if self:is_type("paren_open") then
+                paren_depth_apply = paren_depth_apply + 1
+              elseif self:is_type("paren_close") then
+                paren_depth_apply = paren_depth_apply - 1
+              end
+              self:advance()
+            end
+          end
+        end
+        -- Skip optional alias
+        self:parse_alias()
+        -- Don't add to tables - APPLY is handled, continue to next token
+        goto continue_from_loop
+      end
+
       -- Parse table reference
       local table_ref = self:parse_table_reference(known_ctes)
       if table_ref and not table_ref.is_cte then
@@ -476,6 +526,8 @@ function ParserState:parse_from_clause(known_ctes, paren_depth, subqueries)
           table.insert(tables, table_ref)
         end
       end
+
+      ::continue_from_loop::
     elseif token.type == "go" or (token.type == "identifier" and token.text:upper() == "GO") then
       -- GO batch separator - stop parsing FROM clause
       break
