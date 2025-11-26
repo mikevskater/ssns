@@ -462,6 +462,9 @@ function ParserState:parse_from_clause(known_ctes, paren_depth, subqueries)
     elseif paren_depth == 0 and is_statement_starter(token.text) then
       -- New statement starting
       break
+    elseif paren_depth == 0 and (token.text:upper() == "UNION" or token.text:upper() == "INTERSECT" or token.text:upper() == "EXCEPT") then
+      -- Set operations - stop parsing FROM clause, let caller handle
+      break
     else
       self:advance()
     end
@@ -804,14 +807,6 @@ function ParserState:parse_statement(known_ctes, temp_tables)
             end
             self:advance()
           end
-        end
-      -- UNION/INTERSECT/EXCEPT are part of the same SELECT statement
-      elseif upper_text == "UNION" or upper_text == "INTERSECT" or upper_text == "EXCEPT" then
-        -- Continue parsing as part of same statement
-        self:advance()
-        -- Skip optional ALL keyword after UNION
-        if self:is_keyword("ALL") then
-          self:advance()
         end
       else
         -- New statement starting
