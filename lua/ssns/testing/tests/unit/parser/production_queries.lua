@@ -364,6 +364,7 @@ END]],
             chunks = {
                 { statement_type = "DECLARE" },
                 { statement_type = "INSERT", tables = { { name = "ProcessLog" } } },
+                { statement_type = "SELECT", tables = { { name = "ProcessQueue" } } },
                 { statement_type = "SET" }
             }
         }

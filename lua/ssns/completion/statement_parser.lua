@@ -249,6 +249,39 @@ function ParserState:skip_until_keyword(keyword)
   end
 end
 
+---Consume tokens until we hit a statement terminator (for DECLARE/SET/OTHER statements)
+---@param paren_depth number? Current parenthesis depth (default 0)
+function ParserState:consume_until_statement_end(paren_depth)
+  paren_depth = paren_depth or 0
+  while self:current() do
+    local token = self:current()
+
+    -- Stop at GO batch separator
+    if token.type == "go" or (token.type == "identifier" and token.text:upper() == "GO") then
+      break
+    end
+
+    -- Stop at semicolon
+    if token.type == "semicolon" then
+      break
+    end
+
+    -- Track paren depth
+    if token.type == "paren_open" then
+      paren_depth = paren_depth + 1
+    elseif token.type == "paren_close" then
+      paren_depth = paren_depth - 1
+    end
+
+    -- Stop at new statement starter (only at paren_depth 0)
+    if paren_depth == 0 and is_statement_starter(token.text) then
+      break
+    end
+
+    self:advance()
+  end
+end
+
 ---Parse a parameter/variable (@name or @@system_var)
 ---@return ParameterInfo?
 function ParserState:parse_parameter()
@@ -1026,6 +1059,11 @@ function ParserState:parse_statement(known_ctes, temp_tables)
       self:advance()
     end
 
+    -- If INSERT...VALUES, reset in_insert flag (VALUES ends the INSERT, next SELECT is new statement)
+    if self:is_keyword("VALUES") then
+      in_insert = false
+    end
+
     -- If INSERT...SELECT, parse the SELECT
     if self:is_keyword("SELECT") then
       in_select = true
@@ -1158,12 +1196,15 @@ function ParserState:parse_statement(known_ctes, temp_tables)
   elseif self:is_keyword("DECLARE") then
     chunk.statement_type = "DECLARE"
     self:advance()
+    self:consume_until_statement_end()
   elseif self:is_keyword("SET") then
     chunk.statement_type = "SET"
     self:advance()
+    self:consume_until_statement_end()
   else
-    -- OTHER statement type
+    -- OTHER statement type (CREATE, ALTER, DROP, etc.)
     self:advance()
+    self:consume_until_statement_end()
   end
 
   -- Build alias mapping
