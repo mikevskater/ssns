@@ -288,6 +288,26 @@ function ParserState:parse_table_reference(known_ctes)
 
   local alias = self:parse_alias()
 
+  -- Handle table hints: WITH (NOLOCK, READPAST, etc.)
+  -- SQL Server allows hints between table name and alias
+  if not alias and self:is_keyword("WITH") then
+    self:advance()  -- consume WITH
+    if self:is_type("paren_open") then
+      local hint_depth = 1
+      self:advance()  -- consume (
+      while self:current() and hint_depth > 0 do
+        if self:is_type("paren_open") then
+          hint_depth = hint_depth + 1
+        elseif self:is_type("paren_close") then
+          hint_depth = hint_depth - 1
+        end
+        self:advance()
+      end
+    end
+    -- Try to parse alias after the hint
+    alias = self:parse_alias()
+  end
+
   return {
     server = qualified.server,
     database = qualified.database,
