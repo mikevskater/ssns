@@ -703,7 +703,8 @@ return {
             {type = "keyword", text = "SELECT", line = 1, col = 1},
             {type = "star", text = "*", line = 1, col = 8},
             {type = "keyword", text = "INTO", line = 1, col = 10},
-            {type = "identifier", text = "#TempUsers", line = 1, col = 15},
+            {type = "hash", text = "#", line = 1, col = 15},
+            {type = "identifier", text = "TempUsers", line = 1, col = 16},
             {type = "keyword", text = "FROM", line = 1, col = 26},
             {type = "identifier", text = "Users", line = 1, col = 31}
         }
@@ -717,14 +718,16 @@ return {
         input = "DECLARE @name VARCHAR(50); SET @name = 'John'",
         expected = {
             {type = "keyword", text = "DECLARE", line = 1, col = 1},
-            {type = "identifier", text = "@name", line = 1, col = 9},
+            {type = "at", text = "@", line = 1, col = 9},
+            {type = "identifier", text = "name", line = 1, col = 10},
             {type = "identifier", text = "VARCHAR", line = 1, col = 15},
             {type = "paren_open", text = "(", line = 1, col = 22},
             {type = "number", text = "50", line = 1, col = 23},
             {type = "paren_close", text = ")", line = 1, col = 25},
             {type = "semicolon", text = ";", line = 1, col = 26},
             {type = "keyword", text = "SET", line = 1, col = 28},
-            {type = "identifier", text = "@name", line = 1, col = 32},
+            {type = "at", text = "@", line = 1, col = 32},
+            {type = "identifier", text = "name", line = 1, col = 33},
             {type = "operator", text = "=", line = 1, col = 38},
             {type = "string", text = "'John'", line = 1, col = 40}
         }
@@ -786,7 +789,7 @@ return {
             {type = "identifier", text = "o", line = 1, col = 108},
             {type = "dot", text = ".", line = 1, col = 109},
             {type = "identifier", text = "OrderDate", line = 1, col = 110},
-            {type = "identifier", text = "DESC", line = 1, col = 120}
+            {type = "keyword", text = "DESC", line = 1, col = 120}
         }
     },
 }

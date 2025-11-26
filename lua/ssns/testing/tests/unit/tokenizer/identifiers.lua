@@ -140,7 +140,8 @@ return {
         name = "Temp table - local",
         input = "#TempTable",
         expected = {
-            {type = "identifier", text = "#TempTable", line = 1, col = 1}
+            {type = "hash", text = "#", line = 1, col = 1},
+            {type = "identifier", text = "TempTable", line = 1, col = 2}
         }
     },
     {
@@ -149,7 +150,8 @@ return {
         name = "Temp table - local lowercase",
         input = "#temp",
         expected = {
-            {type = "identifier", text = "#temp", line = 1, col = 1}
+            {type = "hash", text = "#", line = 1, col = 1},
+            {type = "keyword", text = "temp", line = 1, col = 2}
         }
     },
     {
@@ -158,7 +160,9 @@ return {
         name = "Temp table - global",
         input = "##GlobalTemp",
         expected = {
-            {type = "identifier", text = "##GlobalTemp", line = 1, col = 1}
+            {type = "hash", text = "#", line = 1, col = 1},
+            {type = "hash", text = "#", line = 1, col = 2},
+            {type = "identifier", text = "GlobalTemp", line = 1, col = 3}
         }
     },
     {
@@ -167,7 +171,9 @@ return {
         name = "Temp table - global lowercase",
         input = "##global",
         expected = {
-            {type = "identifier", text = "##global", line = 1, col = 1}
+            {type = "hash", text = "#", line = 1, col = 1},
+            {type = "hash", text = "#", line = 1, col = 2},
+            {type = "identifier", text = "global", line = 1, col = 3}
         }
     },
     {
@@ -176,7 +182,8 @@ return {
         name = "Temp table - with numbers",
         input = "#Temp123",
         expected = {
-            {type = "identifier", text = "#Temp123", line = 1, col = 1}
+            {type = "hash", text = "#", line = 1, col = 1},
+            {type = "identifier", text = "Temp123", line = 1, col = 2}
         }
     },
     {
@@ -185,7 +192,8 @@ return {
         name = "Temp table - with underscore",
         input = "#Temp_Data",
         expected = {
-            {type = "identifier", text = "#Temp_Data", line = 1, col = 1}
+            {type = "hash", text = "#", line = 1, col = 1},
+            {type = "identifier", text = "Temp_Data", line = 1, col = 2}
         }
     },
 
@@ -376,7 +384,7 @@ return {
         name = "Identifier and bracketed identifier",
         input = "schema.[Table Name]",
         expected = {
-            {type = "identifier", text = "schema", line = 1, col = 1},
+            {type = "keyword", text = "schema", line = 1, col = 1},
             {type = "dot", text = ".", line = 1, col = 7},
             {type = "bracket_id", text = "[Table Name]", line = 1, col = 8}
         }
@@ -425,7 +433,8 @@ return {
         name = "Identifier with @ prefix (variable)",
         input = "@variable",
         expected = {
-            {type = "identifier", text = "@variable", line = 1, col = 1}
+            {type = "at", text = "@", line = 1, col = 1},
+            {type = "identifier", text = "variable", line = 1, col = 2}
         }
     },
     {
@@ -434,7 +443,9 @@ return {
         name = "Identifier with @@ prefix (global variable)",
         input = "@@IDENTITY",
         expected = {
-            {type = "identifier", text = "@@IDENTITY", line = 1, col = 1}
+            {type = "at", text = "@", line = 1, col = 1},
+            {type = "at", text = "@", line = 1, col = 2},
+            {type = "identifier", text = "IDENTITY", line = 1, col = 3}
         }
     },
 

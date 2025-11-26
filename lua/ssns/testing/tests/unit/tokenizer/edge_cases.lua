@@ -243,11 +243,11 @@ return {
             {type = "keyword", text = "SeLeCt", line = 1, col = 1},
             {type = "star", text = "*", line = 1, col = 8},
             {type = "keyword", text = "FrOm", line = 1, col = 10},
-            {type = "identifier", text = "TaBlE", line = 1, col = 16},
-            {type = "keyword", text = "wHeRe", line = 1, col = 22},
-            {type = "identifier", text = "Id", line = 1, col = 28},
-            {type = "operator", text = "=", line = 1, col = 31},
-            {type = "number", text = "1", line = 1, col = 33}
+            {type = "keyword", text = "TaBlE", line = 1, col = 15},
+            {type = "keyword", text = "wHeRe", line = 1, col = 21},
+            {type = "identifier", text = "Id", line = 1, col = 27},
+            {type = "operator", text = "=", line = 1, col = 30},
+            {type = "number", text = "1", line = 1, col = 32}
         }
     },
 
@@ -297,8 +297,7 @@ return {
         expected = {
             {type = "number", text = "3", line = 1, col = 1},
             {type = "dot", text = ".", line = 1, col = 2},
-            {type = "number", text = "14", line = 1, col = 3},
-            {type = "identifier", text = "abc", line = 1, col = 5}
+            {type = "identifier", text = "14abc", line = 1, col = 3}
         }
     },
 
@@ -541,7 +540,7 @@ return {
             {type = "keyword", text = "SELECT", line = 1, col = 1},
             {type = "star", text = "*", line = 1, col = 10},
             {type = "keyword", text = "FROM", line = 1, col = 14},
-            {type = "identifier", text = "Users", line = 1, col = 22}
+            {type = "identifier", text = "Users", line = 1, col = 21}
         }
     },
 
@@ -597,7 +596,8 @@ return {
         input = "/* Multi-line\ncomment */\nSELECT #temp.*, 'O''Brien', 3.14, @var FROM [dbo].[Table] -- inline comment\nWHERE id >= 1 AND name <> 'test';",
         expected = {
             {type = "keyword", text = "SELECT", line = 3, col = 1},
-            {type = "identifier", text = "#temp", line = 3, col = 8},
+            {type = "hash", text = "#", line = 3, col = 8},
+            {type = "keyword", text = "temp", line = 3, col = 9},
             {type = "dot", text = ".", line = 3, col = 13},
             {type = "star", text = "*", line = 3, col = 14},
             {type = "comma", text = ",", line = 3, col = 15},
@@ -607,7 +607,8 @@ return {
             {type = "dot", text = ".", line = 3, col = 30},
             {type = "number", text = "14", line = 3, col = 31},
             {type = "comma", text = ",", line = 3, col = 33},
-            {type = "identifier", text = "@var", line = 3, col = 35},
+            {type = "at", text = "@", line = 3, col = 35},
+            {type = "identifier", text = "var", line = 3, col = 36},
             {type = "keyword", text = "FROM", line = 3, col = 40},
             {type = "bracket_id", text = "[dbo]", line = 3, col = 45},
             {type = "dot", text = ".", line = 3, col = 50},

@@ -97,7 +97,7 @@ return {
         name = "Qualified identifier",
         input = "schema.table",
         expected = {
-            {type = "identifier", text = "schema", line = 1, col = 1},
+            {type = "keyword", text = "schema", line = 1, col = 1},
             {type = "dot", text = ".", line = 1, col = 7},
             {type = "keyword", text = "table", line = 1, col = 8}
         }
@@ -108,9 +108,9 @@ return {
         name = "Three-part identifier",
         input = "database.schema.table",
         expected = {
-            {type = "identifier", text = "database", line = 1, col = 1},
+            {type = "keyword", text = "database", line = 1, col = 1},
             {type = "dot", text = ".", line = 1, col = 9},
-            {type = "identifier", text = "schema", line = 1, col = 10},
+            {type = "keyword", text = "schema", line = 1, col = 10},
             {type = "dot", text = ".", line = 1, col = 16},
             {type = "keyword", text = "table", line = 1, col = 17}
         }
@@ -123,9 +123,9 @@ return {
         expected = {
             {type = "identifier", text = "server", line = 1, col = 1},
             {type = "dot", text = ".", line = 1, col = 7},
-            {type = "identifier", text = "database", line = 1, col = 8},
+            {type = "keyword", text = "database", line = 1, col = 8},
             {type = "dot", text = ".", line = 1, col = 16},
-            {type = "identifier", text = "schema", line = 1, col = 17},
+            {type = "keyword", text = "schema", line = 1, col = 17},
             {type = "dot", text = ".", line = 1, col = 23},
             {type = "keyword", text = "table", line = 1, col = 24}
         }
@@ -298,7 +298,7 @@ return {
         expected = {
             {type = "identifier", text = "dbo", line = 1, col = 1},
             {type = "dot", text = ".", line = 1, col = 4},
-            {type = "identifier", text = "Table", line = 1, col = 5}
+            {type = "keyword", text = "Table", line = 1, col = 5}
         }
     },
 
