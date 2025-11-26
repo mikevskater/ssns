@@ -464,7 +464,7 @@ function ParserState:parse_from_clause(known_ctes, paren_depth, subqueries)
 
       -- Parse table reference
       local table_ref = self:parse_table_reference(known_ctes)
-      if table_ref then
+      if table_ref and not table_ref.is_cte then
         table.insert(tables, table_ref)
       end
 
@@ -472,7 +472,7 @@ function ParserState:parse_from_clause(known_ctes, paren_depth, subqueries)
       while self:is_type("comma") do
         self:advance()
         table_ref = self:parse_table_reference(known_ctes)
-        if table_ref then
+        if table_ref and not table_ref.is_cte then
           table.insert(tables, table_ref)
         end
       end
