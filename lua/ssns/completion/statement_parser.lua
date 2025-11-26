@@ -596,7 +596,7 @@ function ParserState:parse_with_clause()
       if subquery then
         -- Only use subquery columns if we don't have explicit column list
         if #column_list == 0 then
-        cte.columns = subquery.columns
+          cte.columns = subquery.columns
         end
         cte.tables = subquery.tables
         cte.subqueries = subquery.subqueries
@@ -780,6 +780,24 @@ function ParserState:parse_statement(known_ctes, temp_tables)
   elseif self:is_keyword("EXEC") or self:is_keyword("EXECUTE") then
     chunk.statement_type = "EXEC"
     self:advance()
+  elseif self:is_keyword("TRUNCATE") then
+    chunk.statement_type = "TRUNCATE"
+    self:advance()
+    -- Skip TABLE keyword
+    if self:is_keyword("TABLE") then
+      self:advance()
+    end
+    -- Extract table name
+    local table_ref = self:parse_table_reference(known_ctes)
+    if table_ref then
+      table.insert(chunk.tables, table_ref)
+    end
+  elseif self:is_keyword("DECLARE") then
+    chunk.statement_type = "DECLARE"
+    self:advance()
+  elseif self:is_keyword("SET") then
+    chunk.statement_type = "SET"
+    self:advance()
   else
     -- OTHER statement type
     self:advance()
@@ -807,6 +825,15 @@ function ParserState:parse_statement(known_ctes, temp_tables)
 
     -- Check for new statement starting
     local upper_text = token.text:upper()
+
+    -- UNION/INTERSECT/EXCEPT end the current SELECT statement
+    -- Each SELECT in a UNION should be its own chunk for proper autocompletion scoping
+    -- (you don't want tables from other UNIONed SELECTs polluting your completion context)
+    if paren_depth == 0 and (upper_text == "UNION" or upper_text == "INTERSECT" or upper_text == "EXCEPT") then
+      -- End this chunk - the SELECT after UNION will be parsed as a new statement
+      break
+    end
+
     if paren_depth == 0 and is_statement_starter(token.text) then
       -- SET is part of UPDATE syntax, not a new statement
       if upper_text == "SET" and chunk.statement_type == "UPDATE" then
