@@ -121,7 +121,7 @@ end
 ---@class ParserState
 ---@field tokens table[] Token array
 ---@field pos number Current token position (1-indexed)
----@field go_batch_index number Current GO batch (1-indexed)
+---@field go_batch_index number Current GO batch (0-indexed)
 local ParserState = {}
 ParserState.__index = ParserState
 
@@ -132,7 +132,7 @@ function ParserState.new(tokens)
   return setmetatable({
     tokens = tokens,
     pos = 1,
-    go_batch_index = 1,
+    go_batch_index = 0,  -- 0-indexed: first batch is 0, incremented after GO
   }, ParserState)
 end
 
@@ -436,6 +436,15 @@ function ParserState:parse_from_clause(known_ctes, paren_depth, subqueries)
       local table_ref = self:parse_table_reference(known_ctes)
       if table_ref then
         table.insert(tables, table_ref)
+      end
+
+      -- Handle comma-separated tables (FROM A, B, C)
+      while self:is_type("comma") do
+        self:advance()
+        table_ref = self:parse_table_reference(known_ctes)
+        if table_ref then
+          table.insert(tables, table_ref)
+        end
       end
     elseif paren_depth == 0 and is_statement_starter(token.text) then
       -- New statement starting
@@ -849,8 +858,8 @@ function StatementParser.parse(text)
   while state:current() do
     local token = state:current()
 
-    -- Handle GO batch separator
-    if token.type == "go" then
+    -- Handle GO batch separator (can be "go" type or identifier "GO")
+    if token.type == "go" or (token.type == "identifier" and token.text:upper() == "GO") then
       state.go_batch_index = state.go_batch_index + 1
       known_ctes = {} -- Reset CTEs after GO
       state:advance()
