@@ -697,7 +697,7 @@ SELECT * FROM HighValueCustomers]],
         expected = {
             chunks = {
                 {
-                    statement_type = "SELECT",
+                    statement_type = "WITH",
                     ctes = {
                         { name = "Customers2024", tables = { { name = "Customers" } } },
                         { name = "CustomerOrders", tables = { { name = "Orders", alias = "o" } } },
@@ -2246,7 +2246,7 @@ ORDER BY ct.Tier, mo.MonthlyTotal DESC]],
         expected = {
             chunks = {
                 {
-                    statement_type = "SELECT",
+                    statement_type = "WITH",
                     ctes = {
                         { name = "MonthlyOrders", tables = { { name = "Orders" } } },
                         { name = "CustomerTiers" }
