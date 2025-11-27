@@ -6,7 +6,7 @@ local ExpandAsterisk = {}
 
 local Resolver = require('ssns.completion.metadata.resolver')
 local ScopeTracker = require('ssns.completion.metadata.scope_tracker')
-local Context = require('ssns.completion.context')
+local Context = require('ssns.completion.statement_context')
 local Debug = require('ssns.debug')
 
 -- Helper: Conditional debug logging based on config

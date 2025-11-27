@@ -353,7 +353,7 @@ function TempTableTracker._resolve_column_source(column_ref, bufnr)
   -- Try to use Resolver to resolve the column
   local success, result = pcall(function()
     local Resolver = require('ssns.completion.metadata.resolver')
-    local Context = require('ssns.completion.context')
+    local Context = require('ssns.completion.statement_context')
 
     -- Get connection for buffer
     local Source = require('ssns.completion.source')

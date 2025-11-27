@@ -35,7 +35,7 @@ end
 function JoinsProvider._get_completions_impl(ctx)
   local Utils = require('ssns.completion.utils')
   local Resolver = require('ssns.completion.metadata.resolver')
-  local Context = require('ssns.completion.context')
+  local Context = require('ssns.completion.statement_context')
 
   -- Get connection information from context
   local connection_info = ctx.connection

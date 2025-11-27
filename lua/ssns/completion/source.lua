@@ -415,7 +415,7 @@ function Source:get_completions(ctx, callback)
   end
 
   -- Route to appropriate provider based on context type
-  local Context = require('ssns.completion.context')
+  local Context = require('ssns.completion.statement_context')
 
   Debug.log(string.format("[COMPLETION] Routing to provider for context type: %s (mode: %s)",
     context_result.type,
@@ -501,7 +501,7 @@ end
 ---@param ctx table blink.cmp context
 ---@return table? context SQL context or nil if disabled
 function Source:detect_context(ctx)
-  local Context = require('ssns.completion.context')
+  local Context = require('ssns.completion.statement_context')
 
   -- Use full context detection with comment/string checks
   local success, context = pcall(function()
