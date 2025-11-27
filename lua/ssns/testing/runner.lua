@@ -57,41 +57,32 @@ local function setup_test_connection(test_data, database_type)
   }, nil
 end
 
---- Run a single test file
---- @param test_file_path string Absolute path to test file
+--- Run a single test (not a file - a single test case)
+--- @param test_data table Single test data with number, query, cursor, expected
 --- @param opts table? Optional configuration { timeout_ms: number, database_type: string }
 --- @return table result Test result object
-function M.run_single_test(test_file_path, opts)
+function M._run_single_test_case(test_data, opts)
   opts = opts or {}
   local timeout_ms = opts.timeout_ms or 5000 -- 5 second default timeout
 
   local result = {
-    path = test_file_path,
-    test_number = nil,
-    description = nil,
-    database = nil,
-    expected_type = nil,
+    path = opts.file_path or "unknown",
+    test_number = test_data.number,
+    description = test_data.description,
+    database = test_data.database,
+    expected_type = test_data.expected.type,
     passed = false,
     error = nil,
     comparison = nil,
     duration_ms = 0,
   }
 
-  -- Load test data
-  local test_data, load_err = utils.load_test_file(test_file_path)
-  if not test_data then
-    result.error = string.format("Failed to load test: %s", load_err)
-    return result
-  end
-
-  -- Set basic info from test data
-  result.test_number = test_data.number
-  result.description = test_data.description
-  result.database = test_data.database
-  result.expected_type = test_data.expected.type
-
   -- Extract database_type from path (e.g., tests/sqlserver/01_category/test.lua -> sqlserver)
-  local database_type = opts.database_type or test_file_path:match("/tests/([^/]+)/")
+  -- Also handle integration subfolder: tests/integration/sqlserver/...
+  local database_type = opts.database_type
+  if not database_type and opts.file_path then
+    database_type = opts.file_path:match("/integration/([^/]+)/") or opts.file_path:match("/tests/([^/]+)/")
+  end
 
   -- Start timer
   local start_time = vim.loop.hrtime()
@@ -124,7 +115,6 @@ function M.run_single_test(test_file_path, opts)
 
   -- Capture completion items
   local completion_items = nil
-  local completion_error = nil
   local completion_done = false
 
   -- Call get_completions with callback
@@ -175,6 +165,42 @@ function M.run_single_test(test_file_path, opts)
   pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
 
   return result
+end
+
+--- Run a single test file (may contain one or many tests)
+--- @param test_file_path string Absolute path to test file
+--- @param opts table? Optional configuration { timeout_ms: number, database_type: string }
+--- @return table result Test result object (single test) or array of results (multi-test file)
+function M.run_single_test(test_file_path, opts)
+  opts = opts or {}
+
+  -- Load test data (may be single test or array)
+  local test_data, load_err = utils.load_test_file(test_file_path)
+  if not test_data then
+    return {
+      path = test_file_path,
+      passed = false,
+      error = string.format("Failed to load test: %s", load_err),
+    }
+  end
+
+  -- Check if this is an array of tests
+  if test_data[1] ~= nil and type(test_data[1]) == "table" then
+    -- Multi-test file - run each test
+    local results = {}
+    for _, single_test in ipairs(test_data) do
+      local result = M._run_single_test_case(single_test, vim.tbl_extend("force", opts, {
+        file_path = test_file_path,
+      }))
+      table.insert(results, result)
+    end
+    return results
+  else
+    -- Single test file
+    return M._run_single_test_case(test_data, vim.tbl_extend("force", opts, {
+      file_path = test_file_path,
+    }))
+  end
 end
 
 --- Ensure connection to database is established
