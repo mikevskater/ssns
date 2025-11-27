@@ -243,7 +243,15 @@ function StatementCache.get_context_at_position(bufnr, line, col)
           name = sq.alias,
           alias = sq.alias,
           is_subquery = true,
+          columns = sq.columns,  -- Include columns for asterisk expansion
         }
+        -- Add to tables array like CTEs for consistent handling
+        table.insert(tables, {
+          name = sq.alias,
+          alias = sq.alias,
+          is_subquery = true,
+          columns = sq.columns,
+        })
       end
     end
   else
@@ -257,7 +265,15 @@ function StatementCache.get_context_at_position(bufnr, line, col)
           name = sq.alias,
           alias = sq.alias,
           is_subquery = true,
+          columns = sq.columns,  -- Include columns for asterisk expansion
         }
+        -- Add to tables array like CTEs for consistent handling
+        table.insert(tables, {
+          name = sq.alias,
+          alias = sq.alias,
+          is_subquery = true,
+          columns = sq.columns,
+        })
       end
     end
   end

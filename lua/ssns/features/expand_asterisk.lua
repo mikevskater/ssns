@@ -5,8 +5,7 @@
 local ExpandAsterisk = {}
 
 local Resolver = require('ssns.completion.metadata.resolver')
-local ScopeTracker = require('ssns.completion.metadata.scope_tracker')
-local Context = require('ssns.completion.statement_context')
+local StatementCache = require('ssns.completion.statement_cache')
 local Debug = require('ssns.debug')
 
 -- Helper: Conditional debug logging based on config
@@ -132,50 +131,47 @@ function ExpandAsterisk.detect_asterisk_at_cursor(line, col)
 end
 
 ---Extract all tables referenced in a SELECT statement at the cursor position
----@param query_text string Full query text
----@param scope_tree table Scope tree from ScopeTracker
+---@param bufnr number Buffer number
 ---@param cursor_pos table {row, col} Cursor position (1-indexed row, 0-indexed col)
----@return table[] tables Array of {alias: string?, table_name: string, order: number}
-function ExpandAsterisk.get_tables_in_select(query_text, scope_tree, cursor_pos)
+---@return table[] tables Array of {alias: string?, table_name: string, schema: string?, is_cte: boolean?, is_temp: boolean?, order: number}
+---@return table? context The StatementCache context
+function ExpandAsterisk.get_tables_in_select(bufnr, cursor_pos)
   debug_log(string.format("get_tables_in_select: cursor at {%d,%d}", cursor_pos[1], cursor_pos[2]))
 
-  -- Get scope at cursor position
-  local scope = ScopeTracker.get_scope_at_cursor(scope_tree, cursor_pos)
-  if not scope then
-    debug_log("No scope found at cursor")
-    return {}
+  local context = StatementCache.get_context_at_position(bufnr, cursor_pos[1], cursor_pos[2])
+  if not context then
+    debug_log("No context found at cursor position")
+    return {}, nil
   end
 
-  debug_log(string.format("Found scope: type=%s", scope.type))
-  debug_log(string.format("Scope aliases: %s", vim.inspect(scope.aliases)))
+  if not context.tables or #context.tables == 0 then
+    debug_log("No tables found in context")
+    return {}, context
+  end
 
-  -- Collect all aliases from this scope and parent scopes
-  local available_aliases = ScopeTracker.get_available_aliases(scope_tree, cursor_pos)
+  debug_log(string.format("Found %d tables in context", #context.tables))
 
-  debug_log(string.format("Available aliases: %s", vim.inspect(available_aliases)))
-
-  -- Convert aliases to table array with order preservation
+  -- Convert TableReference objects to expected format
+  -- Tables are already in FROM/JOIN order from the parser
   local tables = {}
-  local order = 1
-
-  -- Use scope.aliases directly to preserve order from the query
-  -- (ScopeTracker preserves insertion order from FROM/JOIN parsing)
-  for alias, table_name in pairs(available_aliases) do
+  for i, table_ref in ipairs(context.tables) do
     table.insert(tables, {
-      alias = alias,
-      table_name = table_name,
-      order = order,
+      alias = table_ref.alias,
+      table_name = table_ref.name,
+      schema = table_ref.schema,
+      database = table_ref.database,
+      is_cte = table_ref.is_cte,
+      is_temp = table_ref.is_temp or table_ref.is_table_variable,
+      is_subquery = table_ref.is_subquery,
+      subquery_columns = table_ref.columns,  -- Columns for CTEs, subqueries, and temp tables
+      order = i,
     })
-    order = order + 1
+    debug_log(string.format("  Table %d: %s (alias: %s, is_cte: %s, is_temp: %s, is_subquery: %s)",
+      i, table_ref.name, table_ref.alias or "none",
+      tostring(table_ref.is_cte), tostring(table_ref.is_temp), tostring(table_ref.is_subquery)))
   end
 
-  -- Sort by order (should already be in order, but ensure it)
-  table.sort(tables, function(a, b)
-    return a.order < b.order
-  end)
-
-  debug_log(string.format("Extracted %d tables from SELECT", #tables))
-  return tables
+  return tables, context
 end
 
 ---Format column list into comma-separated string with table prefixes
@@ -211,9 +207,8 @@ end
 ---@param connection table Connection context {server: ServerClass, database: DbClass, connection_string: string}
 ---@param cursor_pos table {row, col} Cursor position (1-indexed row, 0-indexed col)
 ---@param query_text string? Optional query text (defaults to buffer content)
----@param scope_tree table? Optional scope tree (will be built if not provided)
----@return table result {success: boolean, columns: table[]?, replacement_text: string?, error: string?}
-function ExpandAsterisk.expand_asterisk_in_context(bufnr, connection, cursor_pos, query_text, scope_tree)
+---@return table result {success: boolean, columns: table[]?, replacement_text: string?, start_col: number?, end_col: number?, error: string?}
+function ExpandAsterisk.expand_asterisk_in_context(bufnr, connection, cursor_pos, query_text)
   debug_log(string.format("expand_asterisk_in_context: bufnr=%d, cursor={%d,%d}",
     bufnr, cursor_pos[1], cursor_pos[2]))
 
@@ -230,34 +225,6 @@ function ExpandAsterisk.expand_asterisk_in_context(bufnr, connection, cursor_pos
       success = false,
       error = "No database connection available"
     }
-  end
-
-  if not connection.database then
-    return {
-      success = false,
-      error = "No database selected"
-    }
-  end
-
-  -- Get query text if not provided
-  if not query_text then
-    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-    query_text = table.concat(lines, "\n")
-  end
-
-  -- Build scope tree if not provided
-  if not scope_tree then
-    local success, tree = pcall(function()
-      return ScopeTracker.build_scope_tree(query_text, bufnr, connection)
-    end)
-
-    if not success or not tree then
-      return {
-        success = false,
-        error = "Failed to parse query structure"
-      }
-    end
-    scope_tree = tree
   end
 
   -- Get current line for asterisk detection
@@ -293,6 +260,15 @@ function ExpandAsterisk.expand_asterisk_in_context(bufnr, connection, cursor_pos
     }
   end
 
+  -- Get context from StatementCache
+  local context = StatementCache.get_context_at_position(bufnr, cursor_pos[1], cursor_pos[2])
+  if not context then
+    return {
+      success = false,
+      error = "Could not parse query context"
+    }
+  end
+
   -- Determine which table(s) to expand
   local tables_to_expand = {}
 
@@ -300,37 +276,60 @@ function ExpandAsterisk.expand_asterisk_in_context(bufnr, connection, cursor_pos
     -- Qualified asterisk: alias.* or schema.table.*
     debug_log(string.format("Expanding qualified asterisk: %s.*", asterisk_info.table_prefix))
 
-    -- Resolve the prefix (could be alias, table name, or schema.table)
-    local resolved_table = nil
-    local success, result = pcall(function()
-      return Resolver.resolve_table(
-        asterisk_info.table_prefix,
-        connection,
-        bufnr,
-        cursor_pos
-      )
-    end)
+    local prefix_lower = asterisk_info.table_prefix:lower()
+    local table_ref = nil
 
-    if success and result then
-      resolved_table = result
+    -- Check aliases first (most common case)
+    if context.aliases and context.aliases[prefix_lower] then
+      table_ref = context.aliases[prefix_lower]
+      debug_log(string.format("Found alias '%s' -> table '%s'", asterisk_info.table_prefix, table_ref.name or table_ref))
     else
+      -- Check direct table name match
+      if context.tables then
+        for _, tbl in ipairs(context.tables) do
+          if tbl.name and tbl.name:lower() == prefix_lower then
+            table_ref = tbl
+            break
+          end
+          -- Also check if prefix matches alias
+          if tbl.alias and tbl.alias:lower() == prefix_lower then
+            table_ref = tbl
+            break
+          end
+        end
+      end
+    end
+
+    if not table_ref then
       return {
         success = false,
-        error = string.format("Table not found: %s", asterisk_info.table_prefix)
+        error = string.format("Table or alias not found: %s", asterisk_info.table_prefix)
       }
     end
 
+    -- Handle the case where aliases stores just the table name string
+    local tbl_name = type(table_ref) == "string" and table_ref or table_ref.name
+    local tbl_schema = type(table_ref) == "table" and table_ref.schema or nil
+    local is_cte = type(table_ref) == "table" and table_ref.is_cte or false
+    local is_temp = type(table_ref) == "table" and (table_ref.is_temp or table_ref.is_table_variable) or false
+    local is_subquery = type(table_ref) == "table" and table_ref.is_subquery or false
+    local subquery_columns = type(table_ref) == "table" and table_ref.columns or nil
+
     tables_to_expand = {{
       alias = asterisk_info.table_prefix,
-      table_name = asterisk_info.table_prefix,
-      table_obj = resolved_table,
+      table_name = tbl_name,
+      schema = tbl_schema,
+      is_cte = is_cte,
+      is_temp = is_temp,
+      is_subquery = is_subquery,
+      subquery_columns = subquery_columns,
       order = 1,
     }}
   else
     -- Bare asterisk: expand all tables in SELECT
     debug_log("Expanding bare asterisk (all tables in SELECT)")
 
-    local table_refs = ExpandAsterisk.get_tables_in_select(query_text, scope_tree, cursor_pos)
+    local table_refs, _ = ExpandAsterisk.get_tables_in_select(bufnr, cursor_pos)
 
     if #table_refs == 0 then
       return {
@@ -339,86 +338,158 @@ function ExpandAsterisk.expand_asterisk_in_context(bufnr, connection, cursor_pos
       }
     end
 
-    -- Resolve each table reference
-    for _, ref in ipairs(table_refs) do
-      local success, table_obj = pcall(function()
-        return Resolver.resolve_table(ref.table_name, connection, bufnr, cursor_pos)
-      end)
-
-      if success and table_obj then
-        table.insert(tables_to_expand, {
-          alias = ref.alias,
-          table_name = ref.table_name,
-          table_obj = table_obj,
-          order = ref.order,
-        })
-      else
-        debug_log(string.format("Warning: Could not resolve table %s", ref.table_name))
-      end
-    end
-
-    if #tables_to_expand == 0 then
-      return {
-        success = false,
-        error = "Could not resolve any tables in query"
-      }
-    end
+    tables_to_expand = table_refs
   end
 
   -- Get columns for each table
   local all_columns = {}
 
   for _, tbl in ipairs(tables_to_expand) do
-    debug_log(string.format("Getting columns for table: %s (alias: %s)",
-      tbl.table_name, tbl.alias or "none"))
+    debug_log(string.format("Getting columns for table: %s (alias: %s, is_cte: %s, is_temp: %s, is_subquery: %s)",
+      tbl.table_name, tbl.alias or "none", tostring(tbl.is_cte), tostring(tbl.is_temp), tostring(tbl.is_subquery)))
 
-    local success, columns = pcall(function()
-      return Resolver.get_columns(tbl.table_obj, connection)
-    end)
+    local columns = nil
 
-    if not success or not columns or #columns == 0 then
-      return {
-        success = false,
-        error = string.format("No columns found for table: %s", tbl.table_name)
-      }
+    -- Try CTE columns first
+    if tbl.is_cte and context.ctes then
+      local cte = context.ctes[tbl.table_name] or context.ctes[tbl.table_name:lower()]
+      if cte and cte.columns and #cte.columns > 0 then
+        debug_log(string.format("Using CTE columns for %s: %d columns", tbl.table_name, #cte.columns))
+        columns = {}
+        for i, col in ipairs(cte.columns) do
+          table.insert(columns, {
+            name = col.name or col.alias or ("col" .. i),
+            ordinal_position = i,
+          })
+        end
+      end
     end
 
-    debug_log(string.format("Found %d columns for %s", #columns, tbl.table_name))
+    -- Try temp table columns
+    if not columns and tbl.is_temp and context.temp_tables then
+      local temp = context.temp_tables[tbl.table_name] or context.temp_tables[tbl.table_name:lower()]
+      if temp and temp.columns and #temp.columns > 0 then
+        debug_log(string.format("Using temp table columns for %s: %d columns", tbl.table_name, #temp.columns))
+        columns = {}
+        for i, col in ipairs(temp.columns) do
+          table.insert(columns, {
+            name = col.name or ("col" .. i),
+            ordinal_position = i,
+          })
+        end
+      end
+    end
 
-    -- Sort columns by ordinal_position
-    table.sort(columns, function(a, b)
-      local a_pos = a.ordinal_position or 999999
-      local b_pos = b.ordinal_position or 999999
-      return a_pos < b_pos
-    end)
+    -- Try subquery columns (from parsed SELECT list)
+    if not columns and tbl.is_subquery then
+      -- Check if columns were passed directly from the table reference
+      local subquery_cols = tbl.subquery_columns
+      -- Also check in context.aliases for the subquery
+      if not subquery_cols and context.aliases then
+        local alias_entry = context.aliases[tbl.table_name] or context.aliases[tbl.table_name:lower()]
+        if alias_entry and alias_entry.is_subquery and alias_entry.columns then
+          subquery_cols = alias_entry.columns
+        end
+      end
+      if subquery_cols and #subquery_cols > 0 then
+        debug_log(string.format("Using subquery columns for %s: %d columns", tbl.table_name, #subquery_cols))
+        columns = {}
+        for i, col in ipairs(subquery_cols) do
+          table.insert(columns, {
+            name = col.name or col.alias or ("col" .. i),
+            ordinal_position = i,
+          })
+        end
+      end
+    end
 
-    -- Add columns with table alias/name prefix
-    for _, col in ipairs(columns) do
-      table.insert(all_columns, {
-        name = col.name or col.column_name,
-        table_alias = tbl.alias,
-        table_name = tbl.table_name,
-        ordinal_position = col.ordinal_position,
-      })
+    -- Fall back to database resolution
+    if not columns then
+      local resolved_table = nil
+      local success, result = pcall(function()
+        -- Build a reference object for the resolver
+        local ref = {
+          name = tbl.table_name,
+          schema = tbl.schema,
+          database = tbl.database,
+        }
+        return Resolver.resolve_table(ref, connection, context)
+      end)
+
+      if success and result then
+        resolved_table = result
+        local col_success, col_result = pcall(function()
+          return Resolver.get_columns(resolved_table, connection)
+        end)
+
+        if col_success and col_result and #col_result > 0 then
+          columns = col_result
+          debug_log(string.format("Resolved %d columns from database for %s", #columns, tbl.table_name))
+        end
+      end
+
+      if not columns then
+        debug_log(string.format("Warning: Could not resolve columns for table %s", tbl.table_name))
+        -- Continue with other tables instead of failing completely
+      end
+    end
+
+    if columns and #columns > 0 then
+      -- Sort columns by ordinal_position
+      table.sort(columns, function(a, b)
+        local a_pos = a.ordinal_position or 999999
+        local b_pos = b.ordinal_position or 999999
+        return a_pos < b_pos
+      end)
+
+      -- Determine prefix: use alias if available, otherwise table name
+      local prefix = tbl.alias or tbl.table_name
+
+      -- Add columns with table alias/name prefix
+      for _, col in ipairs(columns) do
+        table.insert(all_columns, {
+          name = col.name or col.column_name,
+          table_alias = prefix,
+          table_name = tbl.table_name,
+          ordinal_position = col.ordinal_position,
+        })
+      end
     end
   end
 
   if #all_columns == 0 then
     return {
       success = false,
-      error = "No columns found"
+      error = "No columns found for any table"
     }
   end
 
   -- Format replacement text (always include table prefix per requirements)
   local replacement_text = ExpandAsterisk.format_column_list(all_columns, true)
 
-  debug_log(string.format("Expansion successful: %d columns", #all_columns))
+  -- Calculate replacement range for buffer update
+  local asterisk_col = asterisk_info.asterisk_col
+  local table_prefix = asterisk_info.table_prefix
+  local start_col, end_col
+
+  if table_prefix then
+    -- Replace "table.*" or "alias.*"
+    start_col = asterisk_col - #table_prefix  -- Include the table name and dot
+    end_col = asterisk_col + 1  -- Include the asterisk
+  else
+    -- Replace just "*"
+    start_col = asterisk_col
+    end_col = asterisk_col + 1
+  end
+
+  debug_log(string.format("Expansion successful: %d columns, replacing cols %d-%d", #all_columns, start_col, end_col))
 
   return {
     success = true,
     columns = all_columns,
     replacement_text = replacement_text,
+    start_col = start_col,
+    end_col = end_col,
   }
 end
 
@@ -478,10 +549,6 @@ function ExpandAsterisk.expand_asterisk_at_cursor(bufnr)
     return
   end
 
-  -- Get buffer text for parsing
-  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  local query_text = table.concat(lines, "\n")
-
   -- Get connection context
   local connection = get_buffer_connection(bufnr)
   if not connection then
@@ -489,16 +556,12 @@ function ExpandAsterisk.expand_asterisk_at_cursor(bufnr)
     return
   end
 
-  -- Build scope tree
-  local scope_tree = ScopeTracker.build_scope_tree(query_text, bufnr, connection)
-
-  -- Expand asterisk
+  -- Expand asterisk using StatementCache context
   local result = ExpandAsterisk.expand_asterisk_in_context(
     bufnr,
     connection,
     cursor_pos,
-    query_text,
-    scope_tree
+    nil  -- query_text not needed, will read from buffer
   )
 
   if not result.success then
@@ -511,40 +574,18 @@ function ExpandAsterisk.expand_asterisk_at_cursor(bufnr)
     return
   end
 
-  -- Replace asterisk in buffer
-  local detect_result = ExpandAsterisk.detect_asterisk_at_cursor(line, col)
-  if not detect_result.is_asterisk then
-    vim.notify("Cursor is not on an asterisk", vim.log.levels.ERROR)
-    return
-  end
-
-  local asterisk_col = detect_result.asterisk_col
-  local table_prefix = detect_result.table_prefix
-
-  -- Calculate replacement range
-  local start_col, end_col
-  if table_prefix then
-    -- Replace "table.*" or "alias.*"
-    start_col = asterisk_col - #table_prefix - 1  -- Include the table name and dot
-    end_col = asterisk_col
-  else
-    -- Replace just "*"
-    start_col = asterisk_col - 1
-    end_col = asterisk_col
-  end
-
   -- Build new line with replacement
-  local new_line = line:sub(1, start_col) .. result.replacement_text .. line:sub(end_col + 1)
+  local new_line = line:sub(1, result.start_col) .. result.replacement_text .. line:sub(result.end_col + 1)
 
   debug_log(string.format("Replacing '%s' with '%s'",
-    line:sub(start_col + 1, end_col),
+    line:sub(result.start_col + 1, result.end_col),
     result.replacement_text))
 
   -- Set modified line in buffer
   vim.api.nvim_buf_set_lines(bufnr, line_num - 1, line_num, false, {new_line})
 
   -- Move cursor to end of replacement
-  local new_col = start_col + #result.replacement_text
+  local new_col = result.start_col + #result.replacement_text
   vim.api.nvim_win_set_cursor(0, {line_num, new_col})
 
   -- Notify user
