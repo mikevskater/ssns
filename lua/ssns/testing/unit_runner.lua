@@ -303,6 +303,18 @@ function UnitRunner._compare_chunk(actual, expected, chunk_index)
       if not ok then
         return false, err
       end
+    elseif key == "aliases" then
+      -- Compare aliases
+      local ok, err = UnitRunner._compare_aliases(act_value, exp_value, chunk_index)
+      if not ok then
+        return false, err
+      end
+    elseif key == "parameters" then
+      -- Compare parameters array
+      local ok, err = UnitRunner._compare_parameters(act_value, exp_value, chunk_index)
+      if not ok then
+        return false, err
+      end
     elseif type(exp_value) == "table" and type(act_value) == "table" then
       -- Deep comparison for nested tables
       local ok, err = UnitRunner._deep_compare(act_value, exp_value, string.format("Chunk %d field '%s'", chunk_index, key))
@@ -410,6 +422,92 @@ function UnitRunner._compare_columns(actual, expected, chunk_index)
         return false,
           string.format(
             "Chunk %d column %d field '%s': expected %s, got %s",
+            chunk_index,
+            i,
+            field,
+            tostring(exp_value),
+            tostring(act_value)
+          )
+      end
+    end
+  end
+
+  return true
+end
+
+---Compare aliases dictionaries
+---@param actual table<string, TableReference>?
+---@param expected table<string, TableReference>?
+---@param chunk_index number
+---@return boolean success
+---@return string? error_message
+function UnitRunner._compare_aliases(actual, expected, chunk_index)
+  if not expected then
+    return true
+  end
+  if not actual then
+    return false, string.format("Chunk %d: expected aliases but got nil", chunk_index)
+  end
+
+  -- Check each expected alias exists and matches
+  for alias_name, exp_table in pairs(expected) do
+    local act_table = actual[alias_name]
+    if not act_table then
+      return false, string.format("Chunk %d: missing alias '%s'", chunk_index, alias_name)
+    end
+
+    -- Compare each expected field in the TableReference
+    for field, exp_value in pairs(exp_table) do
+      local act_value = act_table[field]
+      if act_value ~= exp_value then
+        return false,
+          string.format(
+            "Chunk %d alias '%s' field '%s': expected %s, got %s",
+            chunk_index,
+            alias_name,
+            field,
+            tostring(exp_value),
+            tostring(act_value)
+          )
+      end
+    end
+  end
+
+  return true
+end
+
+---Compare parameters arrays
+---@param actual ParameterInfo[]?
+---@param expected ParameterInfo[]?
+---@param chunk_index number
+---@return boolean success
+---@return string? error_message
+function UnitRunner._compare_parameters(actual, expected, chunk_index)
+  if not expected then
+    return true
+  end
+  if not actual then
+    return false, string.format("Chunk %d: expected parameters but got nil", chunk_index)
+  end
+
+  if #actual < #expected then
+    return false,
+      string.format("Chunk %d: expected at least %d parameters, got %d", chunk_index, #expected, #actual)
+  end
+
+  for i, exp_param in ipairs(expected) do
+    local act_param = actual[i]
+    if not act_param then
+      return false, string.format("Chunk %d: missing parameter at index %d", chunk_index, i)
+    end
+
+    -- Compare each expected field
+    for field, exp_value in pairs(exp_param) do
+      local act_value = act_param[field]
+      if act_value ~= exp_value then
+        return false,
+          string.format(
+            "Chunk %d parameter %d field '%s': expected %s, got %s",
             chunk_index,
             i,
             field,
