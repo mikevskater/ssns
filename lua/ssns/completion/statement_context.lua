@@ -396,6 +396,9 @@ function Context.detect(bufnr, line_num, col)
       elseif clause == "into" then
         ctx_type = Context.Type.TABLE
         mode = "into"
+      elseif clause == "insert_columns" then
+        ctx_type = Context.Type.COLUMN
+        mode = "insert_columns"
       end
 
       -- Check for qualified column reference (alias.column, table.column)

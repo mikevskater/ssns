@@ -55,6 +55,7 @@
 ---@field parameters ParameterInfo[] Parameters/variables used in this chunk
 ---@field temp_table_name string? For SELECT INTO / CREATE TABLE #temp
 ---@field is_global_temp boolean? Whether temp_table_name is a global temp (##)
+---@field insert_columns string[]? Column names in INSERT INTO table (col1, col2, ...)
 ---@field start_line number 1-indexed start line
 ---@field end_line number 1-indexed end line
 ---@field start_col number 1-indexed start column
@@ -1461,17 +1462,40 @@ function ParserState:parse_statement(known_ctes, temp_tables)
       }
     end
 
-    -- Skip column list if present (...)
+    -- Parse INSERT column list if present: INSERT INTO table (col1, col2, ...)
     if self:is_type("paren_open") then
-      local paren_count = 1
-      self:advance()
-      while self:current() and paren_count > 0 do
-        if self:is_type("paren_open") then
-          paren_count = paren_count + 1
-        elseif self:is_type("paren_close") then
-          paren_count = paren_count - 1
+      local col_start = self:current()
+      local insert_columns = {}
+      self:advance()  -- consume (
+
+      while self:current() and not self:is_type("paren_close") do
+        local tok = self:current()
+        if tok.type == "identifier" or tok.type == "bracket_id" then
+          -- Extract column name (strip brackets if needed)
+          local col_name = tok.text
+          if tok.type == "bracket_id" then
+            col_name = col_name:match("^%[(.-)%]$") or col_name
+          end
+          table.insert(insert_columns, col_name)
         end
         self:advance()
+      end
+
+      if self:is_type("paren_close") then
+        local col_end = self:current()
+
+        -- Track column list position for context detection
+        chunk.clause_positions["insert_columns"] = {
+          start_line = col_start.line,
+          start_col = col_start.col,
+          end_line = col_end.line,
+          end_col = col_end.col,
+        }
+
+        -- Store parsed columns (useful for validation/hints)
+        chunk.insert_columns = insert_columns
+
+        self:advance()  -- consume )
       end
     end
 

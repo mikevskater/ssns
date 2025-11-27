@@ -125,13 +125,18 @@ function ColumnsProvider._get_completions_impl(ctx)
     return ColumnsProvider._get_qualified_columns(sql_context, connection, sql_context)
 
   elseif sql_context.mode == "select" or sql_context.mode == "where" or
-         sql_context.mode == "order_by" or sql_context.mode == "group_by" then
-    -- Pattern: SELECT | or WHERE | (show columns from all tables in query)
+         sql_context.mode == "order_by" or sql_context.mode == "group_by" or
+         sql_context.mode == "set" then
+    -- Pattern: SELECT | or WHERE | or UPDATE SET | (show columns from all tables in query)
     return ColumnsProvider._get_all_columns_from_query(connection, sql_context)
 
   elseif sql_context.mode == "qualified_bracket" then
     -- Pattern: [schema].[table].| or [database].|
     return ColumnsProvider._get_qualified_bracket_columns(sql_context, connection, sql_context)
+
+  elseif sql_context.mode == "insert_columns" then
+    -- Pattern: INSERT INTO table (| - show columns from target table
+    return ColumnsProvider._get_insert_columns(connection, sql_context)
 
   else
     return {}
@@ -432,6 +437,64 @@ function ColumnsProvider._get_qualified_bracket_columns(sql_context, connection,
         item.data.weight = weight
         item.data.table_path = table_path
       end
+    end
+
+    table.insert(items, item)
+  end
+
+  return items
+end
+
+---Get columns for INSERT column list: INSERT INTO table (|col1, col2)
+---@param connection table Connection context
+---@param context table SQL context with chunk and resolved_scope
+---@return table[] items CompletionItems
+function ColumnsProvider._get_insert_columns(connection, context)
+  local Resolver = require('ssns.completion.metadata.resolver')
+  local Utils = require('ssns.completion.utils')
+
+  -- Get INSERT target table from chunk.tables (first table in INSERT statement)
+  if not context.chunk or not context.chunk.tables or #context.chunk.tables == 0 then
+    return {}
+  end
+
+  local target_table = context.chunk.tables[1]  -- INSERT target is always first
+  local table_name = target_table.name or target_table
+
+  -- Resolve to actual table object
+  local table_obj = nil
+  if context.resolved_scope then
+    table_obj = Resolver.get_resolved(context.resolved_scope, table_name)
+  end
+  if not table_obj then
+    table_obj = Resolver.resolve_table(table_name, connection, context)
+  end
+
+  if not table_obj then
+    return {}
+  end
+
+  -- Get columns
+  local columns = Resolver.get_columns(table_obj, connection)
+  if not columns or #columns == 0 then
+    return {}
+  end
+
+  -- Format as CompletionItems
+  local items = {}
+
+  for _, col in ipairs(columns) do
+    local item = Utils.format_column(col, {
+      show_type = true,
+      show_nullable = true,
+    })
+
+    -- Mark identity/computed columns with warning
+    if col.is_identity then
+      item.detail = (item.detail or "") .. " [IDENTITY]"
+    end
+    if col.is_computed then
+      item.detail = (item.detail or "") .. " [COMPUTED]"
     end
 
     table.insert(items, item)
