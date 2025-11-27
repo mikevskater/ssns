@@ -3,6 +3,8 @@
 ---@class JoinsProvider
 local JoinsProvider = {}
 
+local FKGraph = require('ssns.completion.fk_graph')
+
 ---Get JOIN completions for the given context
 ---@param ctx table Context from source (has bufnr, connection info, sql_context)
 ---@param callback function Callback(items)
@@ -73,37 +75,22 @@ function JoinsProvider._get_completions_impl(ctx)
     end
   end
 
-  -- Collect FK-based suggestions
+  -- Build FK chain suggestions (1-2 hops)
   local fk_suggestions = {}
-  local suggested_tables = {} -- Track tables we've already suggested via FK
+  local suggested_tables = {}
 
-  for _, table_obj in ipairs(existing_tables) do
-    -- Get constraints for this table
-    local success, constraints = pcall(function()
-      return table_obj:get_constraints()
+  if #existing_tables > 0 then
+    local success, chain_results = pcall(function()
+      return FKGraph.build_chains(existing_tables, connection_info, 2)
     end)
 
-    if success and constraints then
-      for _, constraint in ipairs(constraints) do
-        if constraint:is_foreign_key() then
-          -- Build FK suggestion
-          local suggestion = JoinsProvider._build_fk_suggestion(
-            constraint,
-            table_obj,
-            existing_aliases,
-            connection_info
-          )
-
-          if suggestion then
-            table.insert(fk_suggestions, suggestion)
-            -- Track this table as suggested
-            local target_table = constraint.referenced_table
-            if target_table then
-              suggested_tables[target_table:lower()] = true
-            end
-          end
-        end
-      end
+    if success and chain_results then
+      fk_suggestions, suggested_tables = JoinsProvider._build_fk_chain_suggestions(
+        chain_results,
+        existing_aliases,
+        sql_context,
+        connection_info
+      )
     end
   end
 
@@ -265,6 +252,119 @@ function JoinsProvider._generate_alias(table_name, existing_aliases)
 
   -- Fallback: use full name lowercased
   return base_name:lower()
+end
+
+---Find the alias used for a table in the current query
+---@param table_obj table TableClass
+---@param sql_context table SQL context
+---@return string|nil alias The alias if found
+function JoinsProvider._find_alias_for_table(table_obj, sql_context)
+  local table_name = (table_obj.name or table_obj.table_name or ""):lower()
+
+  if sql_context.tables_in_scope then
+    for _, tinfo in ipairs(sql_context.tables_in_scope) do
+      local t_name = (tinfo.table or tinfo.name or ""):lower()
+      if t_name == table_name or t_name:find(table_name, 1, true) then
+        return tinfo.alias or tinfo.table or tinfo.name
+      end
+    end
+  end
+
+  return table_name:sub(1, 1)
+end
+
+---Build completion items from FK chain results
+---@param chain_results table Results from FKGraph.build_chains
+---@param existing_aliases table<string, boolean> Aliases already used in query
+---@param sql_context table SQL context with query info
+---@param connection table Connection info
+---@return table[] items CompletionItems
+---@return table<string, boolean> suggested_tables Tables that were suggested
+function JoinsProvider._build_fk_chain_suggestions(chain_results, existing_aliases, sql_context, connection)
+  local items = {}
+  local suggested_tables = {}
+
+  local flat_results = FKGraph.flatten_and_sort(chain_results)
+
+  for _, result in ipairs(flat_results) do
+    local table_obj = result.table_obj
+    if not table_obj then
+      goto continue
+    end
+
+    local table_name = table_obj.name or table_obj.table_name
+    if not table_name then
+      goto continue
+    end
+
+    local table_key = table_name:lower()
+    if table_obj.schema then
+      table_key = table_obj.schema:lower() .. "." .. table_key
+    end
+
+    -- Skip if already suggested
+    if suggested_tables[table_key] then
+      goto continue
+    end
+    suggested_tables[table_key] = true
+    suggested_tables[table_name:lower()] = true
+
+    -- Generate alias
+    local alias = JoinsProvider._generate_alias(table_name, existing_aliases)
+    existing_aliases[alias:lower()] = true
+
+    -- Build label and detail using FKGraph helpers
+    local label = FKGraph.build_label(result)
+    local detail = FKGraph.build_detail(result)
+
+    -- Build insert text with ON clause for direct FKs (1 hop)
+    local insert_text = table_name .. " " .. alias
+
+    if result.hop_count == 1 and result.constraint and result.source_table then
+      local source_alias = JoinsProvider._find_alias_for_table(result.source_table, sql_context)
+      local constraint = result.constraint
+
+      if source_alias and constraint.columns and constraint.referenced_columns then
+        local on_parts = {}
+        for i, fk_col in ipairs(constraint.columns) do
+          local ref_col = constraint.referenced_columns[i]
+          if fk_col and ref_col then
+            table.insert(on_parts, string.format("%s.%s = %s.%s",
+              source_alias, fk_col, alias, ref_col))
+          end
+        end
+
+        if #on_parts > 0 then
+          insert_text = table_name .. " " .. alias .. " ON " .. table.concat(on_parts, " AND ")
+        end
+      end
+    end
+
+    -- Priority based on hop count: 1 hop = 100, 2 hops = 200, etc.
+    local priority = result.hop_count * 100
+
+    local item = {
+      label = label,
+      kind = vim.lsp.protocol.CompletionItemKind.Class,
+      detail = detail,
+      insertText = insert_text,
+      sortText = string.format("%04d_%s", priority, table_name),
+      documentation = {
+        kind = "markdown",
+        value = FKGraph.build_documentation(result),
+      },
+      data = {
+        table_name = table_name,
+        hop_count = result.hop_count,
+        is_fk_suggestion = true,
+      },
+    }
+
+    table.insert(items, item)
+    ::continue::
+  end
+
+  return items, suggested_tables
 end
 
 ---Get all tables as fallback suggestions
