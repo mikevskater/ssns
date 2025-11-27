@@ -149,6 +149,65 @@ function Context._parse_qualified_name(before_cursor)
   return result
 end
 
+---Extract the left-side column from a comparison expression
+---Parses patterns like "t1.col = " or "column >= " from before cursor
+---@param before_cursor string The text before the cursor
+---@return table|nil left_side {qualified: string, table_ref: string|nil, column_name: string}
+local function extract_left_side_column(before_cursor)
+  if not before_cursor then return nil end
+
+  -- Match qualified: "alias.column = " or "schema.table.column = "
+  local qualified = before_cursor:match("([%w_%.%[%]]+)%s*[=<>!]+%s*$")
+
+  -- Also try matching after AND/OR: "AND alias.column = "
+  if not qualified then
+    qualified = before_cursor:match("[Aa][Nn][Dd]%s+([%w_%.%[%]]+)%s*[=<>!]+%s*$")
+  end
+  if not qualified then
+    qualified = before_cursor:match("[Oo][Rr]%s+([%w_%.%[%]]+)%s*[=<>!]+%s*$")
+  end
+
+  if not qualified then return nil end
+
+  -- Strip brackets if present: [column] -> column
+  qualified = qualified:gsub("%[", ""):gsub("%]", "")
+
+  -- Split by dots
+  local parts = {}
+  for part in qualified:gmatch("[^%.]+") do
+    table.insert(parts, part)
+  end
+
+  if #parts == 0 then return nil end
+
+  -- Build result
+  if #parts == 1 then
+    -- Unqualified column: "column = "
+    return {
+      qualified = qualified,
+      table_ref = nil,
+      column_name = parts[1],
+    }
+  elseif #parts == 2 then
+    -- Qualified: "alias.column = " or "table.column = "
+    return {
+      qualified = qualified,
+      table_ref = parts[1],
+      column_name = parts[2],
+    }
+  elseif #parts >= 3 then
+    -- Schema qualified: "schema.table.column = "
+    return {
+      qualified = qualified,
+      table_ref = parts[#parts - 1],  -- table
+      column_name = parts[#parts],     -- column
+      schema = parts[#parts - 2],      -- schema
+    }
+  end
+
+  return nil
+end
+
 ---Detect context type from line text before cursor
 ---@param before_cursor string Text before cursor (trimmed)
 ---@param chunk StatementChunk? The parsed chunk
@@ -302,6 +361,11 @@ function Context._detect_type_from_line(before_cursor, chunk)
   end
 
   if upper_trimmed:match("WHERE%s+$") or upper:match("WHERE%s+[%w_%.]*$") then
+    -- Check if we're after a comparison operator
+    local left_side = extract_left_side_column(before_cursor)
+    if left_side then
+      extra.left_side = left_side
+    end
     return Context.Type.COLUMN, "where", extra
   end
 
@@ -311,6 +375,10 @@ function Context._detect_type_from_line(before_cursor, chunk)
   end
 
   if upper_trimmed:match("ON%s+$") or upper:match("ON%s+[%w_%.]*$") then
+    local left_side = extract_left_side_column(before_cursor)
+    if left_side then
+      extra.left_side = left_side
+    end
     return Context.Type.COLUMN, "on", extra
   end
 
@@ -422,9 +490,17 @@ function Context.detect(bufnr, line_num, col)
       elseif clause == "on" then
         ctx_type = Context.Type.COLUMN
         mode = "on"
+        local left_side = extract_left_side_column(before_cursor)
+        if left_side then
+          extra.left_side = left_side
+        end
       elseif clause == "where" then
         ctx_type = Context.Type.COLUMN
         mode = "where"
+        local left_side = extract_left_side_column(before_cursor)
+        if left_side then
+          extra.left_side = left_side
+        end
       elseif clause == "group_by" then
         ctx_type = Context.Type.COLUMN
         mode = "group_by"
@@ -492,6 +568,7 @@ function Context.detect(bufnr, line_num, col)
     omit_schema = extra.omit_schema,
     omit_table = extra.omit_table,
     value_position = extra.value_position,
+    left_side = extra.left_side,
   }
 
   Debug.log(string.format("[statement_context] detected type=%s, mode=%s, prefix=%s", ctx_type, mode, prefix))

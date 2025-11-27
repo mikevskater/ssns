@@ -5,6 +5,8 @@ local ColumnsProvider = {}
 
 local UsageTracker = require('ssns.completion.usage_tracker')
 local Config = require('ssns.config')
+local FuzzyMatcher = require('ssns.completion.fuzzy_matcher')
+local TypeCompatibility = require('ssns.completion.type_compatibility')
 
 ---Get usage weight for an item
 ---@param connection table Connection context
@@ -123,6 +125,10 @@ function ColumnsProvider._get_completions_impl(ctx)
     local Debug = require('ssns.debug')
     Debug.log(string.format("[COLUMNS] Routing mode '%s' to _get_qualified_columns", sql_context.mode or "nil"))
     return ColumnsProvider._get_qualified_columns(sql_context, connection, sql_context)
+
+  elseif sql_context.mode == "on" then
+    -- Pattern: JOIN table ON left.col = | (show columns from other tables with fuzzy matching)
+    return ColumnsProvider._get_on_clause_columns(connection, sql_context)
 
   elseif sql_context.mode == "select" or sql_context.mode == "where" or
          sql_context.mode == "order_by" or sql_context.mode == "group_by" or
@@ -313,8 +319,9 @@ function ColumnsProvider._get_all_columns_from_query(connection, context)
         -- Track max weight for this column name
         column_weights[col_name:lower()] = math.max(column_weights[col_name:lower()] or 0, weight)
 
-        -- Store weight in data
+        -- Store weight and table reference in data
         item.data.weight = weight
+        item.data.table_ref = table_path
 
         table.insert(items, item)
       end
@@ -339,6 +346,174 @@ function ColumnsProvider._get_all_columns_from_query(connection, context)
 
     item.sortText = string.format("%05d_%04d_%s", priority, ordinal, col_name)
   end
+
+  return items
+end
+
+---Get columns for ON clause with fuzzy matching
+---Shows fully qualified column names (alias.column) prioritized by name match
+---@param connection table Connection context
+---@param context table SQL context with left_side info
+---@return table[] items CompletionItems
+function ColumnsProvider._get_on_clause_columns(connection, context)
+  local Resolver = require('ssns.completion.metadata.resolver')
+  local Utils = require('ssns.completion.utils')
+
+  local items = {}
+  local FUZZY_THRESHOLD = 0.85
+
+  -- Get left-side column info
+  local left_col_name = context.left_side and context.left_side.column_name
+  local left_table_ref = context.left_side and context.left_side.table_ref
+
+  -- Try to resolve left-side column type
+  local left_col_type = nil
+  if left_table_ref and left_col_name and context.resolved_scope then
+    local left_table = Resolver.get_resolved(context.resolved_scope, left_table_ref)
+    if left_table then
+      local left_cols = Resolver.get_columns(left_table, connection)
+      for _, col in ipairs(left_cols or {}) do
+        local col_name = col.name or col.column_name
+        if col_name and col_name:lower() == left_col_name:lower() then
+          left_col_type = col.data_type
+          break
+        end
+      end
+    end
+  end
+
+  -- Get all tables in the query
+  local tables_in_scope = context.tables_in_scope or {}
+
+  for _, table_info in ipairs(tables_in_scope) do
+    local alias = table_info.alias
+    local table_name = table_info.table or table_info.name
+    local display_ref = alias or table_name
+
+    -- Skip the left-side table (don't suggest e.col = e.col)
+    if left_table_ref and display_ref and display_ref:lower() == left_table_ref:lower() then
+      goto continue_table
+    end
+
+    -- Resolve table to get columns
+    local table_obj = nil
+    if context.resolved_scope then
+      table_obj = Resolver.get_resolved(context.resolved_scope, table_name)
+      if not table_obj and alias then
+        table_obj = Resolver.get_resolved(context.resolved_scope, alias)
+      end
+    end
+    if not table_obj then
+      table_obj = Resolver.resolve_table(table_name or alias, connection, context)
+    end
+
+    if not table_obj then
+      goto continue_table
+    end
+
+    -- Get columns for this table
+    local columns = Resolver.get_columns(table_obj, connection)
+    if not columns then
+      goto continue_table
+    end
+
+    for _, col in ipairs(columns) do
+      local col_name = col.name or col.column_name
+      if not col_name then
+        goto continue_col
+      end
+
+      -- Build qualified name
+      local qualified_name = display_ref and (display_ref .. "." .. col_name) or col_name
+
+      -- Calculate fuzzy match score
+      local priority = 5000  -- Default priority
+      local match_indicator = ""
+
+      if left_col_name then
+        local is_match, score = FuzzyMatcher.match_columns(left_col_name, col_name, FUZZY_THRESHOLD)
+
+        if is_match then
+          if score >= 1.0 then
+            priority = 100
+            match_indicator = " ★"
+          elseif score >= 0.95 then
+            priority = 200
+            match_indicator = string.format(" ~%.0f%%", score * 100)
+          elseif score >= 0.85 then
+            priority = 300 + math.floor((1 - score) * 1000)
+            match_indicator = string.format(" ~%.0f%%", score * 100)
+          end
+        end
+      end
+
+      -- Build detail string
+      local type_str = col.data_type or "unknown"
+      local detail = type_str .. match_indicator
+
+      -- Check type compatibility
+      if left_col_type and col.data_type then
+        local type_info = TypeCompatibility.get_info(left_col_type, col.data_type)
+        if not type_info.compatible then
+          priority = priority + 2000
+          detail = detail .. " " .. type_info.icon
+        elseif type_info.warning then
+          detail = detail .. " " .. type_info.icon
+        end
+      end
+
+      -- Create completion item
+      local item = {
+        label = qualified_name,
+        kind = vim.lsp.protocol.CompletionItemKind.Field,
+        detail = detail,
+        insertText = qualified_name,
+        sortText = string.format("%05d_%s", priority, qualified_name),
+        data = {
+          table_ref = display_ref,
+          column_name = col_name,
+          data_type = col.data_type,
+        },
+      }
+
+      -- Add documentation with column info
+      local doc_parts = {}
+      table.insert(doc_parts, string.format("**%s.%s**", display_ref, col_name))
+      table.insert(doc_parts, "")
+      table.insert(doc_parts, string.format("Type: %s", col.data_type or "unknown"))
+      if col.is_nullable ~= nil then
+        table.insert(doc_parts, string.format("Nullable: %s", col.is_nullable and "Yes" or "No"))
+      end
+      if col.is_primary_key or col.is_pk then
+        table.insert(doc_parts, "Primary Key: Yes")
+      end
+
+      -- Add type warning to docs
+      if left_col_type and col.data_type then
+        local type_info = TypeCompatibility.get_info(left_col_type, col.data_type)
+        if type_info.warning then
+          table.insert(doc_parts, "")
+          table.insert(doc_parts, type_info.icon .. " " .. type_info.warning)
+        end
+      end
+
+      item.documentation = {
+        kind = "markdown",
+        value = table.concat(doc_parts, "\n"),
+      }
+
+      table.insert(items, item)
+
+      ::continue_col::
+    end
+
+    ::continue_table::
+  end
+
+  -- Sort by priority
+  table.sort(items, function(a, b)
+    return a.sortText < b.sortText
+  end)
 
   return items
 end
