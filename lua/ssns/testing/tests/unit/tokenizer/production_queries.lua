@@ -1,11 +1,11 @@
 -- Test file: production_queries.lua
--- IDs: 1501-1550
+-- IDs: 1701-1750
 -- Tests: Production-style tokenization edge cases
 
 return {
-    -- IDs 1501-1510: Complex String Patterns
+    -- IDs 1701-1710: Complex String Patterns
     {
-        id = 1501,
+        id = 1701,
         type = "tokenizer",
         name = "String with escaped single quotes",
         input = "SELECT 'It''s a test'",
@@ -15,7 +15,7 @@ return {
         }
     },
     {
-        id = 1502,
+        id = 1702,
         type = "tokenizer",
         name = "Unicode string with N prefix",
         input = "SELECT N'Hello World'",
@@ -26,7 +26,7 @@ return {
         }
     },
     {
-        id = 1503,
+        id = 1703,
         type = "tokenizer",
         name = "Multi-line string literal",
         input = "SELECT 'Line 1\nLine 2\nLine 3'",
@@ -36,7 +36,7 @@ return {
         }
     },
     {
-        id = 1504,
+        id = 1704,
         type = "tokenizer",
         name = "Empty string literal",
         input = "SELECT ''",
@@ -46,7 +46,7 @@ return {
         }
     },
     {
-        id = 1505,
+        id = 1705,
         type = "tokenizer",
         name = "String containing SQL keywords",
         input = "SELECT 'SELECT * FROM Users WHERE id = 1'",
@@ -56,7 +56,7 @@ return {
         }
     },
     {
-        id = 1506,
+        id = 1706,
         type = "tokenizer",
         name = "String with numbers and operators",
         input = "SELECT '123 + 456 = 579'",
@@ -66,7 +66,7 @@ return {
         }
     },
     {
-        id = 1507,
+        id = 1707,
         type = "tokenizer",
         name = "String with special characters",
         input = "SELECT 'Email: user@example.com, Phone: (555) 123-4567'",
@@ -76,7 +76,7 @@ return {
         }
     },
     {
-        id = 1508,
+        id = 1708,
         type = "tokenizer",
         name = "Multiple strings in query",
         input = "SELECT 'First', 'Second', 'Third'",
@@ -90,7 +90,7 @@ return {
         }
     },
     {
-        id = 1509,
+        id = 1709,
         type = "tokenizer",
         name = "Unicode string with escaped quotes",
         input = "SELECT N'It''s unicode'",
@@ -101,7 +101,7 @@ return {
         }
     },
     {
-        id = 1510,
+        id = 1710,
         type = "tokenizer",
         name = "String with backslashes",
         input = "SELECT 'C:\\Windows\\System32\\config'",
@@ -111,9 +111,9 @@ return {
         }
     },
 
-    -- IDs 1511-1520: Comment Patterns
+    -- IDs 1711-1720: Comment Patterns
     {
-        id = 1511,
+        id = 1711,
         type = "tokenizer",
         name = "Single line comment at end",
         input = "SELECT * FROM Users -- Get all users",
@@ -125,7 +125,7 @@ return {
         }
     },
     {
-        id = 1512,
+        id = 1712,
         type = "tokenizer",
         name = "Block comment between keywords",
         input = "SELECT /* comment */ * FROM Users",
@@ -137,7 +137,7 @@ return {
         }
     },
     {
-        id = 1513,
+        id = 1713,
         type = "tokenizer",
         name = "Multi-line block comment",
         input = "SELECT /*\n  Multi-line\n  comment\n*/ * FROM Users",
@@ -149,7 +149,7 @@ return {
         }
     },
     {
-        id = 1514,
+        id = 1714,
         type = "tokenizer",
         name = "Comment containing string",
         input = "SELECT * FROM Users -- WHERE name = 'John'",
@@ -161,7 +161,7 @@ return {
         }
     },
     {
-        id = 1515,
+        id = 1715,
         type = "tokenizer",
         name = "Comment containing code",
         input = "SELECT id, name /* , email, phone */ FROM Users",
@@ -175,7 +175,7 @@ return {
         }
     },
     {
-        id = 1516,
+        id = 1716,
         type = "tokenizer",
         name = "Multiple single-line comments",
         input = "SELECT * -- comment 1\nFROM Users -- comment 2",
@@ -187,7 +187,7 @@ return {
         }
     },
     {
-        id = 1517,
+        id = 1717,
         type = "tokenizer",
         name = "Block comment at start",
         input = "/* Header comment */ SELECT * FROM Users",
@@ -199,7 +199,7 @@ return {
         }
     },
     {
-        id = 1518,
+        id = 1718,
         type = "tokenizer",
         name = "Comment with special characters",
         input = "SELECT * FROM Users -- TODO: Fix this @bug #123",
@@ -211,7 +211,7 @@ return {
         }
     },
     {
-        id = 1519,
+        id = 1719,
         type = "tokenizer",
         name = "Multiple block comments",
         input = "SELECT /* c1 */ * /* c2 */ FROM /* c3 */ Users",
@@ -223,7 +223,7 @@ return {
         }
     },
     {
-        id = 1520,
+        id = 1720,
         type = "tokenizer",
         name = "Mixed comment styles",
         input = "/* Block */ SELECT * FROM Users -- Line",
@@ -235,9 +235,9 @@ return {
         }
     },
 
-    -- IDs 1521-1530: Bracketed Identifier Patterns
+    -- IDs 1721-1730: Bracketed Identifier Patterns
     {
-        id = 1521,
+        id = 1721,
         type = "tokenizer",
         name = "Simple bracketed identifier",
         input = "SELECT [TableName]",
@@ -247,7 +247,7 @@ return {
         }
     },
     {
-        id = 1522,
+        id = 1722,
         type = "tokenizer",
         name = "Bracketed identifier with spaces",
         input = "SELECT * FROM [My Table]",
@@ -259,7 +259,7 @@ return {
         }
     },
     {
-        id = 1523,
+        id = 1723,
         type = "tokenizer",
         name = "Bracketed identifier with special characters",
         input = "SELECT [Table.Name@2024]",
@@ -269,7 +269,7 @@ return {
         }
     },
     {
-        id = 1524,
+        id = 1724,
         type = "tokenizer",
         name = "Schema and table both bracketed",
         input = "SELECT * FROM [dbo].[Users]",
@@ -283,7 +283,7 @@ return {
         }
     },
     {
-        id = 1525,
+        id = 1725,
         type = "tokenizer",
         name = "Bracketed reserved word as identifier",
         input = "SELECT [SELECT] FROM [FROM]",
@@ -295,7 +295,7 @@ return {
         }
     },
     {
-        id = 1526,
+        id = 1726,
         type = "tokenizer",
         name = "Bracketed identifier with numbers",
         input = "SELECT [Column123] FROM [Table456]",
@@ -307,7 +307,7 @@ return {
         }
     },
     {
-        id = 1527,
+        id = 1727,
         type = "tokenizer",
         name = "Bracketed identifier with hyphens",
         input = "SELECT * FROM [User-Accounts]",
@@ -319,7 +319,7 @@ return {
         }
     },
     {
-        id = 1528,
+        id = 1728,
         type = "tokenizer",
         name = "Fully qualified bracketed name",
         input = "SELECT [Server].[Database].[Schema].[Table]",
@@ -335,7 +335,7 @@ return {
         }
     },
     {
-        id = 1529,
+        id = 1729,
         type = "tokenizer",
         name = "Bracketed identifier in JOIN",
         input = "SELECT * FROM Users JOIN [User Details] ON Users.id = [User Details].user_id",
@@ -357,7 +357,7 @@ return {
         }
     },
     {
-        id = 1530,
+        id = 1730,
         type = "tokenizer",
         name = "Bracketed identifier with underscore",
         input = "SELECT [First_Name], [Last_Name]",
@@ -369,9 +369,9 @@ return {
         }
     },
 
-    -- IDs 1531-1540: Operator and Special Character Patterns
+    -- IDs 1731-1740: Operator and Special Character Patterns
     {
-        id = 1531,
+        id = 1731,
         type = "tokenizer",
         name = "Multiple comparison operators",
         input = "WHERE a <= 5 AND b >= 10 AND c <> 0",
@@ -394,7 +394,7 @@ return {
         }
     },
     {
-        id = 1532,
+        id = 1732,
         type = "tokenizer",
         name = "String concatenation operator",
         input = "SELECT FirstName + ' ' + LastName",
@@ -408,7 +408,7 @@ return {
         }
     },
     {
-        id = 1533,
+        id = 1733,
         type = "tokenizer",
         name = "Bitwise operators",
         input = "SELECT a & b, c | d, e ^ f, ~g",
@@ -431,7 +431,7 @@ return {
         }
     },
     {
-        id = 1534,
+        id = 1734,
         type = "tokenizer",
         name = "Assignment operators",
         input = "SET @counter += 1",
@@ -445,7 +445,7 @@ return {
         }
     },
     {
-        id = 1535,
+        id = 1735,
         type = "tokenizer",
         name = "Mathematical expression",
         input = "SELECT (a + b) * c / d - e",
@@ -465,7 +465,7 @@ return {
         }
     },
     {
-        id = 1536,
+        id = 1736,
         type = "tokenizer",
         name = "IS NULL and IS NOT NULL",
         input = "WHERE a IS NULL AND b IS NOT NULL",
@@ -482,7 +482,7 @@ return {
         }
     },
     {
-        id = 1537,
+        id = 1737,
         type = "tokenizer",
         name = "Not equal operators both styles",
         input = "WHERE a <> 0 AND b != 0",
@@ -500,7 +500,7 @@ return {
         }
     },
     {
-        id = 1538,
+        id = 1738,
         type = "tokenizer",
         name = "Compound assignment operators",
         input = "SET @a += 1, @b -= 2, @c *= 3, @d /= 4",
@@ -532,7 +532,7 @@ return {
         }
     },
     {
-        id = 1539,
+        id = 1739,
         type = "tokenizer",
         name = "Modulo operator",
         input = "SELECT id % 2",
@@ -544,7 +544,7 @@ return {
         }
     },
     {
-        id = 1540,
+        id = 1740,
         type = "tokenizer",
         name = "Negative number",
         input = "SELECT -100",
@@ -555,9 +555,9 @@ return {
         }
     },
 
-    -- IDs 1541-1550: Production Query Tokenization
+    -- IDs 1741-1750: Production Query Tokenization
     {
-        id = 1541,
+        id = 1741,
         type = "tokenizer",
         name = "Variable and temp table references",
         input = "SELECT @UserId FROM #TempUsers",
@@ -571,7 +571,7 @@ return {
         }
     },
     {
-        id = 1542,
+        id = 1742,
         type = "tokenizer",
         name = "SELECT with multiple columns",
         input = "SELECT id, name, email, phone FROM Users",
@@ -589,7 +589,7 @@ return {
         }
     },
     {
-        id = 1543,
+        id = 1743,
         type = "tokenizer",
         name = "INNER JOIN with ON clause",
         input = "SELECT * FROM Users JOIN Orders ON Users.id = Orders.user_id",
@@ -611,7 +611,7 @@ return {
         }
     },
     {
-        id = 1544,
+        id = 1744,
         type = "tokenizer",
         name = "WHERE with multiple conditions",
         input = "WHERE age >= 18 AND status = 'active' AND city = 'New York'",
@@ -632,7 +632,7 @@ return {
         }
     },
     {
-        id = 1545,
+        id = 1745,
         type = "tokenizer",
         name = "GROUP BY with HAVING",
         input = "SELECT category, COUNT(*) FROM Products GROUP BY category HAVING COUNT(*) > 5",
@@ -659,7 +659,7 @@ return {
         }
     },
     {
-        id = 1546,
+        id = 1746,
         type = "tokenizer",
         name = "Subquery in WHERE clause",
         input = "SELECT * FROM Users WHERE id IN (SELECT user_id FROM Orders)",
@@ -680,7 +680,7 @@ return {
         }
     },
     {
-        id = 1547,
+        id = 1747,
         type = "tokenizer",
         name = "CTE definition",
         input = "WITH ActiveUsers AS (SELECT * FROM Users WHERE active = 1) SELECT * FROM ActiveUsers",
@@ -705,7 +705,7 @@ return {
         }
     },
     {
-        id = 1548,
+        id = 1748,
         type = "tokenizer",
         name = "EXEC stored procedure with parameters",
         input = "EXEC GetUserById @UserId = 123",
@@ -719,7 +719,7 @@ return {
         }
     },
     {
-        id = 1549,
+        id = 1749,
         type = "tokenizer",
         name = "DECLARE variables",
         input = "DECLARE @StartDate DATE, @EndDate DATE",
@@ -735,7 +735,7 @@ return {
         }
     },
     {
-        id = 1550,
+        id = 1750,
         type = "tokenizer",
         name = "ORDER BY with ASC and DESC",
         input = "SELECT * FROM Users ORDER BY created_date DESC, name ASC",
