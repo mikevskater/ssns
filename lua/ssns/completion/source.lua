@@ -338,12 +338,25 @@ function Source:get_completions(ctx, callback)
       connection_ctx.database and connection_ctx.database.db_name or "nil"))
   end
 
+  -- Pre-resolve all aliases and tables in scope to avoid repeated tree walks in providers
+  local resolved_scope = nil
+  if context_result and connection_ctx then
+    local Resolver = require('ssns.completion.metadata.resolver')
+    resolved_scope = Resolver.pre_resolve_scope(context_result, connection_ctx)
+    Debug.log(string.format("[COMPLETION] Pre-resolved scope: %d aliases, %d tables",
+      vim.tbl_count(resolved_scope.resolved_aliases or {}),
+      vim.tbl_count(resolved_scope.resolved_tables or {})))
+
+    -- Add resolved_scope to context_result so providers can access it
+    context_result.resolved_scope = resolved_scope
+  end
+
   -- Prepare context for providers
   local provider_ctx = {
     bufnr = ctx.bufnr,
     connection = connection_ctx,
     sql_context = context_result,
-    cursor_pos = {context_result.line_num, context_result.col},  -- NEW
+    cursor_pos = {context_result.line_num, context_result.col},
   }
 
   -- Detect temp tables in buffer (lazy, on-demand)

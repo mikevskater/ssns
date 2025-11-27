@@ -237,7 +237,7 @@ end
 ---Resolve multiple table references from query context using pre-built scope
 ---Used for SELECT/WHERE/ORDER BY (columns from all tables in query)
 ---@param connection table Connection context
----@param context table Pre-built context with tables_in_scope
+---@param context table Pre-built context with tables_in_scope and optional resolved_scope
 ---@return table[] tables Array of resolved TableClass/ViewClass objects
 function Resolver.resolve_all_tables_in_query(connection, context)
   if not context or not context.tables_in_scope then
@@ -256,7 +256,15 @@ function Resolver.resolve_all_tables_in_query(connection, context)
     local table_name_lower = type(table_name) == "string" and table_name:lower() or ""
 
     if table_name and not seen_tables[table_name_lower] then
-      local resolved_table = Resolver.resolve_table(table_name, connection, context)
+      -- Try pre-resolved scope first, then on-demand resolution
+      local resolved_table = nil
+      if context.resolved_scope then
+        resolved_table = Resolver.get_resolved(context.resolved_scope, table_name)
+      end
+      if not resolved_table then
+        resolved_table = Resolver.resolve_table(table_name, connection, context)
+      end
+
       if resolved_table then
         table.insert(resolved_tables, resolved_table)
         seen_tables[table_name_lower] = true
@@ -460,6 +468,100 @@ function Resolver._find_in_tempdb(temp_name, connection)
   local table_obj = dbo_schema:find_table(temp_name)
 
   return table_obj
+end
+
+---Pre-resolve all aliases and tables in scope to actual database objects
+---Avoids repeated tree walks in providers by caching resolved objects
+---@param sql_context table The context from statement_context
+---@param connection table Connection info {server, database, connection_string}
+---@return table resolved_scope {resolved_aliases = {}, resolved_tables = {}}
+function Resolver.pre_resolve_scope(sql_context, connection)
+  local resolved_scope = {
+    resolved_aliases = {},  -- alias_name -> table_obj or nil
+    resolved_tables = {},   -- table_name -> table_obj or nil
+  }
+
+  if not sql_context then
+    debug_log("[RESOLVER] pre_resolve_scope: No sql_context provided")
+    return resolved_scope
+  end
+
+  debug_log("[RESOLVER] pre_resolve_scope: Starting pre-resolution")
+
+  -- Resolve aliases
+  if sql_context.aliases then
+    for alias_name, table_ref in pairs(sql_context.aliases) do
+      -- table_ref is just a string (the table name), not a table with metadata
+      -- Skip CTEs, temp tables, and subqueries (they don't resolve to database objects)
+      if table_ref and type(table_ref) == "string" and not table_ref:match("^#") then
+        local resolved = Resolver.resolve_table(table_ref, connection, sql_context)
+        if resolved then
+          resolved_scope.resolved_aliases[alias_name:lower()] = resolved
+          debug_log(string.format("[RESOLVER] pre_resolve_scope: Resolved alias '%s' -> '%s'",
+            alias_name, table_ref))
+        else
+          debug_log(string.format("[RESOLVER] pre_resolve_scope: Failed to resolve alias '%s' -> '%s'",
+            alias_name, table_ref))
+        end
+      end
+    end
+  end
+
+  -- Resolve direct table references (tables_in_scope without aliases)
+  if sql_context.tables_in_scope then
+    for _, table_info in ipairs(sql_context.tables_in_scope) do
+      -- table_info structure: {alias = "e", table = "dbo.EMPLOYEES", scope = "main"}
+      local table_name = table_info.table
+      if table_name and type(table_name) == "string" and not table_name:match("^#") then
+        local key = table_name:lower()
+        if not resolved_scope.resolved_tables[key] then
+          local resolved = Resolver.resolve_table(table_name, connection, sql_context)
+          if resolved then
+            resolved_scope.resolved_tables[key] = resolved
+            debug_log(string.format("[RESOLVER] pre_resolve_scope: Resolved table '%s'", table_name))
+          else
+            debug_log(string.format("[RESOLVER] pre_resolve_scope: Failed to resolve table '%s'", table_name))
+          end
+        end
+      end
+    end
+  end
+
+  debug_log(string.format("[RESOLVER] pre_resolve_scope: Complete - %d aliases, %d tables",
+    vim.tbl_count(resolved_scope.resolved_aliases),
+    vim.tbl_count(resolved_scope.resolved_tables)))
+
+  return resolved_scope
+end
+
+---Get a pre-resolved table by alias or name
+---Checks both aliases and direct table lookups (case-insensitive)
+---@param resolved_scope table The pre-resolved scope
+---@param name string Alias or table name to look up
+---@return table? resolved Table object or nil
+function Resolver.get_resolved(resolved_scope, name)
+  if not resolved_scope or not name then
+    return nil
+  end
+
+  local key = name:lower()
+
+  -- Try aliases first (most common case for qualified references)
+  local result = resolved_scope.resolved_aliases[key]
+  if result then
+    debug_log(string.format("[RESOLVER] get_resolved: Found '%s' in resolved_aliases", name))
+    return result
+  end
+
+  -- Try direct table lookups
+  result = resolved_scope.resolved_tables[key]
+  if result then
+    debug_log(string.format("[RESOLVER] get_resolved: Found '%s' in resolved_tables", name))
+    return result
+  end
+
+  debug_log(string.format("[RESOLVER] get_resolved: '%s' not found in pre-resolved scope", name))
+  return nil
 end
 
 return Resolver

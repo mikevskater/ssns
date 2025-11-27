@@ -35,8 +35,9 @@ end
 ---@param table_ref string Table reference (could be alias, name, etc.)
 ---@param connection table Connection context
 ---@param context table Pre-built context with aliases
+---@param resolved_scope table? Pre-resolved scope from source
 ---@return string? path Full path (e.g., "dbo.Employees") or nil
-local function resolve_table_path(table_ref, connection, context)
+local function resolve_table_path(table_ref, connection, context, resolved_scope)
   if not table_ref then
     return nil
   end
@@ -44,7 +45,15 @@ local function resolve_table_path(table_ref, connection, context)
   -- Try to resolve via Resolver
   local success, result = pcall(function()
     local Resolver = require('ssns.completion.metadata.resolver')
-    local table_obj = Resolver.resolve_table(table_ref, connection, context)
+
+    -- Try pre-resolved scope first
+    local table_obj = nil
+    if resolved_scope then
+      table_obj = Resolver.get_resolved(resolved_scope, table_ref)
+    end
+    if not table_obj then
+      table_obj = Resolver.resolve_table(table_ref, connection, context)
+    end
 
     if table_obj then
       local schema = table_obj.schema or table_obj.schema_name
@@ -162,7 +171,15 @@ function ColumnsProvider._get_qualified_columns(sql_context, connection, context
   end
 
   -- Fall back to database table lookup
-  local table_obj = Resolver.resolve_table(reference, connection, context)
+  -- Try pre-resolved scope first, then on-demand resolution
+  local table_obj = nil
+  if sql_context.resolved_scope then
+    table_obj = Resolver.get_resolved(sql_context.resolved_scope, reference)
+  end
+  if not table_obj then
+    table_obj = Resolver.resolve_table(reference, connection, context)
+  end
+
   if not table_obj then
     return {}
   end
@@ -177,7 +194,7 @@ function ColumnsProvider._get_qualified_columns(sql_context, connection, context
   local items = {}
 
   -- Resolve table path for weight lookup
-  local table_path = resolve_table_path(reference, connection, context)
+  local table_path = resolve_table_path(reference, connection, context, sql_context.resolved_scope)
 
   for _, col in ipairs(columns) do
     local item = Utils.format_column(col, {
@@ -354,7 +371,15 @@ function ColumnsProvider._get_qualified_bracket_columns(sql_context, connection,
   end
 
   -- Fall back to database table lookup
-  local table_obj = Resolver.resolve_table(reference, connection, context)
+  -- Try pre-resolved scope first, then on-demand resolution
+  local table_obj = nil
+  if sql_context.resolved_scope then
+    table_obj = Resolver.get_resolved(sql_context.resolved_scope, reference)
+  end
+  if not table_obj then
+    table_obj = Resolver.resolve_table(reference, connection, context)
+  end
+
   if not table_obj then
     return {}
   end
@@ -369,7 +394,7 @@ function ColumnsProvider._get_qualified_bracket_columns(sql_context, connection,
   local items = {}
 
   -- Resolve table path for weight lookup
-  local table_path = resolve_table_path(reference, connection, context)
+  local table_path = resolve_table_path(reference, connection, context, sql_context.resolved_scope)
 
   for _, col in ipairs(columns) do
     local item = Utils.format_column(col, {
