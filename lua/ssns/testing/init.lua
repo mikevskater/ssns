@@ -269,6 +269,180 @@ function M.run_unit_test(test_id, opts)
   return result
 end
 
+--- Run a range of unit tests by ID
+--- @param start_id number Starting test ID
+--- @param end_id number Ending test ID
+--- @param opts table|nil Optional configuration
+--- @return table results {total, passed, failed, results: table[]}
+function M.run_unit_tests_by_id_range(start_id, end_id, opts)
+  opts = opts or {}
+
+  vim.notify(string.format("Running unit tests #%d - #%d...", start_id, end_id), vim.log.levels.INFO)
+
+  local results = unit_runner.run_by_id_range(start_id, end_id)
+
+  if results.total == 0 then
+    vim.notify(string.format("No unit tests found in range #%d - #%d", start_id, end_id), vim.log.levels.WARN)
+    return results
+  end
+
+  -- Display results
+  reporter.display_unit_results(results)
+
+  -- Write markdown report
+  local output_path = vim.fn.stdpath("data") .. string.format("/ssns/unit_test_results_%d_%d.md", start_id, end_id)
+  local success = reporter.write_unit_markdown(results, output_path)
+
+  if success then
+    vim.notify(string.format("Unit test results written to: %s", output_path), vim.log.levels.INFO)
+  end
+
+  return results
+end
+
+--- Run IntelliSense provider tests
+--- @param opts table|nil Optional configuration {provider?: string}
+--- @return table results {total, passed, failed, results: table[]}
+function M.run_provider_tests(opts)
+  opts = opts or {}
+
+  local filter_msg = opts.provider and string.format(" (provider: %s)", opts.provider) or ""
+  vim.notify(string.format("Running provider tests%s...", filter_msg), vim.log.levels.INFO)
+
+  -- Build filter options
+  local filter_opts = {}
+  if opts.provider then
+    filter_opts.type = opts.provider
+  else
+    filter_opts.type = "provider"
+  end
+
+  local results = unit_runner.run_all(filter_opts)
+
+  if results.total == 0 then
+    vim.notify("No provider tests found", vim.log.levels.WARN)
+    return results
+  end
+
+  -- Display results
+  reporter.display_unit_results(results)
+
+  -- Write markdown report
+  local suffix = opts.provider and string.format("_provider_%s", opts.provider) or "_providers"
+  local output_path = vim.fn.stdpath("data") .. string.format("/ssns/unit_test_results%s.md", suffix)
+  local success = reporter.write_unit_markdown(results, output_path)
+
+  if success then
+    vim.notify(string.format("Provider test results written to: %s", output_path), vim.log.levels.INFO)
+  end
+
+  return results
+end
+
+--- Run IntelliSense context tests
+--- @param opts table|nil Optional configuration {context_type?: string}
+--- @return table results {total, passed, failed, results: table[]}
+function M.run_context_tests(opts)
+  opts = opts or {}
+
+  local filter_msg = opts.context_type and string.format(" (type: %s)", opts.context_type) or ""
+  vim.notify(string.format("Running context tests%s...", filter_msg), vim.log.levels.INFO)
+
+  -- Build filter options
+  local filter_opts = {}
+  if opts.context_type then
+    filter_opts.type = opts.context_type
+  else
+    filter_opts.type = "context"
+  end
+
+  local results = unit_runner.run_all(filter_opts)
+
+  if results.total == 0 then
+    vim.notify("No context tests found", vim.log.levels.WARN)
+    return results
+  end
+
+  -- Display results
+  reporter.display_unit_results(results)
+
+  -- Write markdown report
+  local suffix = opts.context_type and string.format("_context_%s", opts.context_type) or "_context"
+  local output_path = vim.fn.stdpath("data") .. string.format("/ssns/unit_test_results%s.md", suffix)
+  local success = reporter.write_unit_markdown(results, output_path)
+
+  if success then
+    vim.notify(string.format("Context test results written to: %s", output_path), vim.log.levels.INFO)
+  end
+
+  return results
+end
+
+--- Run all IntelliSense tests (providers + context + utilities)
+--- @param opts table|nil Optional configuration
+--- @return table results {total, passed, failed, results: table[]}
+function M.run_intellisense_tests(opts)
+  opts = opts or {}
+
+  vim.notify("Running all IntelliSense tests (providers, context, utilities)...", vim.log.levels.INFO)
+
+  -- Run all tests and aggregate results
+  local all_results = {
+    total = 0,
+    passed = 0,
+    failed = 0,
+    results = {}
+  }
+
+  -- Run provider tests
+  local provider_results = unit_runner.run_all({ type = "provider" })
+  all_results.total = all_results.total + provider_results.total
+  all_results.passed = all_results.passed + provider_results.passed
+  all_results.failed = all_results.failed + provider_results.failed
+  for _, result in ipairs(provider_results.results) do
+    table.insert(all_results.results, result)
+  end
+
+  -- Run context tests
+  local context_results = unit_runner.run_all({ type = "context" })
+  all_results.total = all_results.total + context_results.total
+  all_results.passed = all_results.passed + context_results.passed
+  all_results.failed = all_results.failed + context_results.failed
+  for _, result in ipairs(context_results.results) do
+    table.insert(all_results.results, result)
+  end
+
+  -- Run utility tests (fuzzy_matcher, type_compatibility, fk_graph)
+  local utility_types = { "fuzzy_matcher", "type_compatibility", "fk_graph" }
+  for _, util_type in ipairs(utility_types) do
+    local util_results = unit_runner.run_all({ type = util_type })
+    all_results.total = all_results.total + util_results.total
+    all_results.passed = all_results.passed + util_results.passed
+    all_results.failed = all_results.failed + util_results.failed
+    for _, result in ipairs(util_results.results) do
+      table.insert(all_results.results, result)
+    end
+  end
+
+  if all_results.total == 0 then
+    vim.notify("No IntelliSense tests found", vim.log.levels.WARN)
+    return all_results
+  end
+
+  -- Display results
+  reporter.display_unit_results(all_results)
+
+  -- Write markdown report
+  local output_path = vim.fn.stdpath("data") .. "/ssns/unit_test_results_intellisense.md"
+  local success = reporter.write_unit_markdown(all_results, output_path)
+
+  if success then
+    vim.notify(string.format("IntelliSense test results written to: %s", output_path), vim.log.levels.INFO)
+  end
+
+  return all_results
+end
+
 --- Expose submodules for direct access
 M.runner = runner
 M.reporter = reporter

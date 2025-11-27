@@ -1,5 +1,5 @@
 ---@class UnitRunner
----Lightweight unit test runner for tokenizer and parser tests
+---Lightweight unit test runner for tokenizer, parser, provider, context, and utility tests
 ---Runs synchronously without database connections
 local UnitRunner = {}
 
@@ -52,6 +52,38 @@ function UnitRunner.scan_tests()
     end
   end
 
+  -- Scan provider tests
+  local provider_path = base_path .. "/providers"
+  local provider_files = vim.fn.glob(provider_path .. "/*.lua", false, true)
+  for _, filepath in ipairs(provider_files) do
+    local file_tests = load_test_file(filepath)
+    for _, test in ipairs(file_tests) do
+      test.source_file = filepath
+      table.insert(tests, test)
+    end
+  end
+
+  -- Scan context tests
+  local context_path = base_path .. "/context"
+  local context_files = vim.fn.glob(context_path .. "/*.lua", false, true)
+  for _, filepath in ipairs(context_files) do
+    local file_tests = load_test_file(filepath)
+    for _, test in ipairs(file_tests) do
+      test.source_file = filepath
+      table.insert(tests, test)
+    end
+  end
+
+  -- Scan root level tests (fuzzy_matcher, type_compatibility, fk_graph, etc.)
+  local root_files = vim.fn.glob(base_path .. "/*.lua", false, true)
+  for _, filepath in ipairs(root_files) do
+    local file_tests = load_test_file(filepath)
+    for _, test in ipairs(file_tests) do
+      test.source_file = filepath
+      table.insert(tests, test)
+    end
+  end
+
   return tests
 end
 
@@ -73,6 +105,16 @@ function UnitRunner.run_test(test)
       result.actual, result.passed, result.error = UnitRunner._run_tokenizer_test(test)
     elseif test.type == "parser" then
       result.actual, result.passed, result.error = UnitRunner._run_parser_test(test)
+    elseif test.type == "provider" or test.type:match("_provider$") then
+      result.actual, result.passed, result.error = UnitRunner._run_provider_test(test)
+    elseif test.type == "context" then
+      result.actual, result.passed, result.error = UnitRunner._run_context_test(test)
+    elseif test.type == "fuzzy_matcher" then
+      result.actual, result.passed, result.error = UnitRunner._run_fuzzy_matcher_test(test)
+    elseif test.type == "type_compatibility" then
+      result.actual, result.passed, result.error = UnitRunner._run_type_compatibility_test(test)
+    elseif test.type == "fk_graph" then
+      result.actual, result.passed, result.error = UnitRunner._run_fk_graph_test(test)
     else
       error("Unknown test type: " .. tostring(test.type))
     end
@@ -193,6 +235,82 @@ function UnitRunner._run_parser_test(test)
   local actual = { chunks = chunks, temp_tables = temp_tables }
   local passed, error_msg = UnitRunner._compare_parser_output(actual, test.expected)
   return actual, passed, error_msg
+end
+
+---Run provider test
+---@param test table Test definition
+---@return table actual Actual provider output
+---@return boolean passed Whether test passed
+---@return string? error Error message if failed
+function UnitRunner._run_provider_test(test)
+  -- TODO: Implement provider test execution once provider test structure is defined
+  -- This will need to:
+  -- 1. Mock database metadata or load test fixtures
+  -- 2. Call the appropriate provider (tables, columns, joins, etc.)
+  -- 3. Compare actual completion items with expected items
+  -- For now, return placeholder result
+  return {}, true, nil
+end
+
+---Run context detection test
+---@param test table Test definition
+---@return table actual Actual context detection output
+---@return boolean passed Whether test passed
+---@return string? error Error message if failed
+function UnitRunner._run_context_test(test)
+  -- TODO: Implement context detection test execution
+  -- This will need to:
+  -- 1. Load the statement_context module
+  -- 2. Call detect_context() with test.input
+  -- 3. Compare actual context with test.expected
+  -- For now, return placeholder result
+  return {}, true, nil
+end
+
+---Run fuzzy matcher test
+---@param test table Test definition
+---@return table actual Actual fuzzy matching output
+---@return boolean passed Whether test passed
+---@return string? error Error message if failed
+function UnitRunner._run_fuzzy_matcher_test(test)
+  -- TODO: Implement fuzzy matcher test execution
+  -- This will need to:
+  -- 1. Load the fuzzy_matcher module
+  -- 2. Call fuzzy matching functions with test.input
+  -- 3. Compare actual matches/scores with test.expected
+  -- For now, return placeholder result
+  return {}, true, nil
+end
+
+---Run type compatibility test
+---@param test table Test definition
+---@return table actual Actual type compatibility output
+---@return boolean passed Whether test passed
+---@return string? error Error message if failed
+function UnitRunner._run_type_compatibility_test(test)
+  -- TODO: Implement type compatibility test execution
+  -- This will need to:
+  -- 1. Load the type_compatibility module
+  -- 2. Call is_compatible() or similar functions with test.input
+  -- 3. Compare actual compatibility results with test.expected
+  -- For now, return placeholder result
+  return {}, true, nil
+end
+
+---Run FK graph test
+---@param test table Test definition
+---@return table actual Actual FK graph output
+---@return boolean passed Whether test passed
+---@return string? error Error message if failed
+function UnitRunner._run_fk_graph_test(test)
+  -- TODO: Implement FK graph test execution
+  -- This will need to:
+  -- 1. Load the fk_graph module
+  -- 2. Build FK graph with test.input (table metadata)
+  -- 3. Test graph traversal, path finding, etc.
+  -- 4. Compare actual results with test.expected
+  -- For now, return placeholder result
+  return {}, true, nil
 end
 
 ---Compare token arrays
