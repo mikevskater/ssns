@@ -11,8 +11,7 @@ return {
     description = "CTE - reference CTE name in FROM clause",
     database = "vim_dadbod_test",
     query = [[WITH EmployeeCTE AS (SELECT * FROM Employees)
-SELECT * FROM ]],
-    cursor = { line = 1, col = 14 },
+SELECT * FROM █]],
     expected = {
       type = "table",
       items = {
@@ -29,8 +28,7 @@ SELECT * FROM ]],
     description = "CTE - reference CTE in JOIN",
     database = "vim_dadbod_test",
     query = [[WITH DeptCTE AS (SELECT * FROM Departments)
-SELECT * FROM Employees e JOIN ]],
-    cursor = { line = 1, col = 31 },
+SELECT * FROM Employees e JOIN █]],
     expected = {
       type = "table",
       items = {
@@ -48,8 +46,7 @@ SELECT * FROM Employees e JOIN ]],
     query = [[WITH
   EmpCTE AS (SELECT * FROM Employees),
   DeptCTE AS (SELECT * FROM Departments)
-SELECT * FROM ]],
-    cursor = { line = 3, col = 14 },
+SELECT * FROM █]],
     expected = {
       type = "table",
       items = {
@@ -66,8 +63,7 @@ SELECT * FROM ]],
     description = "CTE - CTE name completion with prefix",
     database = "vim_dadbod_test",
     query = [[WITH EmployeeCTE AS (SELECT * FROM Employees)
-SELECT * FROM Emp]],
-    cursor = { line = 1, col = 17 },
+SELECT * FROM Emp█]],
     expected = {
       type = "table",
       items = {
@@ -83,8 +79,7 @@ SELECT * FROM Emp]],
     description = "CTE - CTE with explicit column list",
     database = "vim_dadbod_test",
     query = [[WITH EmployeeCTE (ID, Name, Dept) AS (SELECT EmployeeID, FirstName, DepartmentID FROM Employees)
-SELECT * FROM ]],
-    cursor = { line = 1, col = 14 },
+SELECT * FROM █]],
     expected = {
       type = "table",
       items = {
@@ -101,8 +96,7 @@ SELECT * FROM ]],
     query = [[WITH
   Base AS (SELECT * FROM Employees),
   Derived AS (SELECT * FROM Base)
-SELECT * FROM ]],
-    cursor = { line = 3, col = 14 },
+SELECT * FROM █]],
     expected = {
       type = "table",
       items = {
@@ -122,8 +116,7 @@ SELECT * FROM ]],
   UNION ALL
   SELECT e.EmployeeID, e.DepartmentID, eh.Level + 1 FROM Employees e JOIN EmpHierarchy eh ON e.DepartmentID = eh.EmployeeID
 )
-SELECT * FROM ]],
-    cursor = { line = 5, col = 14 },
+SELECT * FROM █]],
     expected = {
       type = "table",
       items = {
@@ -139,8 +132,7 @@ SELECT * FROM ]],
     description = "CTE - CTE in subquery FROM",
     database = "vim_dadbod_test",
     query = [[WITH DeptCTE AS (SELECT * FROM Departments)
-SELECT * FROM Employees WHERE DepartmentID IN (SELECT DepartmentID FROM )]],
-    cursor = { line = 1, col = 70 },
+SELECT * FROM Employees WHERE DepartmentID IN (SELECT DepartmentID FROM █)]],
     expected = {
       type = "table",
       items = {
@@ -155,8 +147,7 @@ SELECT * FROM Employees WHERE DepartmentID IN (SELECT DepartmentID FROM )]],
     number = 4409,
     description = "CTE - CTE not visible outside query",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM ]],
-    cursor = { line = 0, col = 14 },
+    query = [[SELECT * FROM █]],
     expected = {
       type = "table",
       items = {
@@ -176,8 +167,7 @@ SELECT * FROM Employees WHERE DepartmentID IN (SELECT DepartmentID FROM )]],
     description = "CTE - case insensitive CTE name",
     database = "vim_dadbod_test",
     query = [[WITH employeecte AS (SELECT * FROM Employees)
-SELECT * FROM EMPLOYEE]],
-    cursor = { line = 1, col = 22 },
+SELECT * FROM EMPLOYEE█]],
     expected = {
       type = "table",
       items = {
@@ -198,8 +188,7 @@ SELECT * FROM EMPLOYEE]],
     description = "CTE - columns from CTE (inherited from source)",
     database = "vim_dadbod_test",
     query = [[WITH EmpCTE AS (SELECT * FROM Employees)
-SELECT  FROM EmpCTE]],
-    cursor = { line = 1, col = 7 },
+SELECT █ FROM EmpCTE]],
     expected = {
       type = "column",
       items = {
@@ -217,8 +206,7 @@ SELECT  FROM EmpCTE]],
     description = "CTE - columns from CTE with alias",
     database = "vim_dadbod_test",
     query = [[WITH EmpCTE AS (SELECT * FROM Employees)
-SELECT e. FROM EmpCTE e]],
-    cursor = { line = 1, col = 9 },
+SELECT e.█ FROM EmpCTE e]],
     expected = {
       type = "column",
       items = {
@@ -235,8 +223,7 @@ SELECT e. FROM EmpCTE e]],
     description = "CTE - columns from CTE with explicit column list",
     database = "vim_dadbod_test",
     query = [[WITH EmpCTE (ID, Name, Dept) AS (SELECT EmployeeID, FirstName, DepartmentID FROM Employees)
-SELECT  FROM EmpCTE]],
-    cursor = { line = 1, col = 7 },
+SELECT █ FROM EmpCTE]],
     expected = {
       type = "column",
       items = {
@@ -257,8 +244,7 @@ SELECT  FROM EmpCTE]],
     description = "CTE - columns from CTE with selected columns",
     database = "vim_dadbod_test",
     query = [[WITH EmpCTE AS (SELECT EmployeeID, FirstName FROM Employees)
-SELECT  FROM EmpCTE]],
-    cursor = { line = 1, col = 7 },
+SELECT █ FROM EmpCTE]],
     expected = {
       type = "column",
       items = {
@@ -278,8 +264,7 @@ SELECT  FROM EmpCTE]],
     description = "CTE - columns from CTE with aliased columns",
     database = "vim_dadbod_test",
     query = [[WITH EmpCTE AS (SELECT EmployeeID AS ID, FirstName AS Name FROM Employees)
-SELECT  FROM EmpCTE]],
-    cursor = { line = 1, col = 7 },
+SELECT █ FROM EmpCTE]],
     expected = {
       type = "column",
       items = {
@@ -303,8 +288,7 @@ SELECT  FROM EmpCTE]],
   UNION ALL
   SELECT e.EmployeeID, e.DepartmentID, eh.Level + 1 FROM Employees e JOIN EmpHierarchy eh ON e.DepartmentID = eh.EmployeeID
 )
-SELECT  FROM EmpHierarchy]],
-    cursor = { line = 5, col = 7 },
+SELECT █ FROM EmpHierarchy]],
     expected = {
       type = "column",
       items = {
@@ -323,8 +307,7 @@ SELECT  FROM EmpHierarchy]],
     query = [[WITH
   EmpCTE AS (SELECT EmployeeID, FirstName FROM Employees),
   DeptCTE AS (SELECT DepartmentID, DepartmentName FROM Departments)
-SELECT e., d. FROM EmpCTE e, DeptCTE d]],
-    cursor = { line = 3, col = 9 },
+SELECT e.█, d. FROM EmpCTE e, DeptCTE d]],
     expected = {
       type = "column",
       items = {
@@ -346,8 +329,7 @@ SELECT e., d. FROM EmpCTE e, DeptCTE d]],
     query = [[WITH
   EmpCTE AS (SELECT EmployeeID, FirstName FROM Employees),
   DeptCTE AS (SELECT DepartmentID, DepartmentName FROM Departments)
-SELECT e.EmployeeID, d. FROM EmpCTE e, DeptCTE d]],
-    cursor = { line = 3, col = 23 },
+SELECT e.EmployeeID, d.█ FROM EmpCTE e, DeptCTE d]],
     expected = {
       type = "column",
       items = {
@@ -367,8 +349,7 @@ SELECT e.EmployeeID, d. FROM EmpCTE e, DeptCTE d]],
     description = "CTE - columns in ON clause with CTE",
     database = "vim_dadbod_test",
     query = [[WITH EmpCTE AS (SELECT * FROM Employees)
-SELECT * FROM EmpCTE e JOIN Departments d ON e.]],
-    cursor = { line = 1, col = 46 },
+SELECT * FROM EmpCTE e JOIN Departments d ON e.█]],
     expected = {
       type = "column",
       items = {
@@ -384,8 +365,7 @@ SELECT * FROM EmpCTE e JOIN Departments d ON e.]],
     description = "CTE - columns in WHERE with CTE",
     database = "vim_dadbod_test",
     query = [[WITH EmpCTE AS (SELECT * FROM Employees)
-SELECT * FROM EmpCTE WHERE ]],
-    cursor = { line = 1, col = 27 },
+SELECT * FROM EmpCTE WHERE █]],
     expected = {
       type = "column",
       items = {
@@ -406,8 +386,7 @@ SELECT * FROM EmpCTE WHERE ]],
     description = "CTE - CTE with aggregation",
     database = "vim_dadbod_test",
     query = [[WITH DeptStats AS (SELECT DepartmentID, COUNT(*) AS EmpCount, AVG(Salary) AS AvgSalary FROM Employees GROUP BY DepartmentID)
-SELECT  FROM DeptStats]],
-    cursor = { line = 1, col = 7 },
+SELECT █ FROM DeptStats]],
     expected = {
       type = "column",
       items = {
@@ -424,8 +403,7 @@ SELECT  FROM DeptStats]],
     description = "CTE - CTE with JOIN inside",
     database = "vim_dadbod_test",
     query = [[WITH EmpDept AS (SELECT e.EmployeeID, e.FirstName, d.DepartmentName FROM Employees e JOIN Departments d ON e.DepartmentID = d.DepartmentID)
-SELECT  FROM EmpDept]],
-    cursor = { line = 1, col = 7 },
+SELECT █ FROM EmpDept]],
     expected = {
       type = "column",
       items = {
@@ -442,8 +420,7 @@ SELECT  FROM EmpDept]],
     description = "CTE - CTE with window function",
     database = "vim_dadbod_test",
     query = [[WITH RankedEmps AS (SELECT EmployeeID, FirstName, Salary, ROW_NUMBER() OVER (ORDER BY Salary DESC) AS Rank FROM Employees)
-SELECT  FROM RankedEmps]],
-    cursor = { line = 1, col = 7 },
+SELECT █ FROM RankedEmps]],
     expected = {
       type = "column",
       items = {
@@ -461,8 +438,7 @@ SELECT  FROM RankedEmps]],
     description = "CTE - CTE used in INSERT",
     database = "vim_dadbod_test",
     query = [[WITH SourceData AS (SELECT * FROM Employees WHERE DepartmentID = 1)
-INSERT INTO Projects SELECT * FROM ]],
-    cursor = { line = 1, col = 35 },
+INSERT INTO Projects SELECT * FROM █]],
     expected = {
       type = "table",
       items = {
@@ -478,8 +454,7 @@ INSERT INTO Projects SELECT * FROM ]],
     description = "CTE - CTE used in UPDATE FROM",
     database = "vim_dadbod_test",
     query = [[WITH DeptAvg AS (SELECT DepartmentID, AVG(Salary) AS AvgSal FROM Employees GROUP BY DepartmentID)
-UPDATE e SET e.Salary = d.AvgSal FROM Employees e JOIN ]],
-    cursor = { line = 1, col = 52 },
+UPDATE e SET e.Salary = d.AvgSal FROM Employees e JOIN █]],
     expected = {
       type = "table",
       items = {
@@ -494,8 +469,7 @@ UPDATE e SET e.Salary = d.AvgSal FROM Employees e JOIN ]],
     description = "CTE - CTE used in DELETE",
     database = "vim_dadbod_test",
     query = [[WITH ToDelete AS (SELECT EmployeeID FROM Employees WHERE IsActive = 0)
-DELETE FROM Employees WHERE EmployeeID IN (SELECT  FROM ToDelete)]],
-    cursor = { line = 1, col = 56 },
+DELETE FROM Employees WHERE EmployeeID IN (SELECT █ FROM ToDelete)]],
     expected = {
       type = "column",
       items = {
@@ -514,8 +488,7 @@ DELETE FROM Employees WHERE EmployeeID IN (SELECT  FROM ToDelete)]],
   UNION ALL
   SELECT Id AS ID, Name AS Name FROM Customers
 )
-SELECT  FROM Combined]],
-    cursor = { line = 5, col = 7 },
+SELECT █ FROM Combined]],
     expected = {
       type = "column",
       items = {
@@ -531,8 +504,7 @@ SELECT  FROM Combined]],
     description = "CTE - CTE with CASE expression",
     database = "vim_dadbod_test",
     query = [[WITH EmpCategory AS (SELECT EmployeeID, CASE WHEN Salary > 100000 THEN 'High' ELSE 'Normal' END AS SalaryCategory FROM Employees)
-SELECT  FROM EmpCategory]],
-    cursor = { line = 1, col = 7 },
+SELECT █ FROM EmpCategory]],
     expected = {
       type = "column",
       items = {
@@ -548,8 +520,7 @@ SELECT  FROM EmpCategory]],
     description = "CTE - CTE with subquery in SELECT",
     database = "vim_dadbod_test",
     query = [[WITH EmpWithDept AS (SELECT EmployeeID, (SELECT DepartmentName FROM Departments d WHERE d.DepartmentID = e.DepartmentID) AS DeptName FROM Employees e)
-SELECT  FROM EmpWithDept]],
-    cursor = { line = 1, col = 7 },
+SELECT █ FROM EmpWithDept]],
     expected = {
       type = "column",
       items = {
@@ -565,8 +536,7 @@ SELECT  FROM EmpWithDept]],
     description = "CTE - CTE in EXISTS subquery",
     database = "vim_dadbod_test",
     query = [[WITH ActiveDepts AS (SELECT DepartmentID FROM Departments WHERE Budget > 0)
-SELECT * FROM Employees e WHERE EXISTS (SELECT 1 FROM  WHERE DepartmentID = e.DepartmentID)]],
-    cursor = { line = 1, col = 53 },
+SELECT * FROM Employees e WHERE EXISTS (SELECT 1 FROM █ WHERE DepartmentID = e.DepartmentID)]],
     expected = {
       type = "table",
       items = {
@@ -586,8 +556,7 @@ SELECT * FROM Employees e WHERE EXISTS (SELECT 1 FROM  WHERE DepartmentID = e.De
     description = "CTE - CTE name shadows table name",
     database = "vim_dadbod_test",
     query = [[WITH Employees AS (SELECT EmployeeID, FirstName FROM Employees WHERE DepartmentID = 1)
-SELECT  FROM Employees]],
-    cursor = { line = 1, col = 7 },
+SELECT █ FROM Employees]],
     expected = {
       type = "column",
       items = {
@@ -612,8 +581,7 @@ SELECT  FROM Employees]],
   UNION
   SELECT DepartmentID FROM Departments
 )
-SELECT  FROM Combined]],
-    cursor = { line = 5, col = 7 },
+SELECT █ FROM Combined]],
     expected = {
       type = "column",
       items = {
@@ -631,8 +599,7 @@ SELECT  FROM Combined]],
   L1 AS (SELECT * FROM Employees),
   L2 AS (SELECT * FROM L1 WHERE DepartmentID = 1),
   L3 AS (SELECT EmployeeID, FirstName FROM L2)
-SELECT  FROM L3]],
-    cursor = { line = 4, col = 7 },
+SELECT █ FROM L3]],
     expected = {
       type = "column",
       items = {
@@ -652,8 +619,7 @@ SELECT  FROM L3]],
     description = "CTE - CTE with * expansion tracking",
     database = "vim_dadbod_test",
     query = [[WITH AllEmps AS (SELECT * FROM Employees)
-SELECT * FROM AllEmps WHERE ]],
-    cursor = { line = 1, col = 28 },
+SELECT * FROM AllEmps WHERE █]],
     expected = {
       type = "column",
       items = {
@@ -671,8 +637,7 @@ SELECT * FROM AllEmps WHERE ]],
     description = "CTE - CTE referenced multiple times",
     database = "vim_dadbod_test",
     query = [[WITH EmpCTE AS (SELECT * FROM Employees)
-SELECT * FROM EmpCTE e1 JOIN EmpCTE e2 ON e1.DepartmentID = e2.]],
-    cursor = { line = 1, col = 61 },
+SELECT * FROM EmpCTE e1 JOIN EmpCTE e2 ON e1.DepartmentID = e2.█]],
     expected = {
       type = "column",
       items = {
@@ -687,8 +652,7 @@ SELECT * FROM EmpCTE e1 JOIN EmpCTE e2 ON e1.DepartmentID = e2.]],
     description = "CTE - CTE with computed column",
     database = "vim_dadbod_test",
     query = [[WITH EmpFull AS (SELECT EmployeeID, FirstName + ' ' + LastName AS FullName FROM Employees)
-SELECT  FROM EmpFull]],
-    cursor = { line = 1, col = 7 },
+SELECT █ FROM EmpFull]],
     expected = {
       type = "column",
       items = {
@@ -706,8 +670,7 @@ SELECT  FROM EmpFull]],
     query = [[WITH Outer AS (
   SELECT * FROM Employees
 )
-SELECT * FROM ]],
-    cursor = { line = 3, col = 14 },
+SELECT * FROM █]],
     expected = {
       type = "table",
       items = {
@@ -722,8 +685,7 @@ SELECT * FROM ]],
     description = "CTE - CTE with TOP clause",
     database = "vim_dadbod_test",
     query = [[WITH TopEmps AS (SELECT TOP 10 * FROM Employees ORDER BY Salary DESC)
-SELECT  FROM TopEmps]],
-    cursor = { line = 1, col = 7 },
+SELECT █ FROM TopEmps]],
     expected = {
       type = "column",
       items = {
@@ -740,8 +702,7 @@ SELECT  FROM TopEmps]],
     description = "CTE - CTE with DISTINCT",
     database = "vim_dadbod_test",
     query = [[WITH UniqueDepts AS (SELECT DISTINCT DepartmentID FROM Employees)
-SELECT  FROM UniqueDepts]],
-    cursor = { line = 1, col = 7 },
+SELECT █ FROM UniqueDepts]],
     expected = {
       type = "column",
       items = {
@@ -759,8 +720,7 @@ SELECT  FROM UniqueDepts]],
     description = "CTE - empty column list error handling",
     database = "vim_dadbod_test",
     query = [[WITH InvalidCTE () AS (SELECT * FROM Employees)
-SELECT * FROM ]],
-    cursor = { line = 1, col = 14 },
+SELECT * FROM █]],
     expected = {
       type = "table",
       items = {
@@ -781,8 +741,7 @@ SELECT * FROM ]],
     description = "CTE - ORDER BY with CTE columns",
     database = "vim_dadbod_test",
     query = [[WITH EmpCTE AS (SELECT EmployeeID, FirstName, Salary FROM Employees)
-SELECT * FROM EmpCTE ORDER BY ]],
-    cursor = { line = 1, col = 30 },
+SELECT * FROM EmpCTE ORDER BY █]],
     expected = {
       type = "column",
       items = {
@@ -799,8 +758,7 @@ SELECT * FROM EmpCTE ORDER BY ]],
     description = "CTE - GROUP BY with CTE columns",
     database = "vim_dadbod_test",
     query = [[WITH EmpCTE AS (SELECT DepartmentID, Salary FROM Employees)
-SELECT DepartmentID, SUM(Salary) FROM EmpCTE GROUP BY ]],
-    cursor = { line = 1, col = 53 },
+SELECT DepartmentID, SUM(Salary) FROM EmpCTE GROUP BY █]],
     expected = {
       type = "column",
       items = {
@@ -815,8 +773,7 @@ SELECT DepartmentID, SUM(Salary) FROM EmpCTE GROUP BY ]],
     description = "CTE - HAVING with CTE columns",
     database = "vim_dadbod_test",
     query = [[WITH EmpCTE AS (SELECT DepartmentID, Salary FROM Employees)
-SELECT DepartmentID, AVG(Salary) FROM EmpCTE GROUP BY DepartmentID HAVING AVG() > 50000]],
-    cursor = { line = 1, col = 79 },
+SELECT DepartmentID, AVG(Salary) FROM EmpCTE GROUP BY DepartmentID HAVING AVG(█) > 50000]],
     expected = {
       type = "column",
       items = {
@@ -834,8 +791,7 @@ SELECT DepartmentID, AVG(Salary) FROM EmpCTE GROUP BY DepartmentID HAVING AVG() 
   Emp AS (SELECT EmployeeID, FirstName FROM Employees),
   Dept AS (SELECT DepartmentID, DepartmentName FROM Departments),
   Proj AS (SELECT ProjectID, ProjectName FROM Projects)
-SELECT e.EmployeeID, d.DepartmentName, p. FROM Emp e, Dept d, Proj p]],
-    cursor = { line = 4, col = 45 },
+SELECT e.EmployeeID, d.DepartmentName, p.█ FROM Emp e, Dept d, Proj p]],
     expected = {
       type = "column",
       items = {
@@ -855,8 +811,7 @@ SELECT e.EmployeeID, d.DepartmentName, p. FROM Emp e, Dept d, Proj p]],
     description = "CTE - CTE in correlated subquery",
     database = "vim_dadbod_test",
     query = [[WITH DeptCTE AS (SELECT DepartmentID, Budget FROM Departments)
-SELECT * FROM Employees e WHERE e.Salary > (SELECT Budget FROM DeptCTE d WHERE d.DepartmentID = e.)]],
-    cursor = { line = 1, col = 99 },
+SELECT * FROM Employees e WHERE e.Salary > (SELECT Budget FROM DeptCTE d WHERE d.DepartmentID = e.█)]],
     expected = {
       type = "column",
       items = {
@@ -871,8 +826,7 @@ SELECT * FROM Employees e WHERE e.Salary > (SELECT Budget FROM DeptCTE d WHERE d
     description = "CTE - CTE with CROSS APPLY",
     database = "vim_dadbod_test",
     query = [[WITH DeptCTE AS (SELECT * FROM Departments)
-SELECT * FROM DeptCTE d CROSS APPLY (SELECT * FROM Employees e WHERE e.DepartmentID = d.) x]],
-    cursor = { line = 1, col = 86 },
+SELECT * FROM DeptCTE d CROSS APPLY (SELECT * FROM Employees e WHERE e.DepartmentID = d.█) x]],
     expected = {
       type = "column",
       items = {
@@ -887,8 +841,7 @@ SELECT * FROM DeptCTE d CROSS APPLY (SELECT * FROM Employees e WHERE e.Departmen
     description = "CTE - CTE with OUTER APPLY",
     database = "vim_dadbod_test",
     query = [[WITH EmpCTE AS (SELECT * FROM Employees)
-SELECT * FROM EmpCTE e OUTER APPLY (SELECT TOP 1 * FROM Orders o WHERE o.EmployeeId = e.) x]],
-    cursor = { line = 1, col = 87 },
+SELECT * FROM EmpCTE e OUTER APPLY (SELECT TOP 1 * FROM Orders o WHERE o.EmployeeId = e.█) x]],
     expected = {
       type = "column",
       items = {
@@ -904,9 +857,8 @@ SELECT * FROM EmpCTE e OUTER APPLY (SELECT TOP 1 * FROM Orders o WHERE o.Employe
     database = "vim_dadbod_test",
     query = [[WITH SourceCTE AS (SELECT * FROM Employees WHERE DepartmentID = 1)
 MERGE INTO Employees AS target
-USING  AS source
+USING █ AS source
 ON target.EmployeeID = source.EmployeeID]],
-    cursor = { line = 2, col = 6 },
     expected = {
       type = "table",
       items = {
@@ -923,8 +875,7 @@ ON target.EmployeeID = source.EmployeeID]],
     query = [[WITH SourceCTE AS (SELECT EmployeeID, FirstName, Salary FROM Employees WHERE DepartmentID = 1)
 MERGE INTO Employees AS target
 USING SourceCTE AS source
-ON target.EmployeeID = source.]],
-    cursor = { line = 3, col = 30 },
+ON target.EmployeeID = source.█]],
     expected = {
       type = "column",
       items = {
@@ -940,9 +891,8 @@ ON target.EmployeeID = source.]],
     database = "vim_dadbod_test",
     query = [[WITH ToUpdate AS (SELECT EmployeeID FROM Employees WHERE DepartmentID = 1)
 UPDATE Employees SET Salary = Salary * 1.1
-OUTPUT inserted.
+OUTPUT inserted.█
 WHERE EmployeeID IN (SELECT EmployeeID FROM ToUpdate)]],
-    cursor = { line = 2, col = 16 },
     expected = {
       type = "column",
       items = {

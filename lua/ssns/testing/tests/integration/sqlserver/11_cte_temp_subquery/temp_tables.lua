@@ -11,8 +11,7 @@ return {
     description = "Temp table - local temp table in FROM",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmployees (ID INT, Name VARCHAR(100))
-SELECT * FROM ]],
-    cursor = { line = 1, col = 14 },
+SELECT * FROM █]],
     expected = {
       type = "table",
       items = {
@@ -28,8 +27,7 @@ SELECT * FROM ]],
     description = "Temp table - local temp table with prefix filter",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmployees (ID INT, Name VARCHAR(100))
-SELECT * FROM #Temp]],
-    cursor = { line = 1, col = 19 },
+SELECT * FROM #Temp█]],
     expected = {
       type = "table",
       items = {
@@ -44,8 +42,7 @@ SELECT * FROM #Temp]],
     description = "Temp table - global temp table in FROM",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE ##GlobalTemp (ID INT, Name VARCHAR(100))
-SELECT * FROM ]],
-    cursor = { line = 1, col = 14 },
+SELECT * FROM █]],
     expected = {
       type = "table",
       items = {
@@ -62,8 +59,7 @@ SELECT * FROM ]],
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #Temp1 (ID INT)
 CREATE TABLE #Temp2 (Name VARCHAR(100))
-SELECT * FROM ]],
-    cursor = { line = 2, col = 14 },
+SELECT * FROM █]],
     expected = {
       type = "table",
       items = {
@@ -79,8 +75,7 @@ SELECT * FROM ]],
     description = "Temp table - SELECT INTO creates temp table",
     database = "vim_dadbod_test",
     query = [[SELECT * INTO #TempResult FROM Employees
-SELECT * FROM ]],
-    cursor = { line = 1, col = 14 },
+SELECT * FROM █]],
     expected = {
       type = "table",
       items = {
@@ -96,8 +91,7 @@ SELECT * FROM ]],
     description = "Temp table - temp table in JOIN",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempDept (DeptID INT, DeptName VARCHAR(100))
-SELECT * FROM Employees e JOIN ]],
-    cursor = { line = 1, col = 31 },
+SELECT * FROM Employees e JOIN █]],
     expected = {
       type = "table",
       items = {
@@ -113,8 +107,7 @@ SELECT * FROM Employees e JOIN ]],
     description = "Temp table - temp table with alias",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmployees (ID INT, Name VARCHAR(100))
-SELECT t. FROM #TempEmployees t]],
-    cursor = { line = 1, col = 9 },
+SELECT t.█ FROM #TempEmployees t]],
     expected = {
       type = "column",
       items = {
@@ -130,8 +123,7 @@ SELECT t. FROM #TempEmployees t]],
     description = "Temp table - INSERT INTO temp table",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmployees (ID INT, Name VARCHAR(100))
-INSERT INTO  (ID, Name) VALUES (1, 'Test')]],
-    cursor = { line = 1, col = 12 },
+INSERT INTO █ (ID, Name) VALUES (1, 'Test')]],
     expected = {
       type = "table",
       items = {
@@ -146,8 +138,7 @@ INSERT INTO  (ID, Name) VALUES (1, 'Test')]],
     description = "Temp table - UPDATE temp table",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmployees (ID INT, Name VARCHAR(100))
-UPDATE ]],
-    cursor = { line = 1, col = 7 },
+UPDATE █]],
     expected = {
       type = "table",
       items = {
@@ -163,8 +154,7 @@ UPDATE ]],
     description = "Temp table - DELETE FROM temp table",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmployees (ID INT, Name VARCHAR(100))
-DELETE FROM ]],
-    cursor = { line = 1, col = 12 },
+DELETE FROM █]],
     expected = {
       type = "table",
       items = {
@@ -183,8 +173,7 @@ DELETE FROM ]],
     description = "Temp table - columns from CREATE TABLE definition",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmployees (EmployeeID INT, FirstName VARCHAR(50), LastName VARCHAR(50))
-SELECT  FROM #TempEmployees]],
-    cursor = { line = 1, col = 7 },
+SELECT █ FROM #TempEmployees]],
     expected = {
       type = "column",
       items = {
@@ -201,8 +190,7 @@ SELECT  FROM #TempEmployees]],
     description = "Temp table - columns from SELECT INTO",
     database = "vim_dadbod_test",
     query = [[SELECT EmployeeID, FirstName, DepartmentID INTO #TempEmp FROM Employees
-SELECT  FROM #TempEmp]],
-    cursor = { line = 1, col = 7 },
+SELECT █ FROM #TempEmp]],
     expected = {
       type = "column",
       items = {
@@ -223,8 +211,7 @@ SELECT  FROM #TempEmp]],
     description = "Temp table - columns from SELECT * INTO",
     database = "vim_dadbod_test",
     query = [[SELECT * INTO #TempEmp FROM Employees
-SELECT  FROM #TempEmp]],
-    cursor = { line = 1, col = 7 },
+SELECT █ FROM #TempEmp]],
     expected = {
       type = "column",
       items = {
@@ -242,8 +229,7 @@ SELECT  FROM #TempEmp]],
     description = "Temp table - columns in WHERE clause",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmployees (ID INT, Name VARCHAR(100), Salary DECIMAL(10,2))
-SELECT * FROM #TempEmployees WHERE ]],
-    cursor = { line = 1, col = 35 },
+SELECT * FROM #TempEmployees WHERE █]],
     expected = {
       type = "column",
       items = {
@@ -260,8 +246,7 @@ SELECT * FROM #TempEmployees WHERE ]],
     description = "Temp table - columns in UPDATE SET",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmployees (ID INT, Name VARCHAR(100), Salary DECIMAL(10,2))
-UPDATE #TempEmployees SET  = 'New Value']],
-    cursor = { line = 1, col = 26 },
+UPDATE #TempEmployees SET █ = 'New Value']],
     expected = {
       type = "column",
       items = {
@@ -277,8 +262,7 @@ UPDATE #TempEmployees SET  = 'New Value']],
     description = "Temp table - columns in INSERT column list",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmployees (ID INT, Name VARCHAR(100), Salary DECIMAL(10,2))
-INSERT INTO #TempEmployees () VALUES (1, 'Test', 50000)]],
-    cursor = { line = 1, col = 28 },
+INSERT INTO #TempEmployees (█) VALUES (1, 'Test', 50000)]],
     expected = {
       type = "column",
       items = {
@@ -295,8 +279,7 @@ INSERT INTO #TempEmployees () VALUES (1, 'Test', 50000)]],
     description = "Temp table - columns in ORDER BY",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmployees (ID INT, Name VARCHAR(100), Salary DECIMAL(10,2))
-SELECT * FROM #TempEmployees ORDER BY ]],
-    cursor = { line = 1, col = 38 },
+SELECT * FROM #TempEmployees ORDER BY █]],
     expected = {
       type = "column",
       items = {
@@ -313,8 +296,7 @@ SELECT * FROM #TempEmployees ORDER BY ]],
     description = "Temp table - columns in GROUP BY",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmployees (ID INT, DeptID INT, Salary DECIMAL(10,2))
-SELECT DeptID, SUM(Salary) FROM #TempEmployees GROUP BY ]],
-    cursor = { line = 1, col = 55 },
+SELECT DeptID, SUM(Salary) FROM #TempEmployees GROUP BY █]],
     expected = {
       type = "column",
       items = {
@@ -329,8 +311,7 @@ SELECT DeptID, SUM(Salary) FROM #TempEmployees GROUP BY ]],
     description = "Temp table - columns in ON clause",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempDept (DeptID INT, DeptName VARCHAR(100))
-SELECT * FROM Employees e JOIN #TempDept t ON e.DepartmentID = t.]],
-    cursor = { line = 1, col = 62 },
+SELECT * FROM Employees e JOIN #TempDept t ON e.DepartmentID =█ t.]],
     expected = {
       type = "column",
       items = {
@@ -345,8 +326,7 @@ SELECT * FROM Employees e JOIN #TempDept t ON e.DepartmentID = t.]],
     description = "Temp table - alias-qualified columns",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmployees (ID INT, Name VARCHAR(100))
-SELECT te.ID, te. FROM #TempEmployees te]],
-    cursor = { line = 1, col = 17 },
+SELECT te.ID, te.█ FROM #TempEmployees te]],
     expected = {
       type = "column",
       items = {
@@ -365,8 +345,7 @@ SELECT te.ID, te. FROM #TempEmployees te]],
     description = "Temp table - with PRIMARY KEY",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmployees (ID INT PRIMARY KEY, Name VARCHAR(100) NOT NULL)
-SELECT  FROM #TempEmployees]],
-    cursor = { line = 1, col = 7 },
+SELECT █ FROM #TempEmployees]],
     expected = {
       type = "column",
       items = {
@@ -382,8 +361,7 @@ SELECT  FROM #TempEmployees]],
     description = "Temp table - with DEFAULT values",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmployees (ID INT, Name VARCHAR(100) DEFAULT 'Unknown', CreatedDate DATETIME DEFAULT GETDATE())
-SELECT  FROM #TempEmployees]],
-    cursor = { line = 1, col = 7 },
+SELECT █ FROM #TempEmployees]],
     expected = {
       type = "column",
       items = {
@@ -400,8 +378,7 @@ SELECT  FROM #TempEmployees]],
     description = "Temp table - with IDENTITY column",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmployees (ID INT IDENTITY(1,1), Name VARCHAR(100))
-SELECT  FROM #TempEmployees]],
-    cursor = { line = 1, col = 7 },
+SELECT █ FROM #TempEmployees]],
     expected = {
       type = "column",
       items = {
@@ -417,8 +394,7 @@ SELECT  FROM #TempEmployees]],
     description = "Temp table - with computed column",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmployees (FirstName VARCHAR(50), LastName VARCHAR(50), FullName AS FirstName + ' ' + LastName)
-SELECT  FROM #TempEmployees]],
-    cursor = { line = 1, col = 7 },
+SELECT █ FROM #TempEmployees]],
     expected = {
       type = "column",
       items = {
@@ -435,8 +411,7 @@ SELECT  FROM #TempEmployees]],
     description = "Temp table - with CHECK constraint",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmployees (ID INT, Age INT CHECK (Age >= 18), Name VARCHAR(100))
-SELECT  FROM #TempEmployees]],
-    cursor = { line = 1, col = 7 },
+SELECT █ FROM #TempEmployees]],
     expected = {
       type = "column",
       items = {
@@ -463,8 +438,7 @@ SELECT  FROM #TempEmployees]],
   BitCol BIT,
   UniqueCol UNIQUEIDENTIFIER
 )
-SELECT  FROM #TempData]],
-    cursor = { line = 11, col = 7 },
+SELECT █ FROM #TempData]],
     expected = {
       type = "column",
       items = {
@@ -486,8 +460,7 @@ SELECT  FROM #TempData]],
     query = [[SELECT e.EmployeeID, e.FirstName, d.DepartmentName
 INTO #EmpDept
 FROM Employees e JOIN Departments d ON e.DepartmentID = d.DepartmentID
-SELECT  FROM #EmpDept]],
-    cursor = { line = 3, col = 7 },
+SELECT █ FROM #EmpDept]],
     expected = {
       type = "column",
       items = {
@@ -504,8 +477,7 @@ SELECT  FROM #EmpDept]],
     description = "Temp table - SELECT INTO with aliased columns",
     database = "vim_dadbod_test",
     query = [[SELECT EmployeeID AS ID, FirstName AS Name INTO #TempEmp FROM Employees
-SELECT  FROM #TempEmp]],
-    cursor = { line = 1, col = 7 },
+SELECT █ FROM #TempEmp]],
     expected = {
       type = "column",
       items = {
@@ -527,8 +499,7 @@ SELECT  FROM #TempEmp]],
     query = [[SELECT DepartmentID, COUNT(*) AS EmpCount, AVG(Salary) AS AvgSalary
 INTO #DeptStats
 FROM Employees GROUP BY DepartmentID
-SELECT  FROM #DeptStats]],
-    cursor = { line = 3, col = 7 },
+SELECT █ FROM #DeptStats]],
     expected = {
       type = "column",
       items = {
@@ -545,8 +516,7 @@ SELECT  FROM #DeptStats]],
     description = "Temp table - with index definition",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmployees (ID INT, Name VARCHAR(100), INDEX IX_Name (Name))
-SELECT  FROM #TempEmployees]],
-    cursor = { line = 1, col = 7 },
+SELECT █ FROM #TempEmployees]],
     expected = {
       type = "column",
       items = {
@@ -567,8 +537,7 @@ SELECT  FROM #TempEmployees]],
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmployees (ID INT, Name VARCHAR(100))
 GO
-SELECT * FROM ]],
-    cursor = { line = 2, col = 14 },
+SELECT * FROM █]],
     expected = {
       type = "table",
       items = {
@@ -584,8 +553,7 @@ SELECT * FROM ]],
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmployees (ID INT, Name VARCHAR(100))
 DROP TABLE #TempEmployees
-SELECT * FROM ]],
-    cursor = { line = 2, col = 14 },
+SELECT * FROM █]],
     expected = {
       type = "table",
       items = {
@@ -605,8 +573,7 @@ SELECT * FROM ]],
     query = [[CREATE TABLE #TempEmployees (ID INT)
 DROP TABLE #TempEmployees
 CREATE TABLE #TempEmployees (NewID INT, NewName VARCHAR(100))
-SELECT  FROM #TempEmployees]],
-    cursor = { line = 3, col = 7 },
+SELECT █ FROM #TempEmployees]],
     expected = {
       type = "column",
       items = {
@@ -626,8 +593,7 @@ SELECT  FROM #TempEmployees]],
     database = "vim_dadbod_test",
     query = [[IF OBJECT_ID('tempdb..#TempEmployees') IS NOT NULL DROP TABLE #TempEmployees
 CREATE TABLE #TempEmployees (ID INT, Name VARCHAR(100))
-SELECT * FROM ]],
-    cursor = { line = 2, col = 14 },
+SELECT * FROM █]],
     expected = {
       type = "table",
       items = {
@@ -645,8 +611,7 @@ SELECT * FROM ]],
 GO
 CREATE TABLE #Temp2 (Col2 VARCHAR(100))
 GO
-SELECT * FROM ]],
-    cursor = { line = 4, col = 14 },
+SELECT * FROM █]],
     expected = {
       type = "table",
       items = {
@@ -664,9 +629,8 @@ SELECT * FROM ]],
     query = [[CREATE PROCEDURE sp_Test AS
 BEGIN
   CREATE TABLE #LocalTemp (ID INT, Value VARCHAR(100))
-  SELECT * FROM
+  SELECT * FROM█
 END]],
-    cursor = { line = 3, col = 17 },
     expected = {
       type = "table",
       items = {
@@ -684,9 +648,8 @@ END]],
     query = [[IF 1=1
 BEGIN
   CREATE TABLE #ConditionalTemp (ID INT)
-  SELECT * FROM
+  SELECT * FROM█
 END]],
-    cursor = { line = 3, col = 17 },
     expected = {
       type = "table",
       items = {
@@ -702,8 +665,7 @@ END]],
     database = "vim_dadbod_test",
     query = [[CREATE TABLE ##GlobalTemp (ID INT, Name VARCHAR(100))
 GO
-SELECT * FROM ##]],
-    cursor = { line = 2, col = 16 },
+SELECT * FROM ##█]],
     expected = {
       type = "table",
       items = {
@@ -719,8 +681,7 @@ SELECT * FROM ##]],
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #LocalTemp (ID INT)
 CREATE TABLE ##GlobalTemp (GID INT)
-SELECT * FROM ]],
-    cursor = { line = 2, col = 14 },
+SELECT * FROM █]],
     expected = {
       type = "table",
       items = {
@@ -737,8 +698,7 @@ SELECT * FROM ]],
     database = "vim_dadbod_test",
     query = [[BEGIN TRANSACTION
 CREATE TABLE #TranTemp (ID INT, Name VARCHAR(100))
-SELECT * FROM ]],
-    cursor = { line = 2, col = 14 },
+SELECT * FROM █]],
     expected = {
       type = "table",
       items = {
@@ -757,8 +717,7 @@ SELECT * FROM ]],
     description = "Temp table - with schema prefix",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmployees (ID INT, Name VARCHAR(100))
-SELECT * FROM dbo.]],
-    cursor = { line = 1, col = 18 },
+SELECT * FROM dbo.█]],
     expected = {
       type = "table",
       items = {
@@ -777,8 +736,7 @@ SELECT * FROM dbo.]],
     description = "Temp table - long temp table name",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #VeryLongTempTableNameForTestingPurposes (ID INT)
-SELECT * FROM #Very]],
-    cursor = { line = 1, col = 19 },
+SELECT * FROM #Very█]],
     expected = {
       type = "table",
       items = {
@@ -793,8 +751,7 @@ SELECT * FROM #Very]],
     description = "Temp table - name with numbers",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #Temp123 (ID INT)
-SELECT * FROM ]],
-    cursor = { line = 1, col = 14 },
+SELECT * FROM █]],
     expected = {
       type = "table",
       items = {
@@ -809,8 +766,7 @@ SELECT * FROM ]],
     description = "Temp table - name with underscores",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #Temp_Table_Name (ID INT)
-SELECT * FROM ]],
-    cursor = { line = 1, col = 14 },
+SELECT * FROM █]],
     expected = {
       type = "table",
       items = {
@@ -825,8 +781,7 @@ SELECT * FROM ]],
     description = "Temp table - truncated name (116+ chars)",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #ThisIsAVeryLongTableNameThatWillBeTruncatedBySQL (ID INT)
-SELECT * FROM #This]],
-    cursor = { line = 1, col = 19 },
+SELECT * FROM #This█]],
     expected = {
       type = "table",
       items = {
@@ -841,8 +796,7 @@ SELECT * FROM #This]],
     description = "Temp table - TRUNCATE TABLE",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmployees (ID INT, Name VARCHAR(100))
-TRUNCATE TABLE ]],
-    cursor = { line = 1, col = 15 },
+TRUNCATE TABLE █]],
     expected = {
       type = "table",
       items = {
@@ -857,8 +811,7 @@ TRUNCATE TABLE ]],
     description = "Temp table - ALTER TABLE",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmployees (ID INT)
-ALTER TABLE ]],
-    cursor = { line = 1, col = 12 },
+ALTER TABLE █]],
     expected = {
       type = "table",
       items = {
@@ -874,8 +827,7 @@ ALTER TABLE ]],
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmployees (ID INT)
 ALTER TABLE #TempEmployees ADD NewCol VARCHAR(100)
-SELECT  FROM #TempEmployees]],
-    cursor = { line = 2, col = 7 },
+SELECT █ FROM #TempEmployees]],
     expected = {
       type = "column",
       items = {
@@ -892,8 +844,7 @@ SELECT  FROM #TempEmployees]],
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmployees (OldName INT)
 EXEC sp_rename '#TempEmployees.OldName', 'NewName', 'COLUMN'
-SELECT  FROM #TempEmployees]],
-    cursor = { line = 2, col = 7 },
+SELECT █ FROM #TempEmployees]],
     expected = {
       type = "column",
       items = {
@@ -910,10 +861,9 @@ SELECT  FROM #TempEmployees]],
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #Temp1 (ID INT, DeptID INT)
 CREATE TABLE #Temp2 (DeptID INT, DeptName VARCHAR(100))
-SELECT t1.ID, t1.DeptID, t2.
+SELECT t1.ID, t1.DeptID, t2.█
 FROM #Temp1 t1
 JOIN #Temp2 t2 ON t1.DeptID = t2.DeptID]],
-    cursor = { line = 2, col = 28 },
     expected = {
       type = "column",
       items = {

@@ -10,8 +10,7 @@ return {
     number = 4551,
     description = "INSERT - table completion after INSERT INTO",
     database = "vim_dadbod_test",
-    query = [[INSERT INTO ]],
-    cursor = { line = 0, col = 12 },
+    query = [[INSERT INTO █]],
     expected = {
       type = "table",
       items = {
@@ -27,8 +26,7 @@ return {
     number = 4552,
     description = "INSERT - schema-qualified table",
     database = "vim_dadbod_test",
-    query = [[INSERT INTO dbo.]],
-    cursor = { line = 0, col = 16 },
+    query = [[INSERT INTO dbo.█]],
     expected = {
       type = "table",
       items = {
@@ -43,8 +41,7 @@ return {
     number = 4553,
     description = "INSERT - column list completion",
     database = "vim_dadbod_test",
-    query = [[INSERT INTO Employees () VALUES (1, 'John', 'Doe')]],
-    cursor = { line = 0, col = 22 },
+    query = [[INSERT INTO Employees █() VALUES (1, 'John', 'Doe')]],
     expected = {
       type = "column",
       items = {
@@ -61,8 +58,7 @@ return {
     number = 4554,
     description = "INSERT - column list with partial",
     database = "vim_dadbod_test",
-    query = [[INSERT INTO Employees (EmployeeID, ) VALUES (1, 'John')]],
-    cursor = { line = 0, col = 35 },
+    query = [[INSERT INTO Employees (EmployeeID, █) VALUES (1, 'John')]],
     expected = {
       type = "column",
       items = {
@@ -78,8 +74,7 @@ return {
     number = 4555,
     description = "INSERT - column list with prefix filter",
     database = "vim_dadbod_test",
-    query = [[INSERT INTO Employees (First) VALUES ('John')]],
-    cursor = { line = 0, col = 28 },
+    query = [[INSERT INTO Employees (First█) VALUES ('John')]],
     expected = {
       type = "column",
       items = {
@@ -93,8 +88,7 @@ return {
     number = 4556,
     description = "INSERT - SELECT column completion",
     database = "vim_dadbod_test",
-    query = [[INSERT INTO Employees_Archive SELECT  FROM Employees]],
-    cursor = { line = 0, col = 38 },
+    query = [[INSERT INTO Employees_Archive SELECT █ FROM Employees]],
     expected = {
       type = "column",
       items = {
@@ -111,8 +105,7 @@ return {
     description = "INSERT - SELECT with explicit columns",
     database = "vim_dadbod_test",
     query = [[INSERT INTO Employees_Archive (ID, Name)
-SELECT EmployeeID,  FROM Employees]],
-    cursor = { line = 1, col = 19 },
+SELECT EmployeeID, █ FROM Employees]],
     expected = {
       type = "column",
       items = {
@@ -127,8 +120,7 @@ SELECT EmployeeID,  FROM Employees]],
     number = 4558,
     description = "INSERT - EXEC procedure completion",
     database = "vim_dadbod_test",
-    query = [[INSERT INTO Projects EXEC ]],
-    cursor = { line = 0, col = 29 },
+    query = [[INSERT INTO Projects EXEC █]],
     expected = {
       type = "procedure",
       items = {
@@ -143,8 +135,7 @@ SELECT EmployeeID,  FROM Employees]],
     number = 4559,
     description = "INSERT - DEFAULT VALUES table",
     database = "vim_dadbod_test",
-    query = [[INSERT INTO  DEFAULT VALUES]],
-    cursor = { line = 0, col = 12 },
+    query = [[INSERT INTO █ DEFAULT VALUES]],
     expected = {
       type = "table",
       items = {
@@ -160,9 +151,8 @@ SELECT EmployeeID,  FROM Employees]],
     description = "INSERT - OUTPUT clause columns",
     database = "vim_dadbod_test",
     query = [[INSERT INTO Employees (FirstName, LastName)
-OUTPUT inserted.
+OUTPUT inserted.█
 VALUES ('John', 'Doe')]],
-    cursor = { line = 1, col = 16 },
     expected = {
       type = "column",
       items = {
@@ -180,8 +170,7 @@ VALUES ('John', 'Doe')]],
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempIDs (ID INT)
 INSERT INTO Employees (FirstName)
-OUTPUT inserted.EmployeeID INTO ]],
-    cursor = { line = 2, col = 32 },
+OUTPUT inserted.EmployeeID INTO █]],
     expected = {
       type = "table",
       items = {
@@ -197,8 +186,7 @@ OUTPUT inserted.EmployeeID INTO ]],
     description = "INSERT - temp table columns",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmp (ID INT, Name VARCHAR(100))
-INSERT INTO #TempEmp () VALUES (1, 'Test')]],
-    cursor = { line = 1, col = 22 },
+INSERT INTO #TempEmp (█) VALUES (1, 'Test')]],
     expected = {
       type = "column",
       items = {
@@ -214,8 +202,7 @@ INSERT INTO #TempEmp () VALUES (1, 'Test')]],
     description = "INSERT - CTE as source",
     database = "vim_dadbod_test",
     query = [[WITH EmpCTE AS (SELECT * FROM Employees WHERE DepartmentID = 1)
-INSERT INTO Archive SELECT  FROM EmpCTE]],
-    cursor = { line = 1, col = 28 },
+INSERT INTO Archive SELECT █ FROM EmpCTE]],
     expected = {
       type = "column",
       items = {
@@ -233,8 +220,7 @@ INSERT INTO Archive SELECT  FROM EmpCTE]],
     query = [[INSERT INTO Employees (EmployeeID, FirstName, LastName)
 VALUES (1, 'John', 'Doe'),
        (2, 'Jane', 'Smith'),
-       (3, , 'Johnson')]],
-    cursor = { line = 3, col = 11 },
+       (3, █, 'Johnson')]],
     expected = {
       -- In VALUES, we don't suggest columns - this should be a literal value
       type = "none",
@@ -244,8 +230,7 @@ VALUES (1, 'John', 'Doe'),
     number = 4565,
     description = "INSERT - TOP with SELECT",
     database = "vim_dadbod_test",
-    query = [[INSERT TOP (100) INTO Archive SELECT  FROM Employees]],
-    cursor = { line = 0, col = 38 },
+    query = [[INSERT TOP (100) INTO Archive SELECT █ FROM Employees]],
     expected = {
       type = "column",
       items = {
@@ -260,8 +245,7 @@ VALUES (1, 'John', 'Doe'),
     number = 4566,
     description = "INSERT - schema qualified with brackets",
     database = "vim_dadbod_test",
-    query = [[INSERT INTO [dbo].[] (Col1) VALUES (1)]],
-    cursor = { line = 0, col = 19 },
+    query = [[INSERT INTO [dbo].[█] (Col1) VALUES (1)]],
     expected = {
       type = "table",
       items = {
@@ -275,8 +259,7 @@ VALUES (1, 'John', 'Doe'),
     number = 4567,
     description = "INSERT - cross-database table",
     database = "vim_dadbod_test",
-    query = [[INSERT INTO TEST.dbo. SELECT * FROM Employees]],
-    cursor = { line = 0, col = 20 },
+    query = [[INSERT INTO TEST.dbo.█ SELECT * FROM Employees]],
     expected = {
       type = "table",
       items = {
@@ -291,8 +274,7 @@ VALUES (1, 'John', 'Doe'),
     number = 4568,
     description = "INSERT - identity column excluded suggestion",
     database = "vim_dadbod_test",
-    query = [[INSERT INTO Employees () VALUES ('John')]],
-    cursor = { line = 0, col = 22 },
+    query = [[INSERT INTO Employees █() VALUES ('John')]],
     expected = {
       type = "column",
       items = {
@@ -308,8 +290,7 @@ VALUES (1, 'John', 'Doe'),
     number = 4569,
     description = "INSERT - computed column excluded",
     database = "vim_dadbod_test",
-    query = [[INSERT INTO Employees () VALUES (1, 'John')]],
-    cursor = { line = 0, col = 22 },
+    query = [[INSERT INTO Employees █() VALUES (1, 'John')]],
     expected = {
       type = "column",
       items = {
@@ -325,9 +306,8 @@ VALUES (1, 'John', 'Doe'),
     number = 4570,
     description = "INSERT - OPENROWSET table hint",
     database = "vim_dadbod_test",
-    query = [[INSERT INTO Employees WITH (TABLOCK) ()
+    query = [[INSERT INTO Employees WITH (TABLOCK) ()█
 VALUES (1, 'John')]],
-    cursor = { line = 0, col = 39 },
     expected = {
       type = "column",
       items = {
@@ -346,8 +326,7 @@ VALUES (1, 'John')]],
     number = 4571,
     description = "UPDATE - table completion after UPDATE",
     database = "vim_dadbod_test",
-    query = [[UPDATE ]],
-    cursor = { line = 0, col = 7 },
+    query = [[UPDATE █]],
     expected = {
       type = "table",
       items = {
@@ -362,8 +341,7 @@ VALUES (1, 'John')]],
     number = 4572,
     description = "UPDATE - schema-qualified table",
     database = "vim_dadbod_test",
-    query = [[UPDATE dbo.]],
-    cursor = { line = 0, col = 11 },
+    query = [[UPDATE dbo.█]],
     expected = {
       type = "table",
       items = {
@@ -378,8 +356,7 @@ VALUES (1, 'John')]],
     number = 4573,
     description = "UPDATE - SET column completion",
     database = "vim_dadbod_test",
-    query = [[UPDATE Employees SET ]],
-    cursor = { line = 0, col = 21 },
+    query = [[UPDATE Employees SET █]],
     expected = {
       type = "column",
       items = {
@@ -396,8 +373,7 @@ VALUES (1, 'John')]],
     number = 4574,
     description = "UPDATE - SET column with prefix",
     database = "vim_dadbod_test",
-    query = [[UPDATE Employees SET Sal]],
-    cursor = { line = 0, col = 24 },
+    query = [[UPDATE Employees SET Sal█]],
     expected = {
       type = "column",
       items = {
@@ -411,8 +387,7 @@ VALUES (1, 'John')]],
     number = 4575,
     description = "UPDATE - multiple SET columns",
     database = "vim_dadbod_test",
-    query = [[UPDATE Employees SET FirstName = 'John', ]],
-    cursor = { line = 0, col = 41 },
+    query = [[UPDATE Employees SET FirstName = 'John', █]],
     expected = {
       type = "column",
       items = {
@@ -427,8 +402,7 @@ VALUES (1, 'John')]],
     number = 4576,
     description = "UPDATE - SET value column reference",
     database = "vim_dadbod_test",
-    query = [[UPDATE Employees SET Salary = Salary * 1.1 + ]],
-    cursor = { line = 0, col = 45 },
+    query = [[UPDATE Employees SET Salary = Salary * 1.1 + █]],
     expected = {
       type = "column",
       items = {
@@ -443,8 +417,7 @@ VALUES (1, 'John')]],
     number = 4577,
     description = "UPDATE - WHERE clause columns",
     database = "vim_dadbod_test",
-    query = [[UPDATE Employees SET Salary = 50000 WHERE ]],
-    cursor = { line = 0, col = 42 },
+    query = [[UPDATE Employees SET Salary = 50000 WHERE █]],
     expected = {
       type = "column",
       items = {
@@ -460,8 +433,7 @@ VALUES (1, 'John')]],
     number = 4578,
     description = "UPDATE - alias in SET",
     database = "vim_dadbod_test",
-    query = [[UPDATE e SET e. = 'New' FROM Employees e]],
-    cursor = { line = 0, col = 15 },
+    query = [[UPDATE e SET e.█ = 'New' FROM Employees e]],
     expected = {
       type = "column",
       items = {
@@ -476,8 +448,7 @@ VALUES (1, 'John')]],
     number = 4579,
     description = "UPDATE - FROM clause table",
     database = "vim_dadbod_test",
-    query = [[UPDATE e SET e.DepartmentID = d.DepartmentID FROM Employees e JOIN ]],
-    cursor = { line = 0, col = 66 },
+    query = [[UPDATE e SET e.DepartmentID = d.DepartmentID FROM Employees e JOIN █]],
     expected = {
       type = "table",
       items = {
@@ -491,8 +462,7 @@ VALUES (1, 'John')]],
     number = 4580,
     description = "UPDATE - FROM join ON clause",
     database = "vim_dadbod_test",
-    query = [[UPDATE e SET e.DepartmentID = d.DepartmentID FROM Employees e JOIN Departments d ON e.]],
-    cursor = { line = 0, col = 83 },
+    query = [[UPDATE e SET e.DepartmentID = d.DepartmentID FROM Employees e JOIN Departments d ON █e.]],
     expected = {
       type = "column",
       items = {
@@ -506,8 +476,7 @@ VALUES (1, 'John')]],
     number = 4581,
     description = "UPDATE - SET from joined table",
     database = "vim_dadbod_test",
-    query = [[UPDATE e SET e.DeptName = d. FROM Employees e JOIN Departments d ON e.DepartmentID = d.DepartmentID]],
-    cursor = { line = 0, col = 28 },
+    query = [[UPDATE e SET e.DeptName = d.█ FROM Employees e JOIN Departments d ON e.DepartmentID = d.DepartmentID]],
     expected = {
       type = "column",
       items = {
@@ -522,8 +491,7 @@ VALUES (1, 'John')]],
     description = "UPDATE - OUTPUT clause",
     database = "vim_dadbod_test",
     query = [[UPDATE Employees SET Salary = Salary * 1.1
-OUTPUT deleted., inserted.Salary]],
-    cursor = { line = 1, col = 15 },
+OUTPUT deleted.█, inserted.Salary]],
     expected = {
       type = "column",
       items = {
@@ -539,8 +507,7 @@ OUTPUT deleted., inserted.Salary]],
     description = "UPDATE - OUTPUT inserted columns",
     database = "vim_dadbod_test",
     query = [[UPDATE Employees SET Salary = Salary * 1.1
-OUTPUT deleted.Salary, inserted.]],
-    cursor = { line = 1, col = 32 },
+OUTPUT deleted.Salary, inserted.█]],
     expected = {
       type = "column",
       items = {
@@ -555,8 +522,7 @@ OUTPUT deleted.Salary, inserted.]],
     number = 4584,
     description = "UPDATE - subquery in SET",
     database = "vim_dadbod_test",
-    query = [[UPDATE Employees SET DepartmentID = (SELECT  FROM Departments WHERE DepartmentName = 'IT')]],
-    cursor = { line = 0, col = 44 },
+    query = [[UPDATE Employees SET DepartmentID = (SELECT █ FROM Departments WHERE DepartmentName = 'IT')]],
     expected = {
       type = "column",
       items = {
@@ -570,8 +536,7 @@ OUTPUT deleted.Salary, inserted.]],
     number = 4585,
     description = "UPDATE - CASE in SET",
     database = "vim_dadbod_test",
-    query = [[UPDATE Employees SET Status = CASE WHEN  > 100000 THEN 'High' ELSE 'Normal' END]],
-    cursor = { line = 0, col = 40 },
+    query = [[UPDATE Employees SET Status = CASE WHEN █ > 100000 THEN 'High' ELSE 'Normal' END]],
     expected = {
       type = "column",
       items = {
@@ -586,8 +551,7 @@ OUTPUT deleted.Salary, inserted.]],
     description = "UPDATE - WITH CTE",
     database = "vim_dadbod_test",
     query = [[WITH EmpCTE AS (SELECT * FROM Employees WHERE DepartmentID = 1)
-UPDATE EmpCTE SET  = 'Updated']],
-    cursor = { line = 1, col = 18 },
+UPDATE EmpCTE SET █ = 'Updated']],
     expected = {
       type = "column",
       items = {
@@ -603,8 +567,7 @@ UPDATE EmpCTE SET  = 'Updated']],
     description = "UPDATE - temp table",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmp (ID INT, Name VARCHAR(100), Salary DECIMAL)
-UPDATE #TempEmp SET ]],
-    cursor = { line = 1, col = 20 },
+UPDATE #TempEmp SET █]],
     expected = {
       type = "column",
       items = {
@@ -619,8 +582,7 @@ UPDATE #TempEmp SET ]],
     number = 4588,
     description = "UPDATE - TOP clause",
     database = "vim_dadbod_test",
-    query = [[UPDATE TOP (10) Employees SET  = 50000]],
-    cursor = { line = 0, col = 31 },
+    query = [[UPDATE TOP (10) Employees SET █= 50000]],
     expected = {
       type = "column",
       items = {
@@ -635,8 +597,7 @@ UPDATE #TempEmp SET ]],
     description = "UPDATE - table variable",
     database = "vim_dadbod_test",
     query = [[DECLARE @Emp TABLE (ID INT, Name VARCHAR(100))
-UPDATE @Emp SET ]],
-    cursor = { line = 1, col = 16 },
+UPDATE @Emp SET █]],
     expected = {
       type = "column",
       items = {
@@ -654,9 +615,8 @@ UPDATE @Emp SET ]],
 SET
   FirstName = 'John',
   LastName = 'Doe',
-   = 50000
+ █ = 50000
 WHERE EmployeeID = 1]],
-    cursor = { line = 4, col = 2 },
     expected = {
       type = "column",
       items = {
@@ -671,8 +631,7 @@ WHERE EmployeeID = 1]],
     number = 4591,
     description = "UPDATE - computed column excluded from SET",
     database = "vim_dadbod_test",
-    query = [[UPDATE Employees SET ]],
-    cursor = { line = 0, col = 21 },
+    query = [[UPDATE Employees SET █]],
     expected = {
       type = "column",
       items = {
@@ -689,8 +648,7 @@ WHERE EmployeeID = 1]],
     description = "UPDATE - WHERE with subquery",
     database = "vim_dadbod_test",
     query = [[UPDATE Employees SET Salary = Salary * 1.1
-WHERE DepartmentID IN (SELECT  FROM Departments WHERE Budget > 100000)]],
-    cursor = { line = 1, col = 36 },
+WHERE DepartmentID IN (SELECT  FROM█ Departments WHERE Budget > 100000)]],
     expected = {
       type = "column",
       items = {
@@ -704,8 +662,7 @@ WHERE DepartmentID IN (SELECT  FROM Departments WHERE Budget > 100000)]],
     number = 4593,
     description = "UPDATE - SET with scalar function",
     database = "vim_dadbod_test",
-    query = [[UPDATE Employees SET FullName = dbo.fn_GetFullName()]],
-    cursor = { line = 0, col = 47 },
+    query = [[UPDATE Employees SET FullName = dbo.fn_GetFullN█ame()]],
     expected = {
       type = "column",
       items = {
@@ -724,8 +681,7 @@ WHERE DepartmentID IN (SELECT  FROM Departments WHERE Budget > 100000)]],
 SET e.DeptName = d.DepartmentName
 FROM Employees e
 JOIN Departments d ON e.DepartmentID = d.DepartmentID
-WHERE d.]],
-    cursor = { line = 4, col = 8 },
+WHERE d.█]],
     expected = {
       type = "column",
       items = {
@@ -741,8 +697,7 @@ WHERE d.]],
     description = "UPDATE - OUTPUT INTO",
     database = "vim_dadbod_test",
     query = [[UPDATE Employees SET Salary = Salary * 1.1
-OUTPUT deleted.Salary, inserted.Salary INTO ]],
-    cursor = { line = 1, col = 45 },
+OUTPUT deleted.Salary, inserted.Salary INTO █]],
     expected = {
       type = "table",
       items = {
@@ -757,8 +712,7 @@ OUTPUT deleted.Salary, inserted.Salary INTO ]],
     number = 4596,
     description = "UPDATE - SET compound assignment",
     database = "vim_dadbod_test",
-    query = [[UPDATE Employees SET Salary +=  WHERE EmployeeID = 1]],
-    cursor = { line = 0, col = 32 },
+    query = [[UPDATE Employees SET Salary += █ WHERE EmployeeID = 1]],
     expected = {
       type = "column",
       items = {
@@ -773,8 +727,7 @@ OUTPUT deleted.Salary, inserted.Salary INTO ]],
     number = 4597,
     description = "UPDATE - WRITE clause for large values",
     database = "vim_dadbod_test",
-    query = [[UPDATE Documents SET Content.WRITE() WHERE DocID = 1]],
-    cursor = { line = 0, col = 35 },
+    query = [[UPDATE Documents SET Content.WRITE(█) WHERE DocID = 1]],
     expected = {
       -- Inside .WRITE() we need different context
       type = "none",
@@ -784,8 +737,7 @@ OUTPUT deleted.Salary, inserted.Salary INTO ]],
     number = 4598,
     description = "UPDATE - SET NULL check",
     database = "vim_dadbod_test",
-    query = [[UPDATE Employees SET  = NULL WHERE DepartmentID IS NULL]],
-    cursor = { line = 0, col = 21 },
+    query = [[UPDATE Employees SET █ = NULL WHERE DepartmentID IS NULL]],
     expected = {
       type = "column",
       items = {
@@ -800,8 +752,7 @@ OUTPUT deleted.Salary, inserted.Salary INTO ]],
     number = 4599,
     description = "UPDATE - table hint",
     database = "vim_dadbod_test",
-    query = [[UPDATE Employees WITH (ROWLOCK) SET ]],
-    cursor = { line = 0, col = 36 },
+    query = [[UPDATE Employees WITH (ROWLOCK) SET █]],
     expected = {
       type = "column",
       items = {
@@ -816,8 +767,7 @@ OUTPUT deleted.Salary, inserted.Salary INTO ]],
     number = 4600,
     description = "UPDATE - WHERE CURRENT OF cursor",
     database = "vim_dadbod_test",
-    query = [[UPDATE Employees SET  = 'Updated' WHERE CURRENT OF emp_cursor]],
-    cursor = { line = 0, col = 21 },
+    query = [[UPDATE Employees SET █ = 'Updated' WHERE CURRENT OF emp_cursor]],
     expected = {
       type = "column",
       items = {
@@ -836,8 +786,7 @@ OUTPUT deleted.Salary, inserted.Salary INTO ]],
     number = 4601,
     description = "DELETE - table completion after DELETE FROM",
     database = "vim_dadbod_test",
-    query = [[DELETE FROM ]],
-    cursor = { line = 0, col = 12 },
+    query = [[DELETE FROM █]],
     expected = {
       type = "table",
       items = {
@@ -852,8 +801,7 @@ OUTPUT deleted.Salary, inserted.Salary INTO ]],
     number = 4602,
     description = "DELETE - table completion after DELETE (no FROM)",
     database = "vim_dadbod_test",
-    query = [[DELETE ]],
-    cursor = { line = 0, col = 7 },
+    query = [[DELETE █]],
     expected = {
       type = "table",
       items = {
@@ -868,8 +816,7 @@ OUTPUT deleted.Salary, inserted.Salary INTO ]],
     number = 4603,
     description = "DELETE - schema-qualified table",
     database = "vim_dadbod_test",
-    query = [[DELETE FROM dbo.]],
-    cursor = { line = 0, col = 16 },
+    query = [[DELETE FROM dbo.█]],
     expected = {
       type = "table",
       items = {
@@ -883,8 +830,7 @@ OUTPUT deleted.Salary, inserted.Salary INTO ]],
     number = 4604,
     description = "DELETE - WHERE clause columns",
     database = "vim_dadbod_test",
-    query = [[DELETE FROM Employees WHERE ]],
-    cursor = { line = 0, col = 28 },
+    query = [[DELETE FROM Employees WHERE █]],
     expected = {
       type = "column",
       items = {
@@ -900,8 +846,7 @@ OUTPUT deleted.Salary, inserted.Salary INTO ]],
     number = 4605,
     description = "DELETE - WHERE with prefix",
     database = "vim_dadbod_test",
-    query = [[DELETE FROM Employees WHERE Emp]],
-    cursor = { line = 0, col = 31 },
+    query = [[DELETE FROM Employees WHERE Emp█]],
     expected = {
       type = "column",
       items = {
@@ -915,8 +860,7 @@ OUTPUT deleted.Salary, inserted.Salary INTO ]],
     number = 4606,
     description = "DELETE - compound WHERE condition",
     database = "vim_dadbod_test",
-    query = [[DELETE FROM Employees WHERE DepartmentID = 1 AND ]],
-    cursor = { line = 0, col = 49 },
+    query = [[DELETE FROM Employees WHERE DepartmentID = 1 AND █]],
     expected = {
       type = "column",
       items = {
@@ -931,8 +875,7 @@ OUTPUT deleted.Salary, inserted.Salary INTO ]],
     number = 4607,
     description = "DELETE - alias in WHERE",
     database = "vim_dadbod_test",
-    query = [[DELETE e FROM Employees e WHERE e.]],
-    cursor = { line = 0, col = 34 },
+    query = [[DELETE e FROM Employees e WHERE e.█]],
     expected = {
       type = "column",
       items = {
@@ -947,8 +890,7 @@ OUTPUT deleted.Salary, inserted.Salary INTO ]],
     number = 4608,
     description = "DELETE - FROM with JOIN",
     database = "vim_dadbod_test",
-    query = [[DELETE e FROM Employees e JOIN ]],
-    cursor = { line = 0, col = 31 },
+    query = [[DELETE e FROM Employees e JOIN █]],
     expected = {
       type = "table",
       items = {
@@ -962,8 +904,7 @@ OUTPUT deleted.Salary, inserted.Salary INTO ]],
     number = 4609,
     description = "DELETE - JOIN ON clause",
     database = "vim_dadbod_test",
-    query = [[DELETE e FROM Employees e JOIN Departments d ON e.]],
-    cursor = { line = 0, col = 49 },
+    query = [[DELETE e FROM Employees e JOIN Departments d ON e.█]],
     expected = {
       type = "column",
       items = {
@@ -977,8 +918,7 @@ OUTPUT deleted.Salary, inserted.Salary INTO ]],
     number = 4610,
     description = "DELETE - WHERE references joined table",
     database = "vim_dadbod_test",
-    query = [[DELETE e FROM Employees e JOIN Departments d ON e.DepartmentID = d.DepartmentID WHERE d.]],
-    cursor = { line = 0, col = 86 },
+    query = [[DELETE e FROM Employees e JOIN Departments d ON e.DepartmentID = d.DepartmentID WHERE █d.]],
     expected = {
       type = "column",
       items = {
@@ -994,8 +934,7 @@ OUTPUT deleted.Salary, inserted.Salary INTO ]],
     description = "DELETE - OUTPUT clause",
     database = "vim_dadbod_test",
     query = [[DELETE FROM Employees
-OUTPUT deleted.]],
-    cursor = { line = 1, col = 15 },
+OUTPUT deleted.█]],
     expected = {
       type = "column",
       items = {
@@ -1011,8 +950,7 @@ OUTPUT deleted.]],
     description = "DELETE - OUTPUT INTO",
     database = "vim_dadbod_test",
     query = [[DELETE FROM Employees
-OUTPUT deleted.* INTO ]],
-    cursor = { line = 1, col = 22 },
+OUTPUT deleted.* INTO █]],
     expected = {
       type = "table",
       items = {
@@ -1028,8 +966,7 @@ OUTPUT deleted.* INTO ]],
     description = "DELETE - WITH CTE",
     database = "vim_dadbod_test",
     query = [[WITH ToDelete AS (SELECT * FROM Employees WHERE IsActive = 0)
-DELETE FROM ]],
-    cursor = { line = 1, col = 12 },
+DELETE FROM █]],
     expected = {
       type = "table",
       items = {
@@ -1045,8 +982,7 @@ DELETE FROM ]],
     description = "DELETE - CTE WHERE clause",
     database = "vim_dadbod_test",
     query = [[WITH ToDelete AS (SELECT EmployeeID FROM Employees WHERE IsActive = 0)
-DELETE FROM Employees WHERE EmployeeID IN (SELECT  FROM ToDelete)]],
-    cursor = { line = 1, col = 56 },
+DELETE FROM Employees WHERE EmployeeID IN (SELECT  FROM█ ToDelete)]],
     expected = {
       type = "column",
       items = {
@@ -1061,8 +997,7 @@ DELETE FROM Employees WHERE EmployeeID IN (SELECT  FROM ToDelete)]],
     description = "DELETE - temp table",
     database = "vim_dadbod_test",
     query = [[CREATE TABLE #TempEmp (ID INT, Name VARCHAR(100))
-DELETE FROM #TempEmp WHERE ]],
-    cursor = { line = 1, col = 27 },
+DELETE FROM #TempEmp WHERE █]],
     expected = {
       type = "column",
       items = {
@@ -1077,8 +1012,7 @@ DELETE FROM #TempEmp WHERE ]],
     number = 4616,
     description = "DELETE - TOP clause",
     database = "vim_dadbod_test",
-    query = [[DELETE TOP (100) FROM Employees WHERE ]],
-    cursor = { line = 0, col = 38 },
+    query = [[DELETE TOP (100) FROM Employees WHERE █]],
     expected = {
       type = "column",
       items = {
@@ -1094,8 +1028,7 @@ DELETE FROM #TempEmp WHERE ]],
     description = "DELETE - subquery in WHERE",
     database = "vim_dadbod_test",
     query = [[DELETE FROM Employees
-WHERE DepartmentID IN (SELECT  FROM Departments WHERE IsActive = 0)]],
-    cursor = { line = 1, col = 36 },
+WHERE DepartmentID IN (SELECT  FROM█ Departments WHERE IsActive = 0)]],
     expected = {
       type = "column",
       items = {
@@ -1110,8 +1043,7 @@ WHERE DepartmentID IN (SELECT  FROM Departments WHERE IsActive = 0)]],
     description = "DELETE - EXISTS subquery",
     database = "vim_dadbod_test",
     query = [[DELETE FROM Departments d
-WHERE NOT EXISTS (SELECT 1 FROM Employees e WHERE e.DepartmentID = d.)]],
-    cursor = { line = 1, col = 68 },
+WHERE NOT EXISTS (SELECT 1 FROM Employees e WHERE e.DepartmentID = d.█)]],
     expected = {
       type = "column",
       items = {
@@ -1126,8 +1058,7 @@ WHERE NOT EXISTS (SELECT 1 FROM Employees e WHERE e.DepartmentID = d.)]],
     description = "DELETE - table variable",
     database = "vim_dadbod_test",
     query = [[DECLARE @Emp TABLE (ID INT, Name VARCHAR(100))
-DELETE FROM @Emp WHERE ]],
-    cursor = { line = 1, col = 23 },
+DELETE FROM @Emp WHERE █]],
     expected = {
       type = "column",
       items = {
@@ -1145,8 +1076,7 @@ DELETE FROM @Emp WHERE ]],
     query = [[DELETE FROM Employees
 WHERE
   DepartmentID = 1
-  AND  IS NULL]],
-    cursor = { line = 3, col = 6 },
+  AND █ IS NULL]],
     expected = {
       type = "column",
       items = {
@@ -1161,8 +1091,7 @@ WHERE
     number = 4621,
     description = "DELETE - TRUNCATE TABLE completion",
     database = "vim_dadbod_test",
-    query = [[TRUNCATE TABLE ]],
-    cursor = { line = 0, col = 15 },
+    query = [[TRUNCATE TABLE █]],
     expected = {
       type = "table",
       items = {
@@ -1177,8 +1106,7 @@ WHERE
     number = 4622,
     description = "DELETE - WHERE CURRENT OF",
     database = "vim_dadbod_test",
-    query = [[DELETE FROM Employees WHERE  = 1]],
-    cursor = { line = 0, col = 28 },
+    query = [[DELETE FROM Employees WHERE █ = 1]],
     expected = {
       type = "column",
       items = {
@@ -1193,8 +1121,7 @@ WHERE
     number = 4623,
     description = "DELETE - table hint",
     database = "vim_dadbod_test",
-    query = [[DELETE FROM Employees WITH (ROWLOCK) WHERE ]],
-    cursor = { line = 0, col = 43 },
+    query = [[DELETE FROM Employees WITH (ROWLOCK) WHERE █]],
     expected = {
       type = "column",
       items = {
@@ -1209,8 +1136,7 @@ WHERE
     number = 4624,
     description = "DELETE - cross-database",
     database = "vim_dadbod_test",
-    query = [[DELETE FROM TEST.dbo.]],
-    cursor = { line = 0, col = 20 },
+    query = [[DELETE FROM TEST.dbo.█]],
     expected = {
       type = "table",
       items = {
@@ -1225,8 +1151,7 @@ WHERE
     number = 4625,
     description = "DELETE - bracketed identifiers",
     database = "vim_dadbod_test",
-    query = [[DELETE FROM [Employees] WHERE [].]],
-    cursor = { line = 0, col = 31 },
+    query = [[DELETE FROM [Employees] WHERE [█].]],
     expected = {
       type = "column",
       items = {
@@ -1244,8 +1169,7 @@ WHERE
     number = 4626,
     description = "MERGE - INTO table completion",
     database = "vim_dadbod_test",
-    query = [[MERGE INTO ]],
-    cursor = { line = 0, col = 11 },
+    query = [[MERGE INTO █]],
     expected = {
       type = "table",
       items = {
@@ -1261,8 +1185,7 @@ WHERE
     description = "MERGE - USING table completion",
     database = "vim_dadbod_test",
     query = [[MERGE INTO Employees AS target
-USING ]],
-    cursor = { line = 1, col = 6 },
+USING █]],
     expected = {
       type = "table",
       items = {
@@ -1278,8 +1201,7 @@ USING ]],
     description = "MERGE - USING subquery table",
     database = "vim_dadbod_test",
     query = [[MERGE INTO Employees AS target
-USING (SELECT * FROM ) AS source]],
-    cursor = { line = 1, col = 21 },
+USING (SELECT * FROM █) AS source]],
     expected = {
       type = "table",
       items = {
@@ -1295,8 +1217,7 @@ USING (SELECT * FROM ) AS source]],
     database = "vim_dadbod_test",
     query = [[MERGE INTO Employees AS target
 USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
-ON target.]],
-    cursor = { line = 2, col = 10 },
+ON target.█]],
     expected = {
       type = "column",
       items = {
@@ -1312,8 +1233,7 @@ ON target.]],
     database = "vim_dadbod_test",
     query = [[MERGE INTO Employees AS target
 USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
-ON target.EmployeeID = source.]],
-    cursor = { line = 2, col = 30 },
+ON target.EmployeeID = source.█]],
     expected = {
       type = "column",
       items = {
@@ -1330,8 +1250,7 @@ ON target.EmployeeID = source.]],
     query = [[MERGE INTO Employees AS target
 USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target.EmployeeID = source.EmployeeID
-WHEN MATCHED THEN UPDATE SET target. = source.FirstName]],
-    cursor = { line = 3, col = 37 },
+WHEN MATCHED THEN UPDATE SET target.█= source.FirstName]],
     expected = {
       type = "column",
       items = {
@@ -1349,8 +1268,7 @@ WHEN MATCHED THEN UPDATE SET target. = source.FirstName]],
     query = [[MERGE INTO Employees AS target
 USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target.EmployeeID = source.EmployeeID
-WHEN MATCHED THEN UPDATE SET target.FirstName = source.]],
-    cursor = { line = 3, col = 54 },
+WHEN MATCHED THEN UPDATE SET target.FirstName = source.█]],
     expected = {
       type = "column",
       items = {
@@ -1368,8 +1286,7 @@ WHEN MATCHED THEN UPDATE SET target.FirstName = source.]],
     query = [[MERGE INTO Employees AS target
 USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target.EmployeeID = source.EmployeeID
-WHEN NOT MATCHED THEN INSERT () VALUES (source.EmployeeID)]],
-    cursor = { line = 3, col = 31 },
+WHEN NOT MATCHED THEN INSERT ()█ VALUES (source.EmployeeID)]],
     expected = {
       type = "column",
       items = {
@@ -1387,8 +1304,7 @@ WHEN NOT MATCHED THEN INSERT () VALUES (source.EmployeeID)]],
     query = [[MERGE INTO Employees AS target
 USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target.EmployeeID = source.EmployeeID
-WHEN NOT MATCHED THEN INSERT (EmployeeID, FirstName) VALUES (source.EmployeeID, source.)]],
-    cursor = { line = 3, col = 87 },
+WHEN NOT MATCHED THEN INSERT (EmployeeID, FirstName) VALUES (source.EmployeeID, source.█)]],
     expected = {
       type = "column",
       items = {
@@ -1406,8 +1322,7 @@ WHEN NOT MATCHED THEN INSERT (EmployeeID, FirstName) VALUES (source.EmployeeID, 
 USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target.EmployeeID = source.EmployeeID
 WHEN MATCHED THEN UPDATE SET target.FirstName = source.FirstName
-WHEN NOT MATCHED BY SOURCE AND target. < GETDATE() THEN DELETE]],
-    cursor = { line = 4, col = 38 },
+WHEN NOT MATCHED BY SOURCE AND target.█ < GETDATE() THEN DELETE]],
     expected = {
       type = "column",
       items = {
@@ -1426,8 +1341,7 @@ WHEN NOT MATCHED BY SOURCE AND target. < GETDATE() THEN DELETE]],
 USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target.EmployeeID = source.EmployeeID
 WHEN MATCHED THEN UPDATE SET target.FirstName = source.FirstName
-OUTPUT $action, inserted., deleted.EmployeeID]],
-    cursor = { line = 4, col = 26 },
+OUTPUT $action, inserted.,█ deleted.EmployeeID]],
     expected = {
       type = "column",
       items = {
@@ -1444,9 +1358,8 @@ OUTPUT $action, inserted., deleted.EmployeeID]],
     database = "vim_dadbod_test",
     query = [[WITH StagingCTE AS (SELECT * FROM Employees WHERE IsActive = 1)
 MERGE INTO Employees AS target
-USING  AS source
+USING █ AS source
 ON target.EmployeeID = source.EmployeeID]],
-    cursor = { line = 2, col = 6 },
     expected = {
       type = "table",
       items = {
@@ -1462,8 +1375,7 @@ ON target.EmployeeID = source.EmployeeID]],
     database = "vim_dadbod_test",
     query = [[MERGE INTO Employees AS target
 USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
-ON target.EmployeeID = source.EmployeeID AND target. = source.DepartmentID]],
-    cursor = { line = 2, col = 52 },
+ON target.EmployeeID = source.EmployeeID AND target.█ = source.DepartmentID]],
     expected = {
       type = "column",
       items = {
@@ -1481,9 +1393,8 @@ ON target.EmployeeID = source.EmployeeID AND target. = source.DepartmentID]],
 USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target.EmployeeID = source.EmployeeID
 WHEN MATCHED AND source.IsActive = 0 THEN DELETE
-WHEN MATCHED THEN UPDATE SET target. = source.FirstName
+WHEN MATCHED THEN UPDATE SET target.█= source.FirstName
 WHEN NOT MATCHED THEN INSERT (EmployeeID) VALUES (source.EmployeeID)]],
-    cursor = { line = 4, col = 37 },
     expected = {
       type = "column",
       items = {
@@ -1500,8 +1411,7 @@ WHEN NOT MATCHED THEN INSERT (EmployeeID) VALUES (source.EmployeeID)]],
     database = "vim_dadbod_test",
     query = [[MERGE INTO Employees AS target
 USING (SELECT EmployeeID AS ID, FirstName AS Name FROM Employees WHERE DepartmentID = 1) AS source
-ON target.EmployeeID = source.]],
-    cursor = { line = 2, col = 30 },
+ON target.EmployeeID = source.█]],
     expected = {
       type = "column",
       items = {
@@ -1521,8 +1431,7 @@ ON target.EmployeeID = source.]],
     query = [[CREATE TABLE #Staging (ID INT, Name VARCHAR(100))
 MERGE INTO Employees AS target
 USING #Staging AS source
-ON target.EmployeeID = source.]],
-    cursor = { line = 3, col = 30 },
+ON target.EmployeeID = source.█]],
     expected = {
       type = "column",
       items = {
@@ -1539,8 +1448,7 @@ ON target.EmployeeID = source.]],
     query = [[DECLARE @Staging TABLE (ID INT, Name VARCHAR(100))
 MERGE INTO Employees AS target
 USING @Staging AS source
-ON target.EmployeeID = source.]],
-    cursor = { line = 3, col = 30 },
+ON target.EmployeeID = source.█]],
     expected = {
       type = "column",
       items = {
@@ -1556,8 +1464,7 @@ ON target.EmployeeID = source.]],
     database = "vim_dadbod_test",
     query = [[MERGE INTO Employees WITH (HOLDLOCK) AS target
 USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
-ON target. = source.EmployeeID]],
-    cursor = { line = 2, col = 10 },
+ON target.█ = source.EmployeeID]],
     expected = {
       type = "column",
       items = {
@@ -1577,8 +1484,7 @@ ON target.EmployeeID = source.EmployeeID
 WHEN MATCHED THEN
   UPDATE SET
     target.FirstName = source.FirstName,
-    target. = source.LastName]],
-    cursor = { line = 6, col = 11 },
+    target.█ = source.LastName]],
     expected = {
       type = "column",
       items = {
@@ -1597,8 +1503,7 @@ MERGE INTO Employees AS target
 USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target.EmployeeID = source.EmployeeID
 WHEN MATCHED THEN UPDATE SET target.FirstName = source.FirstName
-OUTPUT $action, inserted.EmployeeID INTO ]],
-    cursor = { line = 5, col = 41 },
+OUTPUT $action, inserted.EmployeeID INTO █]],
     expected = {
       type = "table",
       items = {
@@ -1614,9 +1519,8 @@ OUTPUT $action, inserted.EmployeeID INTO ]],
     description = "MERGE - schema-qualified tables",
     database = "vim_dadbod_test",
     query = [[MERGE INTO dbo.Employees AS target
-USING hr. AS source
+USING hr.█ AS source
 ON target.EmployeeID = source.EmployeeID]],
-    cursor = { line = 1, col = 10 },
     expected = {
       type = "table",
       items = {
@@ -1632,9 +1536,8 @@ ON target.EmployeeID = source.EmployeeID]],
     description = "MERGE - cross-database",
     database = "vim_dadbod_test",
     query = [[MERGE INTO vim_dadbod_test.dbo.Employees AS target
-USING TEST.dbo. AS source
+USING TEST.dbo.█ AS source
 ON target.EmployeeID = source.EmployeeID]],
-    cursor = { line = 1, col = 16 },
     expected = {
       type = "table",
       items = {
@@ -1652,8 +1555,7 @@ ON target.EmployeeID = source.EmployeeID]],
     query = [[MERGE INTO Employees AS target
 USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target.EmployeeID = source.EmployeeID
-WHEN NOT MATCHED THEN INSERT (EmployeeID, , LastName) VALUES (source.EmployeeID, DEFAULT, source.LastName)]],
-    cursor = { line = 3, col = 43 },
+WHEN NOT MATCHED THEN INSERT (EmployeeID, ,█ LastName) VALUES (source.EmployeeID, DEFAULT, source.LastName)]],
     expected = {
       type = "column",
       items = {
@@ -1670,8 +1572,7 @@ WHEN NOT MATCHED THEN INSERT (EmployeeID, , LastName) VALUES (source.EmployeeID,
     query = [[MERGE INTO Employees AS target
 USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target.EmployeeID = source.EmployeeID
-WHEN MATCHED AND source. = 0 THEN DELETE]],
-    cursor = { line = 3, col = 24 },
+WHEN MATCHED AND source.█ = 0 THEN DELETE]],
     expected = {
       type = "column",
       items = {
@@ -1694,11 +1595,10 @@ WHEN MATCHED THEN
     target.FirstName = source.FirstName,
     target.LastName = source.LastName,
     target.Salary = source.Salary,
-    target.DepartmentID = source.
+    target.DepartmentID = source.█
 WHEN NOT MATCHED THEN
   INSERT (EmployeeID, FirstName, LastName)
   VALUES (source.EmployeeID, source.FirstName, source.LastName)]],
-    cursor = { line = 8, col = 32 },
     expected = {
       type = "column",
       items = {
