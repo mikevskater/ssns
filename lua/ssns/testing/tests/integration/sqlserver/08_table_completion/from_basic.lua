@@ -14,17 +14,46 @@ return {
     cursor = { line = 0, col = 14 },
     expected = {
       type = "table",
-      -- Should include tables from all schemas
+      -- Should include databases, schemas, and all FROM-selectable objects from current DB
       items = {
         includes = {
+          -- Databases
+          "TEST",
+          "Branch_Prod",
+          "vim_dadbod_test",
+          -- Schemas in current DB
+          "dbo",
+          "hr",
+          -- Tables in dbo schema (8)
+          "Regions",
+          "Countries",
           "Departments",
           "Employees",
+          "Customers",
+          "Orders",
+          "Products",
           "Projects",
+          -- Views in dbo schema (3)
+          "vw_ActiveEmployees",
+          "vw_DepartmentSummary",
+          "vw_ProjectStatus",
+          -- Synonyms in dbo schema (4)
+          "syn_ActiveEmployees",
+          "syn_Depts",
+          "syn_Employees",
+          "syn_HRBenefits",
+          -- Table Functions in dbo schema (2)
+          "fn_GetEmployeesBySalaryRange",
+          "GetCustomerOrders",
+          -- Tables in hr schema (1)
+          "Benefits",
         },
         excludes = {
           -- Should NOT include procedures or scalar functions
-          "sp_SearchEmployees",
           "usp_GetEmployeesByDepartment",
+          "usp_InsertEmployee",
+          "fn_CalculateYearsOfService",
+          "fn_GetEmployeeFullName",
         },
       },
     },

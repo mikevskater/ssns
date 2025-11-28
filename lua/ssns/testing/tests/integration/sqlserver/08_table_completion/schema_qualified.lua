@@ -16,6 +16,7 @@ return {
       type = "table",
       items = {
         includes = {
+          -- Tables in dbo schema (8)
           "Employees",
           "Departments",
           "Projects",
@@ -24,12 +25,28 @@ return {
           "Products",
           "Regions",
           "Countries",
+          -- Views in dbo schema (3)
           "vw_ActiveEmployees",
+          "vw_DepartmentSummary",
+          "vw_ProjectStatus",
+          -- Synonyms in dbo schema (4)
+          "syn_ActiveEmployees",
+          "syn_Depts",
           "syn_Employees",
+          "syn_HRBenefits",
+          -- Table Functions in dbo schema (2)
+          "fn_GetEmployeesBySalaryRange",
+          "GetCustomerOrders",
         },
         excludes = {
           -- hr schema objects should NOT appear
           "Benefits",
+          -- Stored procedures should NOT appear
+          "usp_GetEmployeesByDepartment",
+          "usp_InsertEmployee",
+          -- Scalar functions should NOT appear
+          "fn_CalculateYearsOfService",
+          "fn_GetEmployeeFullName",
         },
       },
     },

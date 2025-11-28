@@ -16,9 +16,37 @@ return {
       type = "object",
       items = {
         includes = {
-          -- Other databases on the server
+          -- All databases including current
+          "vim_dadbod_test",
           "TEST",
           "Branch_Prod",
+          -- Schemas in current DB
+          "dbo",
+          "hr",
+          -- All FROM-selectable objects from current database (18 total)
+          -- dbo tables (8)
+          "Regions",
+          "Countries",
+          "Departments",
+          "Employees",
+          "Customers",
+          "Orders",
+          "Products",
+          "Projects",
+          -- dbo views (3)
+          "vw_ActiveEmployees",
+          "vw_DepartmentSummary",
+          "vw_ProjectStatus",
+          -- dbo synonyms (4)
+          "syn_ActiveEmployees",
+          "syn_Depts",
+          "syn_Employees",
+          "syn_HRBenefits",
+          -- dbo table functions (2)
+          "fn_GetEmployeesBySalaryRange",
+          "GetCustomerOrders",
+          -- hr tables (1)
+          "Benefits",
         },
       },
     },
@@ -62,9 +90,10 @@ return {
     expected = {
       type = "table",
       items = {
-        -- Tables in TEST.dbo schema
+        -- All FROM-selectable objects in TEST.dbo schema (2 total)
         includes_any = {
           "Records",
+          "syn_MainEmployees",
         },
       },
     },
@@ -224,8 +253,28 @@ JOIN TEST.dbo.]],
       type = "table",
       items = {
         includes = {
-          "Employees",
+          -- All FROM-selectable objects in vim_dadbod_test.dbo (17 total)
+          -- Tables (8)
+          "Regions",
+          "Countries",
           "Departments",
+          "Employees",
+          "Customers",
+          "Orders",
+          "Products",
+          "Projects",
+          -- Views (3)
+          "vw_ActiveEmployees",
+          "vw_DepartmentSummary",
+          "vw_ProjectStatus",
+          -- Synonyms (4)
+          "syn_ActiveEmployees",
+          "syn_Depts",
+          "syn_Employees",
+          "syn_HRBenefits",
+          -- Table Functions (2)
+          "fn_GetEmployeesBySalaryRange",
+          "GetCustomerOrders",
         },
       },
     },
