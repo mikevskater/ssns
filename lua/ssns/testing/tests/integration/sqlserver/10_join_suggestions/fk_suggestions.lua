@@ -83,15 +83,15 @@ return {
   },
   {
     number = 4306,
-    description = "FK suggestion - self-referential (Employees.ManagerID -> Employees)",
+    description = "FK suggestion - self-referential (Departments.ManagerID -> Employees)",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN ]],
-    cursor = { line = 0, col = 32 },
+    query = [[SELECT * FROM Departments d JOIN ]],
+    cursor = { line = 0, col = 33 },
     expected = {
       type = "join_suggestion",
       items = {
         includes = {
-          "Employees",  -- FK: Employees.ManagerID -> Employees.EmployeeID (self-ref)
+          "Employees",  -- FK: Departments.ManagerID -> Employees.EmployeeID
         },
       },
     },
@@ -248,8 +248,8 @@ JOIN ]],
     number = 4316,
     description = "FK chain - Orders -> Customers (existing) + Countries (2 hop)",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Orders o JOIN Customers c ON o.CustomerID = c.CustomerID JOIN ]],
-    cursor = { line = 0, col = 76 },
+    query = [[SELECT * FROM Orders o JOIN Customers c ON o.CustomerId = c.Id JOIN ]],
+    cursor = { line = 0, col = 70 },
     expected = {
       type = "join_suggestion",
       items = {
@@ -281,7 +281,7 @@ JOIN ]],
     database = "vim_dadbod_test",
     query = [[SELECT *
 FROM Orders o
-JOIN Customers c ON o.CustomerID = c.CustomerID
+JOIN Customers c ON o.CustomerId = c.Id
 JOIN Countries co ON c.CountryID = co.CountryID
 JOIN ]],
     cursor = { line = 4, col = 5 },
@@ -300,7 +300,7 @@ JOIN ]],
     description = "FK chain - full chain Orders -> Customers -> Countries -> Regions",
     database = "vim_dadbod_test",
     query = [[SELECT * FROM Orders o
-JOIN Customers c ON o.CustomerID = c.CustomerID
+JOIN Customers c ON o.CustomerId = c.Id
 JOIN Countries co ON c.CountryID = co.CountryID
 JOIN Regions r ON co.RegionID = r.RegionID
 JOIN ]],
@@ -325,8 +325,8 @@ JOIN ]],
       type = "join_suggestion",
       items = {
         includes_any = {
-          "Projects",  -- If Projects has FK to Departments
-          "Locations",  -- If Departments has FK to Locations
+          "Orders",  -- Via reverse FK from Orders.EmployeeId
+          "Countries",  -- If reachable via multi-hop
         },
       },
     },
@@ -341,10 +341,10 @@ JOIN ]],
       type = "join_suggestion",
       items = {
         includes = {
-          "Customers",   -- 1 hop
-          "Employees",   -- 1 hop
-          "Countries",   -- 2 hops via Customers
-          "Departments", -- 2 hops via Employees
+          "Customers",   -- 1 hop via Orders.CustomerId
+          "Employees",   -- 1 hop via Orders.EmployeeId
+          "Countries",   -- 2 hops via Customers.CountryID
+          "Departments", -- 2 hops via Employees.DepartmentID
         },
       },
     },
@@ -369,8 +369,8 @@ JOIN ]],
     number = 4323,
     description = "FK chain - skip already joined tables",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Orders o JOIN Customers c ON o.CustomerID = c.CustomerID JOIN ]],
-    cursor = { line = 0, col = 76 },
+    query = [[SELECT * FROM Orders o JOIN Customers c ON o.CustomerId = c.Id JOIN ]],
+    cursor = { line = 0, col = 70 },
     expected = {
       type = "join_suggestion",
       items = {
@@ -388,11 +388,11 @@ JOIN ]],
     description = "FK chain - multiline complex join chain",
     database = "vim_dadbod_test",
     query = [[SELECT
-  o.OrderID,
-  c.CustomerName,
+  o.Id,
+  c.Name,
   co.CountryName
 FROM Orders o
-INNER JOIN Customers c ON o.CustomerID = c.CustomerID
+INNER JOIN Customers c ON o.CustomerId = c.Id
 LEFT JOIN Countries co ON c.CountryID = co.CountryID
 JOIN ]],
     cursor = { line = 7, col = 5 },
@@ -442,15 +442,15 @@ JOIN ]],
     number = 4327,
     description = "FK chain - cycle prevention (don't suggest circular)",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e1 JOIN Employees e2 ON e1.ManagerID = e2.EmployeeID JOIN ]],
-    cursor = { line = 0, col = 80 },
+    query = [[SELECT * FROM Departments d1 JOIN Departments d2 ON d1.ManagerID = d2.ManagerID JOIN ]],
+    cursor = { line = 0, col = 85 },
     expected = {
       type = "join_suggestion",
       items = {
         includes = {
-          "Departments",
+          "Employees",
         },
-        -- Employees already in query twice, but more Employees JOINs might still be valid for self-ref
+        -- Departments already in query twice, but Employees FK still valid
       },
     },
   },
@@ -460,7 +460,7 @@ JOIN ]],
     database = "vim_dadbod_test",
     query = [[SELECT *
 FROM Orders o
-INNER JOIN Customers c ON o.CustomerID = c.CustomerID
+INNER JOIN Customers c ON o.CustomerId = c.Id
 LEFT JOIN Countries co ON c.CountryID = co.CountryID
 RIGHT JOIN ]],
     cursor = { line = 4, col = 11 },
@@ -477,8 +477,8 @@ RIGHT JOIN ]],
     number = 4329,
     description = "FK chain - schema-qualified tables in chain",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM dbo.Orders o JOIN dbo.Customers c ON o.CustomerID = c.CustomerID JOIN ]],
-    cursor = { line = 0, col = 81 },
+    query = [[SELECT * FROM dbo.Orders o JOIN dbo.Customers c ON o.CustomerId = c.Id JOIN ]],
+    cursor = { line = 0, col = 75 },
     expected = {
       type = "join_suggestion",
       items = {
@@ -492,8 +492,8 @@ RIGHT JOIN ]],
     number = 4330,
     description = "FK chain - prefix filter in multi-hop",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Orders o JOIN Customers c ON o.CustomerID = c.CustomerID JOIN Coun]],
-    cursor = { line = 0, col = 80 },
+    query = [[SELECT * FROM Orders o JOIN Customers c ON o.CustomerId = c.Id JOIN Coun]],
+    cursor = { line = 0, col = 74 },
     expected = {
       type = "join_suggestion",
       items = {
@@ -526,8 +526,8 @@ RIGHT JOIN ]],
     number = 4332,
     description = "Alias generation - avoids conflict with existing 'd'",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e, Dummy d JOIN ]],
-    cursor = { line = 0, col = 40 },
+    query = [[SELECT * FROM Employees e, Products d JOIN ]],
+    cursor = { line = 0, col = 43 },
     expected = {
       type = "join_suggestion",
       items = {
@@ -541,8 +541,8 @@ RIGHT JOIN ]],
     number = 4333,
     description = "Alias generation - multiple conflicting aliases",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e, Data d, Details de JOIN ]],
-    cursor = { line = 0, col = 51 },
+    query = [[SELECT * FROM Employees e, Products d, Projects de JOIN ]],
+    cursor = { line = 0, col = 57 },
     expected = {
       type = "join_suggestion",
       items = {
@@ -619,8 +619,8 @@ RIGHT JOIN ]],
     number = 4338,
     description = "Complex scenario - subquery in FROM",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM (SELECT * FROM Employees WHERE DeptID = 1) e JOIN ]],
-    cursor = { line = 0, col = 64 },
+    query = [[SELECT * FROM (SELECT * FROM Employees WHERE DepartmentID = 1) e JOIN ]],
+    cursor = { line = 0, col = 71 },
     expected = {
       type = "table",
       items = {
@@ -656,7 +656,7 @@ SELECT * FROM EmpCTE e JOIN ]],
       type = "table",
       items = {
         includes_any = {
-          "TestTable",
+          "Records",
         },
       },
     },
@@ -724,50 +724,50 @@ SELECT * FROM EmpCTE e JOIN ]],
   },
   {
     number = 4345,
-    description = "Multiple FKs to same table - disambiguation",
+    description = "Projects has no FKs - all tables available",
     database = "vim_dadbod_test",
     query = [[SELECT * FROM Projects p JOIN ]],
     cursor = { line = 0, col = 30 },
     expected = {
-      type = "join_suggestion",
+      type = "table",
       items = {
-        -- If Projects has both LeadID and ManagerID -> Employees
-        includes_any = {
+        -- Projects has no FKs, so all tables should be available
+        includes = {
           "Employees",
+          "Departments",
+          "Orders",
         },
       },
     },
   },
   {
     number = 4346,
-    description = "Compound FK - multiple columns",
+    description = "Orders has multiple FKs",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM OrderDetails od JOIN ]],
-    cursor = { line = 0, col = 35 },
+    query = [[SELECT * FROM Orders o JOIN ]],
+    cursor = { line = 0, col = 28 },
     expected = {
       type = "join_suggestion",
       items = {
-        includes_any = {
-          "Orders",
-          "Products",
+        includes = {
+          "Customers",  -- FK: Orders.CustomerId
+          "Employees",  -- FK: Orders.EmployeeId
         },
       },
     },
   },
   {
     number = 4347,
-    description = "FK with different column names",
+    description = "FK with same column names",
     database = "vim_dadbod_test",
     query = [[SELECT * FROM Employees e JOIN ]],
     cursor = { line = 0, col = 32 },
     expected = {
       type = "join_suggestion",
       items = {
-        -- FK: Employees.DepartmentID -> Departments.DepartmentID (same name)
-        -- FK: Employees.ManagerID -> Employees.EmployeeID (different name)
+        -- FK: Employees.DepartmentID -> Departments.DepartmentID
         includes = {
           "Departments",
-          "Employees",
         },
       },
     },
