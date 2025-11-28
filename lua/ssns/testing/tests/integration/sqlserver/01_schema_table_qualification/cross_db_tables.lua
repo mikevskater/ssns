@@ -11,7 +11,8 @@ return {
     type = [[table]],
     items = {
       includes = {
-        "Records" -- TEST.dbo only has one table: Records
+        "Records", -- TEST.dbo table
+        "syn_MainEmployees" -- TEST.dbo synonym
       },
       excludes = {
         -- Tables from vim_dadbod_test.dbo should not appear

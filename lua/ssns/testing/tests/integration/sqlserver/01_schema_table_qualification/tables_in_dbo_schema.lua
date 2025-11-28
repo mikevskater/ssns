@@ -11,30 +11,27 @@ return {
     type = [[table]],
     items = {
       includes = {
-        -- Sample of tables from dbo schema
+        -- Tables from dbo schema (8 total)
+        "Regions",
+        "Countries",
         "Departments",
         "Employees",
-        "Projects",
         "Customers",
         "Orders",
         "Products",
-        "Categories",
-        "Suppliers",
-        -- Sample of views from dbo schema
+        "Projects",
+        -- Views from dbo schema (3 total)
         "vw_ActiveEmployees",
         "vw_DepartmentSummary",
         "vw_ProjectStatus",
-        "CustomerOrders",
-        "View_CustomerOrders",
-        -- Sample of synonyms from dbo schema
+        -- Synonyms from dbo schema (4 total)
         "syn_ActiveEmployees",
         "syn_Depts",
         "syn_Employees",
         "syn_HRBenefits",
-        -- Table-valued functions from dbo schema (can be queried)
+        -- Table-valued functions from dbo schema (2 total)
         "fn_GetEmployeesBySalaryRange",
-        "GetCustomerOrders",
-        "GetOrderTotal"
+        "GetCustomerOrders"
       },
       excludes = {
         -- Tables from other schemas should not appear
