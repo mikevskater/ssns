@@ -21,6 +21,8 @@ dbo.]],
         "Customers",
         "Orders",
         "Products",
+        "Categories",
+        "Suppliers",
         -- Sample of views from dbo schema
         "vw_ActiveEmployees",
         "vw_DepartmentSummary",
@@ -32,7 +34,7 @@ dbo.]],
         "syn_Depts",
         "syn_Employees",
         "syn_HRBenefits",
-        -- Sample of table-valued functions from dbo schema
+        -- Table-valued functions from dbo schema (can be queried)
         "fn_GetEmployeesBySalaryRange",
         "GetCustomerOrders",
         "GetOrderTotal"
@@ -43,10 +45,25 @@ dbo.]],
         -- Synonyms in Branch schema should not appear
         "AllDivisions",
         "CentralDivision",
+        "DivisionMetrics",
+        "EasternDivision",
+        "WesternDivision",
         -- Objects from other databases
         "Records", -- TEST.dbo.Records
         "central_division", -- Branch_Prod.dbo
-        "division_metrics" -- Branch_Prod.dbo
+        "division_metrics", -- Branch_Prod.dbo
+        "eastern_division", -- Branch_Prod.dbo
+        "western_division", -- Branch_Prod.dbo
+        -- Scalar functions should not appear (not selectable)
+        "fn_GetEmployeeFullName",
+        "fn_CalculateYearsOfService",
+        "fn_GetEmployeesByDepartment",
+        "fn_GetTotalBenefitCost", -- hr schema function
+        -- Stored procedures should not appear (not selectable)
+        "usp_GetEmployeesByDepartment",
+        "sp_SearchEmployees",
+        "usp_InsertEmployee",
+        "usp_UpdateEmployeeSalary"
       }
     }
   }
