@@ -12,7 +12,7 @@ WHERE
   },
   expected = {
     type = [[column]],
-    items = {
+    includes = {
       "EmployeeID",
       "FirstName",
       "LastName",
@@ -21,6 +21,32 @@ WHERE
       "HireDate",
       "Salary",
       "IsActive"
+    },
+    excludes = {
+      -- From Departments table
+      "DepartmentName",
+      "ManagerID",
+      "Budget",
+      -- From Orders table
+      "OrderId",
+      "CustomerId",
+      "ProductId",
+      "OrderDate",
+      "Total",
+      "TotalAmount",
+      "Status",
+      -- From Customers table
+      "Name",
+      "CompanyId",
+      "Country",
+      "Active",
+      "CreatedDate",
+      -- From Products table
+      "Price",
+      "CategoryId",
+      "SupplierId",
+      "Sales",
+      "Discontinued"
     }
   }
 }
