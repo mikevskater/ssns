@@ -54,7 +54,6 @@ return {
         includes = {
           "EmployeeID",
           "DepartmentID",
-          "ManagerID",
         },
       },
     },
@@ -358,8 +357,8 @@ WHERE e.DepartmentID = d.DepartmentID
     number = 4151,
     description = "WHERE - after JOIN",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN Departments d ON e.DeptID = d.DeptID WHERE ]],
-    cursor = { line = 0, col = 73 },
+    query = [[SELECT * FROM Employees e JOIN Departments d ON e.DepartmentID = d.DepartmentID WHERE ]],
+    cursor = { line = 0, col = 88 },
     expected = {
       type = "column",
       items = {
@@ -374,8 +373,8 @@ WHERE e.DepartmentID = d.DepartmentID
     number = 4152,
     description = "WHERE - qualified after JOIN",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN Departments d ON e.DeptID = d.DeptID WHERE e.]],
-    cursor = { line = 0, col = 75 },
+    query = [[SELECT * FROM Employees e JOIN Departments d ON e.DepartmentID = d.DepartmentID WHERE e.]],
+    cursor = { line = 0, col = 90 },
     expected = {
       type = "column",
       items = {
@@ -394,8 +393,8 @@ WHERE e.DepartmentID = d.DepartmentID
     description = "WHERE - after multiple JOINs",
     database = "vim_dadbod_test",
     query = [[SELECT * FROM Employees e
-JOIN Departments d ON e.DeptID = d.DeptID
-JOIN Projects p ON d.DeptID = p.DeptID
+JOIN Departments d ON e.DepartmentID = d.DepartmentID
+JOIN Projects p ON d.DepartmentID = p.DepartmentID
 WHERE ]],
     cursor = { line = 3, col = 6 },
     expected = {
@@ -413,8 +412,8 @@ WHERE ]],
     number = 4154,
     description = "WHERE - LEFT JOIN columns",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e LEFT JOIN Departments d ON e.DeptID = d.DeptID WHERE d.]],
-    cursor = { line = 0, col = 80 },
+    query = [[SELECT * FROM Employees e LEFT JOIN Departments d ON e.DepartmentID = d.DepartmentID WHERE d.]],
+    cursor = { line = 0, col = 95 },
     expected = {
       type = "column",
       items = {
@@ -435,8 +434,8 @@ WHERE ]],
       type = "column",
       items = {
         includes = {
-          "ManagerID",
           "Email",
+          "DepartmentID",
         },
       },
     },
@@ -445,8 +444,8 @@ WHERE ]],
     number = 4156,
     description = "WHERE - NOT EXISTS subquery",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e WHERE NOT EXISTS (SELECT 1 FROM Departments d WHERE d.DeptID = e.)]],
-    cursor = { line = 0, col = 92 },
+    query = [[SELECT * FROM Employees e WHERE NOT EXISTS (SELECT 1 FROM Departments d WHERE d.DepartmentID = e.)]],
+    cursor = { line = 0, col = 101 },
     expected = {
       type = "column",
       items = {

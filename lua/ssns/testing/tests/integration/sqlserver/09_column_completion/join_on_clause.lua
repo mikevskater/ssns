@@ -84,8 +84,8 @@ return {
       type = "column",
       items = {
         includes = {
-          "LocationID",
-          "ManagerID",
+          "EmployeeID",
+          "FirstName",
         },
       },
     },
@@ -104,7 +104,7 @@ JOIN Departments d
       type = "column",
       items = {
         includes = {
-          "ManagerID",
+          "EmployeeID",
         },
       },
     },
@@ -177,8 +177,8 @@ JOIN Departments d
     number = 4171,
     description = "ON clause - second JOIN left side",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN Departments d ON e.DeptID = d.DeptID JOIN Projects p ON ]],
-    cursor = { line = 0, col = 86 },
+    query = [[SELECT * FROM Employees e JOIN Departments d ON e.DepartmentID = d.DepartmentID JOIN Projects p ON ]],
+    cursor = { line = 0, col = 101 },
     expected = {
       type = "column",
       items = {
@@ -193,14 +193,14 @@ JOIN Departments d
     number = 4172,
     description = "ON clause - second JOIN alias-qualified",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN Departments d ON e.DeptID = d.DeptID JOIN Projects p ON p.]],
-    cursor = { line = 0, col = 88 },
+    query = [[SELECT * FROM Employees e JOIN Departments d ON e.DepartmentID = d.DepartmentID JOIN Projects p ON p.]],
+    cursor = { line = 0, col = 103 },
     expected = {
       type = "column",
       items = {
         includes = {
           "ProjectID",
-          "DepartmentID",
+          "ProjectName",
         },
         excludes = {
           "FirstName",
@@ -212,8 +212,8 @@ JOIN Departments d
     number = 4173,
     description = "ON clause - second JOIN linking to first table",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN Departments d ON e.DeptID = d.DeptID JOIN Projects p ON p.LeadID = e.]],
-    cursor = { line = 0, col = 100 },
+    query = [[SELECT * FROM Employees e JOIN Departments d ON e.DepartmentID = d.DepartmentID JOIN Projects p ON p.ProjectID = e.]],
+    cursor = { line = 0, col = 118 },
     expected = {
       type = "column",
       items = {
@@ -227,8 +227,8 @@ JOIN Departments d
     number = 4174,
     description = "ON clause - second JOIN linking to second table",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN Departments d ON e.DeptID = d.DeptID JOIN Projects p ON p.DeptID = d.]],
-    cursor = { line = 0, col = 100 },
+    query = [[SELECT * FROM Employees e JOIN Departments d ON e.DepartmentID = d.DepartmentID JOIN Projects p ON p.DepartmentID = d.]],
+    cursor = { line = 0, col = 118 },
     expected = {
       type = "column",
       items = {
@@ -244,15 +244,16 @@ JOIN Departments d
     database = "vim_dadbod_test",
     query = [[SELECT *
 FROM Employees e
-JOIN Departments d ON e.DeptID = d.DeptID
-JOIN Projects p ON p.DeptID = d.DeptID
-JOIN Customers c ON ]],
-    cursor = { line = 4, col = 20 },
+JOIN Departments d ON e.DepartmentID = d.DepartmentID
+JOIN Projects p ON p.DepartmentID = d.DepartmentID
+JOIN Customers c ON c.Id = ]],
+    cursor = { line = 4, col = 28 },
     expected = {
       type = "column",
       items = {
         includes = {
-          "CustomerID",
+          "Id",
+          "CustomerId",
         },
       },
     },
@@ -261,8 +262,8 @@ JOIN Customers c ON ]],
     number = 4176,
     description = "ON clause - all tables available",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN Departments d ON e.DeptID = d.DeptID JOIN Projects p ON ]],
-    cursor = { line = 0, col = 86 },
+    query = [[SELECT * FROM Employees e JOIN Departments d ON e.DepartmentID = d.DepartmentID JOIN Projects p ON ]],
+    cursor = { line = 0, col = 101 },
     expected = {
       type = "column",
       items = {
@@ -367,13 +368,13 @@ LEFT JOIN Projects p
     number = 4182,
     description = "ON clause - FK column suggestion priority",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Orders o JOIN Customers c ON o.CustomerID = c.]],
+    query = [[SELECT * FROM Orders o JOIN Customers c ON o.CustomerId = c.]],
     cursor = { line = 0, col = 60 },
     expected = {
       type = "column",
       items = {
         includes = {
-          "CustomerID",
+          "Id",
         },
       },
     },
@@ -398,14 +399,13 @@ LEFT JOIN Projects p
     number = 4184,
     description = "ON clause - fuzzy name matching (ID vs _ID)",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN Departments d ON e.DeptID = d.]],
-    cursor = { line = 0, col = 60 },
+    query = [[SELECT * FROM Employees e JOIN Departments d ON e.DepartmentID = d.]],
+    cursor = { line = 0, col = 69 },
     expected = {
       type = "column",
       items = {
         includes_any = {
           "DepartmentID",
-          "DeptID",
         },
       },
     },
@@ -420,8 +420,7 @@ LEFT JOIN Projects p
       type = "column",
       items = {
         includes_any = {
-          "EmployeeID",
-          "EmpID",
+          "EmployeeId",
         },
       },
     },
@@ -481,8 +480,8 @@ LEFT JOIN Projects p
     number = 4189,
     description = "ON clause - complex condition with mixed types",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN Departments d ON e.DepartmentID = d.DepartmentID AND e.ManagerID = d.]],
-    cursor = { line = 0, col = 99 },
+    query = [[SELECT * FROM Employees e JOIN Departments d ON e.DepartmentID = d.DepartmentID AND e.EmployeeID = d.]],
+    cursor = { line = 0, col = 101 },
     expected = {
       type = "column",
       items = {
@@ -497,13 +496,13 @@ LEFT JOIN Projects p
     number = 4190,
     description = "ON clause - OR condition type compatibility",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN Departments d ON e.DepartmentID = d.DepartmentID OR e.LocationID = d.]],
-    cursor = { line = 0, col = 99 },
+    query = [[SELECT * FROM Employees e JOIN Departments d ON e.DepartmentID = d.DepartmentID OR e.EmployeeID = d.]],
+    cursor = { line = 0, col = 101 },
     expected = {
       type = "column",
       items = {
         includes_any = {
-          "LocationID",
+          "ManagerID",
         },
       },
     },
