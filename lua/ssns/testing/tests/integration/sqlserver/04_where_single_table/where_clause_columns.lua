@@ -17,7 +17,10 @@ return {
       "DepartmentID",
       "HireDate",
       "Salary",
-      "IsActive"
+      "IsActive",
+      "dbo.fn_GetEmployeeFullName",
+      "dbo.fn_CalculateYearsOfService",
+      "hr.fn_GetTotalBenefitCost"
     },
     excludes = {
       -- From Departments table
