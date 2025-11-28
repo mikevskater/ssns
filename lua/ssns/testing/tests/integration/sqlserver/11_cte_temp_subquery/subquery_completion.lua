@@ -88,14 +88,14 @@ return {
     number = 4506,
     description = "Subquery - table completion in HAVING subquery",
     database = "vim_dadbod_test",
-    query = [[SELECT DepartmentID, COUNT(*) FROM Employees GROUP BY DepartmentID HAVING COUNT(*) > (SELECT AVG(EmpCount) FROM )]],
-    cursor = { line = 0, col = 109 },
+    query = [[SELECT DepartmentID, COUNT(*) FROM Employees GROUP BY DepartmentID HAVING COUNT(*) > (SELECT AVG(Budget) FROM )]],
+    cursor = { line = 0, col = 107 },
     expected = {
       type = "table",
       items = {
         includes_any = {
-          "DeptStats",
           "Departments",
+          "Employees",
         },
       },
     },
@@ -395,7 +395,7 @@ ON e.DepartmentID = d.]],
     query = [[SELECT * FROM (
   SELECT EmployeeID AS ID, FirstName AS Name FROM Employees
   UNION ALL
-  SELECT CustomerID AS ID, CustomerName AS Name FROM Customers
+  SELECT Id AS ID, Name AS Name FROM Customers
 ) combined WHERE ]],
     cursor = { line = 4, col = 17 },
     expected = {
@@ -530,14 +530,14 @@ CROSS APPLY (SELECT  FROM Employees e WHERE e.DepartmentID = d.DepartmentID ORDE
     number = 4531,
     description = "Subquery - ALL operator subquery",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees WHERE Salary > ALL (SELECT  FROM DeptSalaries)]],
+    query = [[SELECT * FROM Employees WHERE Salary > ALL (SELECT  FROM Employees WHERE DepartmentID = 1)]],
     cursor = { line = 0, col = 52 },
     expected = {
       type = "column",
       items = {
         includes_any = {
           "Salary",
-          "AvgSalary",
+          "EmployeeID",
         },
       },
     },
@@ -561,7 +561,7 @@ CROSS APPLY (SELECT  FROM Employees e WHERE e.DepartmentID = d.DepartmentID ORDE
     number = 4533,
     description = "Subquery - NOT IN subquery columns",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees WHERE DepartmentID NOT IN (SELECT  FROM Departments WHERE IsActive = 0)]],
+    query = [[SELECT * FROM Employees WHERE DepartmentID NOT IN (SELECT  FROM Departments WHERE Budget < 1000)]],
     cursor = { line = 0, col = 58 },
     expected = {
       type = "column",
@@ -621,14 +621,14 @@ CROSS APPLY (SELECT  FROM Employees e WHERE e.DepartmentID = d.DepartmentID ORDE
     number = 4537,
     description = "Subquery - LIKE with subquery (edge case)",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees WHERE FirstName LIKE (SELECT  FROM Patterns WHERE PatternType = 'Name')]],
+    query = [[SELECT * FROM Employees WHERE FirstName LIKE (SELECT  FROM Employees WHERE EmployeeID = 1)]],
     cursor = { line = 0, col = 53 },
     expected = {
       type = "column",
       items = {
         includes_any = {
-          "Pattern",
-          "PatternValue",
+          "FirstName",
+          "LastName",
         },
       },
     },
@@ -637,14 +637,14 @@ CROSS APPLY (SELECT  FROM Employees e WHERE e.DepartmentID = d.DepartmentID ORDE
     number = 4538,
     description = "Subquery - subquery in COALESCE",
     database = "vim_dadbod_test",
-    query = [[SELECT EmployeeID, COALESCE(ManagerID, (SELECT  FROM Defaults WHERE Type = 'Manager')) FROM Employees]],
-    cursor = { line = 0, col = 53 },
+    query = [[SELECT EmployeeID, COALESCE(DepartmentID, (SELECT  FROM Departments WHERE DepartmentID = 1)) FROM Employees]],
+    cursor = { line = 0, col = 56 },
     expected = {
       type = "column",
       items = {
         includes_any = {
-          "DefaultValue",
-          "Value",
+          "DepartmentID",
+          "ManagerID",
         },
       },
     },
@@ -670,8 +670,8 @@ CROSS APPLY (SELECT  FROM Employees e WHERE e.DepartmentID = d.DepartmentID ORDE
     database = "vim_dadbod_test",
     query = [[SELECT * FROM Employees
 WHERE DepartmentID IN (SELECT DepartmentID FROM Departments WHERE Budget > 100000)
-AND ManagerID IN (SELECT  FROM Employees WHERE IsManager = 1)]],
-    cursor = { line = 2, col = 24 },
+AND DepartmentID IN (SELECT  FROM Employees WHERE IsActive = 1)]],
+    cursor = { line = 2, col = 27 },
     expected = {
       type = "column",
       items = {
@@ -770,7 +770,7 @@ FROM (
     database = "vim_dadbod_test",
     query = [[SELECT * FROM Employees e
 JOIN Departments d ON e.DepartmentID = d.DepartmentID
-WHERE e.Salary > (SELECT AVG(Salary) FROM Employees WHERE DepartmentID = d. AND ManagerID = e.ManagerID)]],
+WHERE e.Salary > (SELECT AVG(Salary) FROM Employees WHERE DepartmentID = d. AND DepartmentID = e.DepartmentID)]],
     cursor = { line = 2, col = 76 },
     expected = {
       type = "column",
@@ -802,16 +802,16 @@ PIVOT (COUNT(EmployeeID) FOR DepartmentID IN ([1], [2], [3])) pvt]],
     number = 4547,
     description = "Subquery - subquery in UNPIVOT source",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM (SELECT  FROM SalesData) src
-UNPIVOT (Value FOR Quarter IN (Q1, Q2, Q3, Q4)) unpvt]],
+    query = [[SELECT * FROM (SELECT  FROM Orders) src
+UNPIVOT (Value FOR Quarter IN (OrderId, CustomerId, Total)) unpvt]],
     cursor = { line = 0, col = 22 },
     expected = {
       type = "column",
       items = {
         includes_any = {
-          "Q1",
-          "Q2",
-          "SalesID",
+          "OrderId",
+          "CustomerId",
+          "Total",
         },
       },
     },

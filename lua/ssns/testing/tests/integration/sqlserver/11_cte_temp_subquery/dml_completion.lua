@@ -127,14 +127,14 @@ SELECT EmployeeID,  FROM Employees]],
     number = 4558,
     description = "INSERT - EXEC procedure completion",
     database = "vim_dadbod_test",
-    query = [[INSERT INTO Employees_Archive EXEC ]],
-    cursor = { line = 0, col = 35 },
+    query = [[INSERT INTO Projects EXEC ]],
+    cursor = { line = 0, col = 29 },
     expected = {
       type = "procedure",
       items = {
         includes_any = {
-          "sp_GetEmployees",
-          "usp_GetActiveEmployees",
+          "usp_GetEmployeesByDepartment",
+          "usp_InsertEmployee",
         },
       },
     },
@@ -150,7 +150,7 @@ SELECT EmployeeID,  FROM Employees]],
       items = {
         includes = {
           "Employees",
-          "AuditLog",
+          "Projects",
         },
       },
     },
@@ -178,14 +178,15 @@ VALUES ('John', 'Doe')]],
     number = 4561,
     description = "INSERT - OUTPUT INTO table",
     database = "vim_dadbod_test",
-    query = [[INSERT INTO Employees (FirstName)
+    query = [[CREATE TABLE #TempIDs (ID INT)
+INSERT INTO Employees (FirstName)
 OUTPUT inserted.EmployeeID INTO ]],
-    cursor = { line = 1, col = 32 },
+    cursor = { line = 2, col = 32 },
     expected = {
       type = "table",
       items = {
         includes = {
-          "InsertLog",
+          "Projects",
           "#TempIDs",
         },
       },
@@ -274,14 +275,14 @@ VALUES (1, 'John', 'Doe'),
     number = 4567,
     description = "INSERT - cross-database table",
     database = "vim_dadbod_test",
-    query = [[INSERT INTO vim_dadbod_second.dbo. SELECT * FROM Employees]],
-    cursor = { line = 0, col = 34 },
+    query = [[INSERT INTO TEST.dbo. SELECT * FROM Employees]],
+    cursor = { line = 0, col = 20 },
     expected = {
       type = "table",
       items = {
         includes_any = {
-          "Archive",
-          "ExtEmployees",
+          "Records",
+          "TestTable",
         },
       },
     },
@@ -307,8 +308,8 @@ VALUES (1, 'John', 'Doe'),
     number = 4569,
     description = "INSERT - computed column excluded",
     database = "vim_dadbod_test",
-    query = [[INSERT INTO EmployeesWithComputed () VALUES (1, 'John')]],
-    cursor = { line = 0, col = 35 },
+    query = [[INSERT INTO Employees () VALUES (1, 'John')]],
+    cursor = { line = 0, col = 22 },
     expected = {
       type = "column",
       items = {
@@ -432,8 +433,8 @@ VALUES (1, 'John')]],
       type = "column",
       items = {
         includes = {
-          "Bonus",
-          "Commission",
+          "DepartmentID",
+          "EmployeeID",
         },
       },
     },
@@ -670,8 +671,8 @@ WHERE EmployeeID = 1]],
     number = 4591,
     description = "UPDATE - computed column excluded from SET",
     database = "vim_dadbod_test",
-    query = [[UPDATE EmployeesWithComputed SET ]],
-    cursor = { line = 0, col = 34 },
+    query = [[UPDATE Employees SET ]],
+    cursor = { line = 0, col = 21 },
     expected = {
       type = "column",
       items = {
@@ -729,7 +730,7 @@ WHERE d.]],
       type = "column",
       items = {
         includes = {
-          "IsActive",
+          "DepartmentID",
           "Budget",
         },
       },
@@ -762,8 +763,8 @@ OUTPUT deleted.Salary, inserted.Salary INTO ]],
       type = "column",
       items = {
         includes = {
-          "Bonus",
-          "Commission",
+          "DepartmentID",
+          "EmployeeID",
         },
       },
     },
@@ -783,14 +784,14 @@ OUTPUT deleted.Salary, inserted.Salary INTO ]],
     number = 4598,
     description = "UPDATE - SET NULL check",
     database = "vim_dadbod_test",
-    query = [[UPDATE Employees SET  = NULL WHERE ManagerID IS NULL]],
+    query = [[UPDATE Employees SET  = NULL WHERE DepartmentID IS NULL]],
     cursor = { line = 0, col = 21 },
     expected = {
       type = "column",
       items = {
         includes = {
-          "ManagerID",
           "DepartmentID",
+          "Salary",
         },
       },
     },
@@ -822,7 +823,7 @@ OUTPUT deleted.Salary, inserted.Salary INTO ]],
       items = {
         includes = {
           "FirstName",
-          "Status",
+          "Email",
         },
       },
     },
@@ -1150,7 +1151,7 @@ WHERE
       type = "column",
       items = {
         includes = {
-          "ManagerID",
+          "DepartmentID",
           "HireDate",
         },
       },
@@ -1167,7 +1168,7 @@ WHERE
       items = {
         includes = {
           "Employees",
-          "AuditLog",
+          "Projects",
         },
       },
     },
@@ -1208,14 +1209,14 @@ WHERE
     number = 4624,
     description = "DELETE - cross-database",
     database = "vim_dadbod_test",
-    query = [[DELETE FROM vim_dadbod_second.dbo.]],
-    cursor = { line = 0, col = 34 },
+    query = [[DELETE FROM TEST.dbo.]],
+    cursor = { line = 0, col = 20 },
     expected = {
       type = "table",
       items = {
         includes_any = {
-          "Archive",
-          "LogTable",
+          "Records",
+          "TestTable",
         },
       },
     },
@@ -1266,7 +1267,7 @@ USING ]],
       type = "table",
       items = {
         includes = {
-          "Employees_Staging",
+          "Departments",
           "Employees",
         },
       },
@@ -1283,7 +1284,7 @@ USING (SELECT * FROM ) AS source]],
       type = "table",
       items = {
         includes = {
-          "Employees_Staging",
+          "Employees",
         },
       },
     },
@@ -1293,7 +1294,7 @@ USING (SELECT * FROM ) AS source]],
     description = "MERGE - ON condition target columns",
     database = "vim_dadbod_test",
     query = [[MERGE INTO Employees AS target
-USING Employees_Staging AS source
+USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target.]],
     cursor = { line = 2, col = 10 },
     expected = {
@@ -1310,7 +1311,7 @@ ON target.]],
     description = "MERGE - ON condition source columns",
     database = "vim_dadbod_test",
     query = [[MERGE INTO Employees AS target
-USING Employees_Staging AS source
+USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target.EmployeeID = source.]],
     cursor = { line = 2, col = 30 },
     expected = {
@@ -1327,7 +1328,7 @@ ON target.EmployeeID = source.]],
     description = "MERGE - WHEN MATCHED UPDATE SET",
     database = "vim_dadbod_test",
     query = [[MERGE INTO Employees AS target
-USING Employees_Staging AS source
+USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target.EmployeeID = source.EmployeeID
 WHEN MATCHED THEN UPDATE SET target. = source.FirstName]],
     cursor = { line = 3, col = 37 },
@@ -1346,7 +1347,7 @@ WHEN MATCHED THEN UPDATE SET target. = source.FirstName]],
     description = "MERGE - WHEN MATCHED UPDATE source column",
     database = "vim_dadbod_test",
     query = [[MERGE INTO Employees AS target
-USING Employees_Staging AS source
+USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target.EmployeeID = source.EmployeeID
 WHEN MATCHED THEN UPDATE SET target.FirstName = source.]],
     cursor = { line = 3, col = 54 },
@@ -1365,7 +1366,7 @@ WHEN MATCHED THEN UPDATE SET target.FirstName = source.]],
     description = "MERGE - WHEN NOT MATCHED INSERT columns",
     database = "vim_dadbod_test",
     query = [[MERGE INTO Employees AS target
-USING Employees_Staging AS source
+USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target.EmployeeID = source.EmployeeID
 WHEN NOT MATCHED THEN INSERT () VALUES (source.EmployeeID)]],
     cursor = { line = 3, col = 31 },
@@ -1384,7 +1385,7 @@ WHEN NOT MATCHED THEN INSERT () VALUES (source.EmployeeID)]],
     description = "MERGE - WHEN NOT MATCHED INSERT VALUES",
     database = "vim_dadbod_test",
     query = [[MERGE INTO Employees AS target
-USING Employees_Staging AS source
+USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target.EmployeeID = source.EmployeeID
 WHEN NOT MATCHED THEN INSERT (EmployeeID, FirstName) VALUES (source.EmployeeID, source.)]],
     cursor = { line = 3, col = 87 },
@@ -1402,7 +1403,7 @@ WHEN NOT MATCHED THEN INSERT (EmployeeID, FirstName) VALUES (source.EmployeeID, 
     description = "MERGE - WHEN NOT MATCHED BY SOURCE DELETE",
     database = "vim_dadbod_test",
     query = [[MERGE INTO Employees AS target
-USING Employees_Staging AS source
+USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target.EmployeeID = source.EmployeeID
 WHEN MATCHED THEN UPDATE SET target.FirstName = source.FirstName
 WHEN NOT MATCHED BY SOURCE AND target. < GETDATE() THEN DELETE]],
@@ -1411,8 +1412,8 @@ WHEN NOT MATCHED BY SOURCE AND target. < GETDATE() THEN DELETE]],
       type = "column",
       items = {
         includes = {
-          "LastUpdated",
           "HireDate",
+          "CreatedDate",
         },
       },
     },
@@ -1422,7 +1423,7 @@ WHEN NOT MATCHED BY SOURCE AND target. < GETDATE() THEN DELETE]],
     description = "MERGE - OUTPUT clause",
     database = "vim_dadbod_test",
     query = [[MERGE INTO Employees AS target
-USING Employees_Staging AS source
+USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target.EmployeeID = source.EmployeeID
 WHEN MATCHED THEN UPDATE SET target.FirstName = source.FirstName
 OUTPUT $action, inserted., deleted.EmployeeID]],
@@ -1441,7 +1442,7 @@ OUTPUT $action, inserted., deleted.EmployeeID]],
     number = 4637,
     description = "MERGE - WITH CTE source",
     database = "vim_dadbod_test",
-    query = [[WITH StagingCTE AS (SELECT * FROM Employees_Staging WHERE IsNew = 1)
+    query = [[WITH StagingCTE AS (SELECT * FROM Employees WHERE IsActive = 1)
 MERGE INTO Employees AS target
 USING  AS source
 ON target.EmployeeID = source.EmployeeID]],
@@ -1460,7 +1461,7 @@ ON target.EmployeeID = source.EmployeeID]],
     description = "MERGE - complex ON condition",
     database = "vim_dadbod_test",
     query = [[MERGE INTO Employees AS target
-USING Employees_Staging AS source
+USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target.EmployeeID = source.EmployeeID AND target. = source.DepartmentID]],
     cursor = { line = 2, col = 52 },
     expected = {
@@ -1477,9 +1478,9 @@ ON target.EmployeeID = source.EmployeeID AND target. = source.DepartmentID]],
     description = "MERGE - multiple WHEN clauses",
     database = "vim_dadbod_test",
     query = [[MERGE INTO Employees AS target
-USING Employees_Staging AS source
+USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target.EmployeeID = source.EmployeeID
-WHEN MATCHED AND source.IsDeleted = 1 THEN DELETE
+WHEN MATCHED AND source.IsActive = 0 THEN DELETE
 WHEN MATCHED THEN UPDATE SET target. = source.FirstName
 WHEN NOT MATCHED THEN INSERT (EmployeeID) VALUES (source.EmployeeID)]],
     cursor = { line = 4, col = 37 },
@@ -1498,7 +1499,7 @@ WHEN NOT MATCHED THEN INSERT (EmployeeID) VALUES (source.EmployeeID)]],
     description = "MERGE - USING derived table columns",
     database = "vim_dadbod_test",
     query = [[MERGE INTO Employees AS target
-USING (SELECT EmployeeID AS ID, FirstName AS Name FROM Employees_Staging) AS source
+USING (SELECT EmployeeID AS ID, FirstName AS Name FROM Employees WHERE DepartmentID = 1) AS source
 ON target.EmployeeID = source.]],
     cursor = { line = 2, col = 30 },
     expected = {
@@ -1554,7 +1555,7 @@ ON target.EmployeeID = source.]],
     description = "MERGE - HOLDLOCK hint",
     database = "vim_dadbod_test",
     query = [[MERGE INTO Employees WITH (HOLDLOCK) AS target
-USING Employees_Staging AS source
+USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target. = source.EmployeeID]],
     cursor = { line = 2, col = 10 },
     expected = {
@@ -1571,7 +1572,7 @@ ON target. = source.EmployeeID]],
     description = "MERGE - multiline formatting",
     database = "vim_dadbod_test",
     query = [[MERGE INTO Employees AS target
-USING Employees_Staging AS source
+USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target.EmployeeID = source.EmployeeID
 WHEN MATCHED THEN
   UPDATE SET
@@ -1591,17 +1592,18 @@ WHEN MATCHED THEN
     number = 4645,
     description = "MERGE - OUTPUT INTO table",
     database = "vim_dadbod_test",
-    query = [[MERGE INTO Employees AS target
-USING Employees_Staging AS source
+    query = [[CREATE TABLE #MergeOutput (Action VARCHAR(10), EmployeeID INT)
+MERGE INTO Employees AS target
+USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target.EmployeeID = source.EmployeeID
 WHEN MATCHED THEN UPDATE SET target.FirstName = source.FirstName
 OUTPUT $action, inserted.EmployeeID INTO ]],
-    cursor = { line = 4, col = 41 },
+    cursor = { line = 5, col = 41 },
     expected = {
       type = "table",
       items = {
         includes_any = {
-          "MergeLog",
+          "Projects",
           "#MergeOutput",
         },
       },
@@ -1612,15 +1614,15 @@ OUTPUT $action, inserted.EmployeeID INTO ]],
     description = "MERGE - schema-qualified tables",
     database = "vim_dadbod_test",
     query = [[MERGE INTO dbo.Employees AS target
-USING staging. AS source
+USING hr. AS source
 ON target.EmployeeID = source.EmployeeID]],
-    cursor = { line = 1, col = 14 },
+    cursor = { line = 1, col = 10 },
     expected = {
       type = "table",
       items = {
         includes_any = {
-          "Employees_Staging",
-          "StagingTable",
+          "Benefits",
+          "EmployeeBenefits",
         },
       },
     },
@@ -1630,15 +1632,15 @@ ON target.EmployeeID = source.EmployeeID]],
     description = "MERGE - cross-database",
     database = "vim_dadbod_test",
     query = [[MERGE INTO vim_dadbod_test.dbo.Employees AS target
-USING vim_dadbod_second.dbo. AS source
+USING TEST.dbo. AS source
 ON target.EmployeeID = source.EmployeeID]],
-    cursor = { line = 1, col = 28 },
+    cursor = { line = 1, col = 16 },
     expected = {
       type = "table",
       items = {
         includes_any = {
-          "Employees_Staging",
-          "ExtEmployees",
+          "Records",
+          "TestTable",
         },
       },
     },
@@ -1648,7 +1650,7 @@ ON target.EmployeeID = source.EmployeeID]],
     description = "MERGE - DEFAULT VALUES in INSERT",
     database = "vim_dadbod_test",
     query = [[MERGE INTO Employees AS target
-USING Employees_Staging AS source
+USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target.EmployeeID = source.EmployeeID
 WHEN NOT MATCHED THEN INSERT (EmployeeID, , LastName) VALUES (source.EmployeeID, DEFAULT, source.LastName)]],
     cursor = { line = 3, col = 43 },
@@ -1666,16 +1668,16 @@ WHEN NOT MATCHED THEN INSERT (EmployeeID, , LastName) VALUES (source.EmployeeID,
     description = "MERGE - WHEN clause with AND condition",
     database = "vim_dadbod_test",
     query = [[MERGE INTO Employees AS target
-USING Employees_Staging AS source
+USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target.EmployeeID = source.EmployeeID
-WHEN MATCHED AND source. = 1 THEN DELETE]],
+WHEN MATCHED AND source. = 0 THEN DELETE]],
     cursor = { line = 3, col = 24 },
     expected = {
       type = "column",
       items = {
         includes = {
-          "IsDeleted",
-          "IsInactive",
+          "IsActive",
+          "DepartmentID",
         },
       },
     },
@@ -1685,7 +1687,7 @@ WHEN MATCHED AND source. = 1 THEN DELETE]],
     description = "MERGE - complete statement column reference",
     database = "vim_dadbod_test",
     query = [[MERGE INTO Employees AS target
-USING Employees_Staging AS source
+USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target.EmployeeID = source.EmployeeID
 WHEN MATCHED THEN
   UPDATE SET

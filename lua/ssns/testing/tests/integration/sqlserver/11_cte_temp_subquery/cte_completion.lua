@@ -118,9 +118,9 @@ SELECT * FROM ]],
     description = "CTE - recursive CTE reference",
     database = "vim_dadbod_test",
     query = [[WITH EmpHierarchy AS (
-  SELECT EmployeeID, ManagerID, 1 AS Level FROM Employees WHERE ManagerID IS NULL
+  SELECT EmployeeID, DepartmentID, 1 AS Level FROM Employees WHERE DepartmentID IS NULL
   UNION ALL
-  SELECT e.EmployeeID, e.ManagerID, eh.Level + 1 FROM Employees e JOIN EmpHierarchy eh ON e.ManagerID = eh.EmployeeID
+  SELECT e.EmployeeID, e.DepartmentID, eh.Level + 1 FROM Employees e JOIN EmpHierarchy eh ON e.DepartmentID = eh.EmployeeID
 )
 SELECT * FROM ]],
     cursor = { line = 5, col = 14 },
@@ -299,9 +299,9 @@ SELECT  FROM EmpCTE]],
     description = "CTE - columns from recursive CTE",
     database = "vim_dadbod_test",
     query = [[WITH EmpHierarchy AS (
-  SELECT EmployeeID, ManagerID, 1 AS Level FROM Employees WHERE ManagerID IS NULL
+  SELECT EmployeeID, DepartmentID, 1 AS Level FROM Employees WHERE DepartmentID IS NULL
   UNION ALL
-  SELECT e.EmployeeID, e.ManagerID, eh.Level + 1 FROM Employees e JOIN EmpHierarchy eh ON e.ManagerID = eh.EmployeeID
+  SELECT e.EmployeeID, e.DepartmentID, eh.Level + 1 FROM Employees e JOIN EmpHierarchy eh ON e.DepartmentID = eh.EmployeeID
 )
 SELECT  FROM EmpHierarchy]],
     cursor = { line = 5, col = 7 },
@@ -310,7 +310,7 @@ SELECT  FROM EmpHierarchy]],
       items = {
         includes = {
           "EmployeeID",
-          "ManagerID",
+          "DepartmentID",
           "Level",
         },
       },
@@ -461,8 +461,8 @@ SELECT  FROM RankedEmps]],
     description = "CTE - CTE used in INSERT",
     database = "vim_dadbod_test",
     query = [[WITH SourceData AS (SELECT * FROM Employees WHERE DepartmentID = 1)
-INSERT INTO Employees_Archive SELECT * FROM ]],
-    cursor = { line = 1, col = 44 },
+INSERT INTO Projects SELECT * FROM ]],
+    cursor = { line = 1, col = 35 },
     expected = {
       type = "table",
       items = {
@@ -512,7 +512,7 @@ DELETE FROM Employees WHERE EmployeeID IN (SELECT  FROM ToDelete)]],
     query = [[WITH Combined AS (
   SELECT EmployeeID AS ID, FirstName AS Name FROM Employees
   UNION ALL
-  SELECT CustomerID AS ID, CustomerName AS Name FROM Customers
+  SELECT Id AS ID, Name AS Name FROM Customers
 )
 SELECT  FROM Combined]],
     cursor = { line = 5, col = 7 },
@@ -564,7 +564,7 @@ SELECT  FROM EmpWithDept]],
     number = 4430,
     description = "CTE - CTE in EXISTS subquery",
     database = "vim_dadbod_test",
-    query = [[WITH ActiveDepts AS (SELECT DepartmentID FROM Departments WHERE IsActive = 1)
+    query = [[WITH ActiveDepts AS (SELECT DepartmentID FROM Departments WHERE Budget > 0)
 SELECT * FROM Employees e WHERE EXISTS (SELECT 1 FROM  WHERE DepartmentID = e.DepartmentID)]],
     cursor = { line = 1, col = 53 },
     expected = {
@@ -671,8 +671,8 @@ SELECT * FROM AllEmps WHERE ]],
     description = "CTE - CTE referenced multiple times",
     database = "vim_dadbod_test",
     query = [[WITH EmpCTE AS (SELECT * FROM Employees)
-SELECT * FROM EmpCTE e1 JOIN EmpCTE e2 ON e1.ManagerID = e2.]],
-    cursor = { line = 1, col = 58 },
+SELECT * FROM EmpCTE e1 JOIN EmpCTE e2 ON e1.DepartmentID = e2.]],
+    cursor = { line = 1, col = 61 },
     expected = {
       type = "column",
       items = {
@@ -887,7 +887,7 @@ SELECT * FROM DeptCTE d CROSS APPLY (SELECT * FROM Employees e WHERE e.Departmen
     description = "CTE - CTE with OUTER APPLY",
     database = "vim_dadbod_test",
     query = [[WITH EmpCTE AS (SELECT * FROM Employees)
-SELECT * FROM EmpCTE e OUTER APPLY (SELECT TOP 1 * FROM Orders o WHERE o.EmployeeID = e.) x]],
+SELECT * FROM EmpCTE e OUTER APPLY (SELECT TOP 1 * FROM Orders o WHERE o.EmployeeId = e.) x]],
     cursor = { line = 1, col = 87 },
     expected = {
       type = "column",
@@ -902,7 +902,7 @@ SELECT * FROM EmpCTE e OUTER APPLY (SELECT TOP 1 * FROM Orders o WHERE o.Employe
     number = 4448,
     description = "CTE - CTE referenced in MERGE statement",
     database = "vim_dadbod_test",
-    query = [[WITH SourceCTE AS (SELECT * FROM Employees_Staging)
+    query = [[WITH SourceCTE AS (SELECT * FROM Employees WHERE DepartmentID = 1)
 MERGE INTO Employees AS target
 USING  AS source
 ON target.EmployeeID = source.EmployeeID]],
@@ -920,7 +920,7 @@ ON target.EmployeeID = source.EmployeeID]],
     number = 4449,
     description = "CTE - CTE columns in MERGE condition",
     database = "vim_dadbod_test",
-    query = [[WITH SourceCTE AS (SELECT EmployeeID, FirstName, Salary FROM Employees_Staging)
+    query = [[WITH SourceCTE AS (SELECT EmployeeID, FirstName, Salary FROM Employees WHERE DepartmentID = 1)
 MERGE INTO Employees AS target
 USING SourceCTE AS source
 ON target.EmployeeID = source.]],
