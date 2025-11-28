@@ -10,8 +10,7 @@ return {
     number = 4061,
     description = "JOIN - basic table completion after JOIN",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN ]],
-    cursor = { line = 0, col = 32 },
+    query = [[SELECT * FROM Employees e JOIN █]],
     expected = {
       type = "table",
       items = {
@@ -26,8 +25,7 @@ return {
     number = 4062,
     description = "JOIN - INNER JOIN table completion",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e INNER JOIN ]],
-    cursor = { line = 0, col = 38 },
+    query = [[SELECT * FROM Employees e INNER JOIN █]],
     expected = {
       type = "table",
       items = {
@@ -41,8 +39,7 @@ return {
     number = 4063,
     description = "JOIN - LEFT JOIN table completion",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e LEFT JOIN ]],
-    cursor = { line = 0, col = 37 },
+    query = [[SELECT * FROM Employees e LEFT JOIN █]],
     expected = {
       type = "table",
       items = {
@@ -56,8 +53,7 @@ return {
     number = 4064,
     description = "JOIN - RIGHT JOIN table completion",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e RIGHT JOIN ]],
-    cursor = { line = 0, col = 38 },
+    query = [[SELECT * FROM Employees e RIGHT JOIN █]],
     expected = {
       type = "table",
       items = {
@@ -71,8 +67,7 @@ return {
     number = 4065,
     description = "JOIN - FULL OUTER JOIN table completion",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e FULL OUTER JOIN ]],
-    cursor = { line = 0, col = 42 },
+    query = [[SELECT * FROM Employees e FULL OUTER JOIN █]],
     expected = {
       type = "table",
       items = {
@@ -86,8 +81,7 @@ return {
     number = 4066,
     description = "JOIN - LEFT OUTER JOIN table completion",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e LEFT OUTER JOIN ]],
-    cursor = { line = 0, col = 42 },
+    query = [[SELECT * FROM Employees e LEFT OUTER JOIN █]],
     expected = {
       type = "table",
       items = {
@@ -101,8 +95,7 @@ return {
     number = 4067,
     description = "JOIN - CROSS JOIN table completion",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e CROSS JOIN ]],
-    cursor = { line = 0, col = 38 },
+    query = [[SELECT * FROM Employees e CROSS JOIN █]],
     expected = {
       type = "table",
       items = {
@@ -118,8 +111,7 @@ return {
     database = "vim_dadbod_test",
     query = [[SELECT *
 FROM Employees e
-JOIN ]],
-    cursor = { line = 2, col = 5 },
+JOIN █]],
     expected = {
       type = "table",
       items = {
@@ -133,8 +125,7 @@ JOIN ]],
     number = 4069,
     description = "JOIN - second JOIN in chain",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN Departments d ON e.DepartmentID = d.DepartmentID JOIN ]],
-    cursor = { line = 0, col = 82 },
+    query = [[SELECT * FROM Employees e JOIN Departments d ON e.DepartmentID = d.DepartmentID JO█IN ]],
     expected = {
       type = "table",
       items = {
@@ -152,8 +143,7 @@ JOIN ]],
 FROM Employees e
 JOIN Departments d ON e.DepartmentID = d.DepartmentID
 JOIN Projects p ON p.DepartmentID = d.DepartmentID
-JOIN ]],
-    cursor = { line = 4, col = 5 },
+JOIN █]],
     expected = {
       type = "table",
       items = {
@@ -172,8 +162,7 @@ JOIN ]],
     number = 4071,
     description = "JOIN - FK suggestion from Employees (DepartmentID FK)",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN ]],
-    cursor = { line = 0, col = 32 },
+    query = [[SELECT * FROM Employees e JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -190,8 +179,7 @@ JOIN ]],
     number = 4072,
     description = "JOIN - FK suggestion from Orders (CustomerID, EmployeeID FKs)",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Orders o JOIN ]],
-    cursor = { line = 0, col = 28 },
+    query = [[SELECT * FROM Orders o JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -206,8 +194,7 @@ JOIN ]],
     number = 4073,
     description = "JOIN - FK chain: Customers -> Countries (via FK)",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Customers c JOIN ]],
-    cursor = { line = 0, col = 32 },
+    query = [[SELECT * FROM Customers c JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -221,8 +208,7 @@ JOIN ]],
     number = 4074,
     description = "JOIN - multi-hop FK: Orders -> Customers -> Countries",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Orders o JOIN Customers c ON o.CustomerId = c.Id JOIN ]],
-    cursor = { line = 0, col = 69 },
+    query = [[SELECT * FROM Orders o JOIN Customers c ON o.CustomerId = c.Id JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -237,8 +223,7 @@ JOIN ]],
     number = 4075,
     description = "JOIN - schema-qualified FK suggestion",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM dbo.Employees e JOIN dbo.]],
-    cursor = { line = 0, col = 39 },
+    query = [[SELECT * FROM dbo.Employees e JOIN dbo.█]],
     expected = {
       type = "table",
       items = {
@@ -252,8 +237,7 @@ JOIN ]],
     number = 4076,
     description = "JOIN - views in JOIN",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN vw_]],
-    cursor = { line = 0, col = 35 },
+    query = [[SELECT * FROM Employees e JOIN vw_█]],
     expected = {
       type = "table",
       items = {
@@ -268,8 +252,7 @@ JOIN ]],
     number = 4077,
     description = "JOIN - synonyms in JOIN",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN syn_]],
-    cursor = { line = 0, col = 36 },
+    query = [[SELECT * FROM Employees e JOIN syn_█]],
     expected = {
       type = "table",
       items = {
@@ -287,8 +270,7 @@ JOIN ]],
     query = [[SELECT *
 FROM Employees e
 INNER JOIN Departments d ON e.DepartmentID = d.DepartmentID
-LEFT JOIN ]],
-    cursor = { line = 3, col = 10 },
+LEFT JOIN █]],
     expected = {
       type = "table",
       items = {
@@ -302,8 +284,7 @@ LEFT JOIN ]],
     number = 4079,
     description = "JOIN - prefix filter in JOIN context",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN Dep]],
-    cursor = { line = 0, col = 35 },
+    query = [[SELECT * FROM Employees e JOIN Dep█]],
     expected = {
       type = "table",
       items = {
@@ -321,8 +302,7 @@ LEFT JOIN ]],
     number = 4080,
     description = "JOIN - cross-database in JOIN",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN TEST.dbo.]],
-    cursor = { line = 0, col = 40 },
+    query = [[SELECT * FROM Employees e JOIN TEST.dbo.█]],
     expected = {
       type = "table",
       items = {

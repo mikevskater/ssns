@@ -10,8 +10,7 @@ return {
     number = 4001,
     description = "FROM clause - all tables in current database",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM ]],
-    cursor = { line = 0, col = 14 },
+    query = [[SELECT * FROM █]],
     expected = {
       type = "table",
       -- Should include databases, schemas, and all FROM-selectable objects from current DB
@@ -62,8 +61,7 @@ return {
     number = 4002,
     description = "FROM clause - views should be included",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM ]],
-    cursor = { line = 0, col = 14 },
+    query = [[SELECT * FROM █]],
     expected = {
       type = "table",
       items = {
@@ -79,8 +77,7 @@ return {
     number = 4003,
     description = "FROM clause - synonyms should be included",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM ]],
-    cursor = { line = 0, col = 14 },
+    query = [[SELECT * FROM █]],
     expected = {
       type = "table",
       items = {
@@ -99,8 +96,7 @@ return {
     database = "vim_dadbod_test",
     query = [[SELECT
   *
-FROM ]],
-    cursor = { line = 2, col = 5 },
+FROM █]],
     expected = {
       type = "table",
       items = {
@@ -116,8 +112,7 @@ FROM ]],
     description = "FROM clause - after newline with space",
     database = "vim_dadbod_test",
     query = [[SELECT *
-FROM ]],
-    cursor = { line = 1, col = 5 },
+FROM █]],
     expected = {
       type = "table",
       items = {
@@ -136,8 +131,7 @@ FROM ]],
     number = 4006,
     description = "FROM clause - prefix filter 'Emp'",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Emp]],
-    cursor = { line = 0, col = 17 },
+    query = [[SELECT * FROM Emp█]],
     expected = {
       type = "table",
       items = {
@@ -151,8 +145,7 @@ FROM ]],
     number = 4007,
     description = "FROM clause - prefix filter 'vw_'",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM vw_]],
-    cursor = { line = 0, col = 18 },
+    query = [[SELECT * FROM vw_█]],
     expected = {
       type = "table",
       items = {
@@ -168,8 +161,7 @@ FROM ]],
     number = 4008,
     description = "FROM clause - prefix filter 'syn_'",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM syn_]],
-    cursor = { line = 0, col = 19 },
+    query = [[SELECT * FROM syn_█]],
     expected = {
       type = "table",
       items = {
@@ -186,8 +178,7 @@ FROM ]],
     number = 4009,
     description = "FROM clause - prefix filter case insensitive",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM emp]],
-    cursor = { line = 0, col = 17 },
+    query = [[SELECT * FROM emp█]],
     expected = {
       type = "table",
       items = {
@@ -201,8 +192,7 @@ FROM ]],
     number = 4010,
     description = "FROM clause - no matches for invalid prefix",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM xyz_nonexistent]],
-    cursor = { line = 0, col = 29 },
+    query = [[SELECT * FROM xyz_nonexistent█]],
     expected = {
       type = "table",
       items = {
@@ -218,8 +208,7 @@ FROM ]],
     number = 4011,
     description = "FROM clause - second table after comma",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees, ]],
-    cursor = { line = 0, col = 25 },
+    query = [[SELECT * FROM Employees, █]],
     expected = {
       type = "table",
       items = {
@@ -234,8 +223,7 @@ FROM ]],
     number = 4012,
     description = "FROM clause - third table after two commas",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees, Departments, ]],
-    cursor = { line = 0, col = 39 },
+    query = [[SELECT * FROM Employees, Departments, █]],
     expected = {
       type = "table",
       items = {
@@ -251,8 +239,7 @@ FROM ]],
     description = "FROM clause - second table on new line",
     database = "vim_dadbod_test",
     query = [[SELECT * FROM Employees,
-  ]],
-    cursor = { line = 1, col = 2 },
+  █]],
     expected = {
       type = "table",
       items = {
@@ -266,8 +253,7 @@ FROM ]],
     number = 4014,
     description = "FROM clause - second table with prefix",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees, Dep]],
-    cursor = { line = 0, col = 28 },
+    query = [[SELECT * FROM Employees, Dep█]],
     expected = {
       type = "table",
       items = {
@@ -284,8 +270,7 @@ FROM ]],
     query = [[SELECT *
 FROM Employees e,
      Departments d,
-     ]],
-    cursor = { line = 3, col = 5 },
+     █]],
     expected = {
       type = "table",
       items = {
@@ -303,8 +288,7 @@ FROM Employees e,
     number = 4016,
     description = "FROM clause - completion after table with alias",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e, ]],
-    cursor = { line = 0, col = 27 },
+    query = [[SELECT * FROM Employees e, █]],
     expected = {
       type = "table",
       items = {
@@ -318,8 +302,7 @@ FROM Employees e,
     number = 4017,
     description = "FROM clause - completion after table with AS alias",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees AS e, ]],
-    cursor = { line = 0, col = 30 },
+    query = [[SELECT * FROM Employees AS e, █]],
     expected = {
       type = "table",
       items = {
@@ -333,8 +316,7 @@ FROM Employees e,
     number = 4018,
     description = "FROM clause - completion after bracketed table with alias",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM [Employees] e, ]],
-    cursor = { line = 0, col = 29 },
+    query = [[SELECT * FROM [Employees] e, █]],
     expected = {
       type = "table",
       items = {
@@ -348,8 +330,7 @@ FROM Employees e,
     number = 4019,
     description = "FROM clause - completion after schema.table alias",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM dbo.Employees e, ]],
-    cursor = { line = 0, col = 31 },
+    query = [[SELECT * FROM dbo.Employees e, █]],
     expected = {
       type = "table",
       items = {
@@ -363,8 +344,7 @@ FROM Employees e,
     number = 4020,
     description = "FROM clause - tables with varying alias styles",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees emp, Departments AS dept, ]],
-    cursor = { line = 0, col = 50 },
+    query = [[SELECT * FROM Employees emp, Departments AS dept, █]],
     expected = {
       type = "table",
       items = {

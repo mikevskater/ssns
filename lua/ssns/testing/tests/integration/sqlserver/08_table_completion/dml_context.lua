@@ -10,8 +10,7 @@ return {
     number = 4081,
     description = "INSERT INTO - basic table completion",
     database = "vim_dadbod_test",
-    query = [[INSERT INTO ]],
-    cursor = { line = 0, col = 12 },
+    query = [[INSERT INTO █]],
     expected = {
       type = "table",
       items = {
@@ -31,8 +30,7 @@ return {
     number = 4082,
     description = "INSERT INTO - schema-qualified",
     database = "vim_dadbod_test",
-    query = [[INSERT INTO dbo.]],
-    cursor = { line = 0, col = 16 },
+    query = [[INSERT INTO dbo.█]],
     expected = {
       type = "table",
       items = {
@@ -47,8 +45,7 @@ return {
     number = 4083,
     description = "INSERT INTO - prefix filter",
     database = "vim_dadbod_test",
-    query = [[INSERT INTO Emp]],
-    cursor = { line = 0, col = 15 },
+    query = [[INSERT INTO Emp█]],
     expected = {
       type = "table",
       items = {
@@ -62,8 +59,7 @@ return {
     number = 4084,
     description = "INSERT INTO - bracketed table",
     database = "vim_dadbod_test",
-    query = [[INSERT INTO [Emp]],
-    cursor = { line = 0, col = 16 },
+    query = [[INSERT INTO [Emp█]],
     expected = {
       type = "table",
       items = {
@@ -78,8 +74,7 @@ return {
     description = "INSERT INTO - multiline",
     database = "vim_dadbod_test",
     query = [[INSERT INTO
-  ]],
-    cursor = { line = 1, col = 2 },
+  █]],
     expected = {
       type = "table",
       items = {
@@ -93,8 +88,7 @@ return {
     number = 4086,
     description = "INSERT INTO - cross-database",
     database = "vim_dadbod_test",
-    query = [[INSERT INTO TEST.dbo.]],
-    cursor = { line = 0, col = 21 },
+    query = [[INSERT INTO TEST.dbo.█]],
     expected = {
       type = "table",
       items = {
@@ -108,8 +102,7 @@ return {
     number = 4087,
     description = "INSERT INTO - hr schema",
     database = "vim_dadbod_test",
-    query = [[INSERT INTO hr.]],
-    cursor = { line = 0, col = 15 },
+    query = [[INSERT INTO hr.█]],
     expected = {
       type = "table",
       items = {
@@ -127,8 +120,7 @@ return {
     number = 4088,
     description = "UPDATE - basic table completion",
     database = "vim_dadbod_test",
-    query = [[UPDATE ]],
-    cursor = { line = 0, col = 7 },
+    query = [[UPDATE █]],
     expected = {
       type = "table",
       items = {
@@ -143,8 +135,7 @@ return {
     number = 4089,
     description = "UPDATE - schema-qualified",
     database = "vim_dadbod_test",
-    query = [[UPDATE dbo.]],
-    cursor = { line = 0, col = 11 },
+    query = [[UPDATE dbo.█]],
     expected = {
       type = "table",
       items = {
@@ -159,8 +150,7 @@ return {
     number = 4090,
     description = "UPDATE - prefix filter",
     database = "vim_dadbod_test",
-    query = [[UPDATE Emp]],
-    cursor = { line = 0, col = 10 },
+    query = [[UPDATE Emp█]],
     expected = {
       type = "table",
       items = {
@@ -174,8 +164,7 @@ return {
     number = 4091,
     description = "UPDATE - with alias (FROM clause)",
     database = "vim_dadbod_test",
-    query = [[UPDATE e SET Name = 'Test' FROM ]],
-    cursor = { line = 0, col = 33 },
+    query = [[UPDATE e SET Name = 'Test' FROM █]],
     expected = {
       type = "table",
       items = {
@@ -189,8 +178,7 @@ return {
     number = 4092,
     description = "UPDATE - JOIN in UPDATE FROM",
     database = "vim_dadbod_test",
-    query = [[UPDATE e SET Name = 'Test' FROM Employees e JOIN ]],
-    cursor = { line = 0, col = 49 },
+    query = [[UPDATE e SET Name = 'Test' FROM Employees e JOIN █]],
     expected = {
       type = "table",
       items = {
@@ -205,8 +193,7 @@ return {
     description = "UPDATE - multiline UPDATE",
     database = "vim_dadbod_test",
     query = [[UPDATE
-  ]],
-    cursor = { line = 1, col = 2 },
+  █]],
     expected = {
       type = "table",
       items = {
@@ -224,8 +211,7 @@ return {
     number = 4094,
     description = "DELETE FROM - basic table completion",
     database = "vim_dadbod_test",
-    query = [[DELETE FROM ]],
-    cursor = { line = 0, col = 12 },
+    query = [[DELETE FROM █]],
     expected = {
       type = "table",
       items = {
@@ -240,8 +226,7 @@ return {
     number = 4095,
     description = "DELETE FROM - schema-qualified",
     database = "vim_dadbod_test",
-    query = [[DELETE FROM dbo.]],
-    cursor = { line = 0, col = 16 },
+    query = [[DELETE FROM dbo.█]],
     expected = {
       type = "table",
       items = {
@@ -256,8 +241,7 @@ return {
     number = 4096,
     description = "DELETE FROM - with alias",
     database = "vim_dadbod_test",
-    query = [[DELETE e FROM ]],
-    cursor = { line = 0, col = 14 },
+    query = [[DELETE e FROM █]],
     expected = {
       type = "table",
       items = {
@@ -271,8 +255,7 @@ return {
     number = 4097,
     description = "DELETE - without FROM keyword",
     database = "vim_dadbod_test",
-    query = [[DELETE ]],
-    cursor = { line = 0, col = 7 },
+    query = [[DELETE █]],
     expected = {
       type = "table",
       items = {
@@ -286,8 +269,7 @@ return {
     number = 4098,
     description = "DELETE FROM - JOIN for filtering",
     database = "vim_dadbod_test",
-    query = [[DELETE e FROM Employees e JOIN ]],
-    cursor = { line = 0, col = 31 },
+    query = [[DELETE e FROM Employees e JOIN █]],
     expected = {
       type = "table",
       items = {
@@ -305,8 +287,7 @@ return {
     number = 4099,
     description = "MERGE INTO - target table completion",
     database = "vim_dadbod_test",
-    query = [[MERGE INTO ]],
-    cursor = { line = 0, col = 11 },
+    query = [[MERGE INTO █]],
     expected = {
       type = "table",
       items = {
@@ -322,8 +303,7 @@ return {
     description = "MERGE USING - source table completion",
     database = "vim_dadbod_test",
     query = [[MERGE INTO Employees AS target
-USING ]],
-    cursor = { line = 1, col = 6 },
+USING █]],
     expected = {
       type = "table",
       items = {

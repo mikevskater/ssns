@@ -10,8 +10,7 @@ return {
     number = 4041,
     description = "Cross-database - database names should be suggested",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM ]],
-    cursor = { line = 0, col = 14 },
+    query = [[SELECT * FROM █]],
     expected = {
       type = "object",
       items = {
@@ -55,8 +54,7 @@ return {
     number = 4042,
     description = "Cross-database - after typing database prefix",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM TEST]],
-    cursor = { line = 0, col = 18 },
+    query = [[SELECT * FROM TEST█]],
     expected = {
       type = "database",
       items = {
@@ -70,8 +68,7 @@ return {
     number = 4043,
     description = "Cross-database - schemas in other database",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM TEST.]],
-    cursor = { line = 0, col = 19 },
+    query = [[SELECT * FROM TEST.█]],
     expected = {
       type = "schema",
       items = {
@@ -85,8 +82,7 @@ return {
     number = 4044,
     description = "Cross-database - tables after database.schema.",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM TEST.dbo.]],
-    cursor = { line = 0, col = 23 },
+    query = [[SELECT * FROM TEST.dbo.█]],
     expected = {
       type = "table",
       items = {
@@ -102,8 +98,7 @@ return {
     number = 4045,
     description = "Cross-database - bracketed database name",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM [TEST].]],
-    cursor = { line = 0, col = 21 },
+    query = [[SELECT * FROM [TEST].█]],
     expected = {
       type = "schema",
       items = {
@@ -117,8 +112,7 @@ return {
     number = 4046,
     description = "Cross-database - bracketed database and schema",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM [TEST].[dbo].]],
-    cursor = { line = 0, col = 27 },
+    query = [[SELECT * FROM [TEST].[dbo].█]],
     expected = {
       type = "table",
       items = {
@@ -133,8 +127,7 @@ return {
     number = 4047,
     description = "Cross-database - Branch_Prod database",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Branch_Prod.]],
-    cursor = { line = 0, col = 26 },
+    query = [[SELECT * FROM Branch_Prod.█]],
     expected = {
       type = "schema",
       items = {
@@ -148,8 +141,7 @@ return {
     number = 4048,
     description = "Cross-database - database completion in JOIN",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN TEST.]],
-    cursor = { line = 0, col = 36 },
+    query = [[SELECT * FROM Employees e JOIN TEST.█]],
     expected = {
       type = "schema",
       items = {
@@ -163,8 +155,7 @@ return {
     number = 4049,
     description = "Cross-database - full three-part name completion",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM TEST.dbo.R]],
-    cursor = { line = 0, col = 24 },
+    query = [[SELECT * FROM TEST.dbo.R█]],
     expected = {
       type = "table",
       items = {
@@ -178,8 +169,7 @@ return {
     number = 4050,
     description = "Cross-database - master database system tables",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM master.sys.]],
-    cursor = { line = 0, col = 25 },
+    query = [[SELECT * FROM master.sys.█]],
     expected = {
       type = "table",
       items = {
@@ -199,8 +189,7 @@ return {
     number = 4051,
     description = "Cross-database - in subquery",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees WHERE DeptID IN (SELECT ID FROM TEST.dbo.)]],
-    cursor = { line = 0, col = 65 },
+    query = [[SELECT * FROM Employees WHERE DeptID IN (SELECT ID FROM TEST.dbo.█)]],
     expected = {
       type = "table",
       items = {
@@ -216,8 +205,7 @@ return {
     database = "vim_dadbod_test",
     query = [[SELECT *
 FROM vim_dadbod_test.dbo.Employees e
-JOIN TEST.dbo.]],
-    cursor = { line = 2, col = 14 },
+JOIN TEST.dbo.█]],
     expected = {
       type = "table",
       items = {
@@ -231,8 +219,7 @@ JOIN TEST.dbo.]],
     number = 4053,
     description = "Cross-database - database with underscore",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM vim_dadbod_test.]],
-    cursor = { line = 0, col = 30 },
+    query = [[SELECT * FROM vim_dadbod_test.█]],
     expected = {
       type = "schema",
       items = {
@@ -247,8 +234,7 @@ JOIN TEST.dbo.]],
     number = 4054,
     description = "Cross-database - current database explicit",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM vim_dadbod_test.dbo.]],
-    cursor = { line = 0, col = 34 },
+    query = [[SELECT * FROM vim_dadbod_test.dbo.█]],
     expected = {
       type = "table",
       items = {
@@ -283,8 +269,7 @@ JOIN TEST.dbo.]],
     number = 4055,
     description = "Cross-database - case insensitive database name",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM test.]],
-    cursor = { line = 0, col = 19 },
+    query = [[SELECT * FROM test.█]],
     expected = {
       type = "schema",
       items = {
@@ -300,8 +285,7 @@ JOIN TEST.dbo.]],
     database = "vim_dadbod_test",
     query = [[SELECT * FROM Employees
 UNION ALL
-SELECT * FROM TEST.dbo.]],
-    cursor = { line = 2, col = 23 },
+SELECT * FROM TEST.dbo.█]],
     expected = {
       type = "table",
       items = {
@@ -315,8 +299,7 @@ SELECT * FROM TEST.dbo.]],
     number = 4057,
     description = "Cross-database - INSERT INTO cross-db",
     database = "vim_dadbod_test",
-    query = [[INSERT INTO TEST.dbo.]],
-    cursor = { line = 0, col = 21 },
+    query = [[INSERT INTO TEST.dbo.█]],
     expected = {
       type = "table",
       items = {
@@ -330,8 +313,7 @@ SELECT * FROM TEST.dbo.]],
     number = 4058,
     description = "Cross-database - UPDATE cross-db table",
     database = "vim_dadbod_test",
-    query = [[UPDATE TEST.dbo.]],
-    cursor = { line = 0, col = 16 },
+    query = [[UPDATE TEST.dbo.█]],
     expected = {
       type = "table",
       items = {
@@ -345,8 +327,7 @@ SELECT * FROM TEST.dbo.]],
     number = 4059,
     description = "Cross-database - DELETE FROM cross-db",
     database = "vim_dadbod_test",
-    query = [[DELETE FROM TEST.dbo.]],
-    cursor = { line = 0, col = 21 },
+    query = [[DELETE FROM TEST.dbo.█]],
     expected = {
       type = "table",
       items = {
@@ -360,8 +341,7 @@ SELECT * FROM TEST.dbo.]],
     number = 4060,
     description = "Cross-database - tempdb access",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM tempdb.sys.]],
-    cursor = { line = 0, col = 25 },
+    query = [[SELECT * FROM tempdb.sys.█]],
     expected = {
       type = "table",
       items = {
