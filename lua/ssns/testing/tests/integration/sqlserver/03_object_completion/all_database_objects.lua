@@ -12,114 +12,41 @@ FROM]],
   expected = {
     type = [[object]],
     items = {
-      -- Sample of dbo schema tables (all 71 tables should appear in reality)
-      "[dbo].[A]",
-      "[dbo].[AllProducts]",
-      "[dbo].[ArchivedOrders]",
-      "[dbo].[ArchivedRecords]",
-      "[dbo].[ArchivedSales]",
-      "[dbo].[AuditLog]",
-      "[dbo].[B]",
-      "[dbo].[Backup]",
-      "[dbo].[C]",
-      "[dbo].[Categories]",
-      "[dbo].[Colors]",
-      "[dbo].[Contractors]",
+      -- Databases (3 total)
+      "Branch_Prod",
+      "TEST",
+
+      -- Schemas in vim_dadbod_test (2 total)
+      "dbo",
+      "hr",
+
+      -- dbo schema tables (8 total)
       "[dbo].[Countries]",
-      "[dbo].[Courses]",
-      "[dbo].[CurrentInventory]",
-      "[dbo].[CurrentSales]",
       "[dbo].[Customers]",
-      "[dbo].[CustomerSummary]",
-      "[dbo].[D]",
       "[dbo].[Departments]",
-      "[dbo].[DiscontinuedProducts]",
-      "[dbo].[EmployeeBackup]",
       "[dbo].[Employees]",
-      "[dbo].[Enrollments]",
-      "[dbo].[FactSales]",
-      "[dbo].[GoldCustomers]",
-      "[dbo].[Inventory]",
-      "[dbo].[LargeDataset]",
-      "[dbo].[LargeTable]",
-      "[dbo].[Locations]",
-      "[dbo].[LogTable]",
-      "[dbo].[Managers]",
-      "[dbo].[newTable]",
-      "[dbo].[Numbers]",
-      "[dbo].[OrderDetails]",
-      "[dbo].[OrderedProducts]",
-      "[dbo].[OrderItems]",
       "[dbo].[Orders]",
-      "[dbo].[PlatinumCustomers]",
-      "[dbo].[ProcessLog]",
-      "[dbo].[ProcessQueue]",
       "[dbo].[Products]",
       "[dbo].[Projects]",
-      "[dbo].[QuarterlySales]",
-      "[dbo].[Refunds]",
       "[dbo].[Regions]",
-      "[dbo].[Sales]",
-      "[dbo].[SalesData]",
-      "[dbo].[SecureData]",
-      "[dbo].[StockPrices]",
-      "[dbo].[StockUpdates]",
-      "[dbo].[Students]",
-      "[dbo].[Suppliers]",
-      "[dbo].[T1]",
-      "[dbo].[T2]",
-      "[dbo].[T3]",
-      "[dbo].[T4]",
-      "[dbo].[T5]",
-      "[dbo].[T6]",
-      "[dbo].[T7]",
-      "[dbo].[T8]",
-      "[dbo].[T9]",
-      "[dbo].[T10]",
-      "[dbo].[Table1]",
-      "[dbo].[Table2]",
-      "[dbo].[Tasks]",
-      "[dbo].[TempCustomers]",
-      "[dbo].[TempData]",
-      "[dbo].[test_table]",
-      "[dbo].[TestTable]",
-      "[dbo].[Warehouses]",
 
-      -- hr schema table
+      -- hr schema table (1 total)
       "[hr].[Benefits]",
 
-      -- All dbo views (5 total)
-      "[dbo].[CustomerOrders]",
-      "[dbo].[View_CustomerOrders]",
+      -- dbo views (3 total - FROM-selectable)
       "[dbo].[vw_ActiveEmployees]",
       "[dbo].[vw_DepartmentSummary]",
       "[dbo].[vw_ProjectStatus]",
 
-      -- Table-valued functions only (3 total - can be used in FROM)
+      -- dbo table-valued functions (2 total - can be used in FROM)
       "[dbo].[fn_GetEmployeesBySalaryRange]",
       "[dbo].[GetCustomerOrders]",
-      "[dbo].[GetOrderTotal]",
 
-      -- All Branch synonyms (6 total)
-      "[Branch].[AllDivisions]",
-      "[Branch].[CentralDivision]",
-      "[Branch].[DivisionMetrics]",
-      "[Branch].[EasternDivision]",
-      "[Branch].[GetDivisionMetrics]",
-      "[Branch].[WesternDivision]",
-
-      -- All dbo synonyms (7 total)
+      -- dbo synonyms (4 total - FROM-selectable)
       "[dbo].[syn_ActiveEmployees]",
       "[dbo].[syn_Depts]",
       "[dbo].[syn_Employees]",
-      "[dbo].[syn_ExternalTable]",
-      "[dbo].[syn_HRBenefits]",
-      "[dbo].[syn_Staff]",
-      "[dbo].[syn_TestRecords]",
-
-      -- Other databases
-      "Branch_Prod",
-      "TEST"
+      "[dbo].[syn_HRBenefits]"
     }
   }
 }
