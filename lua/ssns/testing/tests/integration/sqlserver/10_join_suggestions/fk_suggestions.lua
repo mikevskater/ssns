@@ -10,8 +10,7 @@ return {
     number = 4301,
     description = "FK suggestion - Employees -> Departments (1 hop)",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN ]],
-    cursor = { line = 0, col = 32 },
+    query = [[SELECT * FROM Employees e JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -25,8 +24,7 @@ return {
     number = 4302,
     description = "FK suggestion - Orders -> Customers (1 hop)",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Orders o JOIN ]],
-    cursor = { line = 0, col = 28 },
+    query = [[SELECT * FROM Orders o JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -40,8 +38,7 @@ return {
     number = 4303,
     description = "FK suggestion - Orders -> Employees (1 hop)",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Orders o JOIN ]],
-    cursor = { line = 0, col = 28 },
+    query = [[SELECT * FROM Orders o JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -55,8 +52,7 @@ return {
     number = 4304,
     description = "FK suggestion - Customers -> Countries (1 hop)",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Customers c JOIN ]],
-    cursor = { line = 0, col = 31 },
+    query = [[SELECT * FROM Customers c JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -70,8 +66,7 @@ return {
     number = 4305,
     description = "FK suggestion - Countries -> Regions (1 hop)",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Countries c JOIN ]],
-    cursor = { line = 0, col = 31 },
+    query = [[SELECT * FROM Countries c JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -85,8 +80,7 @@ return {
     number = 4306,
     description = "FK suggestion - self-referential (Departments.ManagerID -> Employees)",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Departments d JOIN ]],
-    cursor = { line = 0, col = 33 },
+    query = [[SELECT * FROM Departments d JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -100,8 +94,7 @@ return {
     number = 4307,
     description = "FK suggestion - with ON clause auto-generated",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN ]],
-    cursor = { line = 0, col = 32 },
+    query = [[SELECT * FROM Employees e JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -116,8 +109,7 @@ return {
     number = 4308,
     description = "FK suggestion - LEFT JOIN preserves FK awareness",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e LEFT JOIN ]],
-    cursor = { line = 0, col = 37 },
+    query = [[SELECT * FROM Employees e LEFT JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -131,8 +123,7 @@ return {
     number = 4309,
     description = "FK suggestion - INNER JOIN preserves FK awareness",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e INNER JOIN ]],
-    cursor = { line = 0, col = 38 },
+    query = [[SELECT * FROM Employees e INNER JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -146,8 +137,7 @@ return {
     number = 4310,
     description = "FK suggestion - RIGHT JOIN preserves FK awareness",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e RIGHT JOIN ]],
-    cursor = { line = 0, col = 38 },
+    query = [[SELECT * FROM Employees e RIGHT JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -161,8 +151,7 @@ return {
     number = 4311,
     description = "FK suggestion - multiple FKs from same table",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Orders o JOIN ]],
-    cursor = { line = 0, col = 28 },
+    query = [[SELECT * FROM Orders o JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -178,8 +167,7 @@ return {
     number = 4312,
     description = "FK suggestion - schema-qualified source table",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM dbo.Employees e JOIN ]],
-    cursor = { line = 0, col = 35 },
+    query = [[SELECT * FROM dbo.Employees e JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -195,8 +183,7 @@ return {
     database = "vim_dadbod_test",
     query = [[SELECT *
 FROM Employees e
-JOIN ]],
-    cursor = { line = 2, col = 5 },
+JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -210,8 +197,7 @@ JOIN ]],
     number = 4314,
     description = "FK suggestion - FK priority over non-FK tables",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN ]],
-    cursor = { line = 0, col = 32 },
+    query = [[SELECT * FROM Employees e JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -226,8 +212,7 @@ JOIN ]],
     number = 4315,
     description = "FK suggestion - no FK still shows all tables",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Regions r JOIN ]],
-    cursor = { line = 0, col = 29 },
+    query = [[SELECT * FROM Regions r JOIN █]],
     expected = {
       type = "table",
       items = {
@@ -248,8 +233,7 @@ JOIN ]],
     number = 4316,
     description = "FK chain - Orders -> Customers (existing) + Countries (2 hop)",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Orders o JOIN Customers c ON o.CustomerId = c.Id JOIN ]],
-    cursor = { line = 0, col = 70 },
+    query = [[SELECT * FROM Orders o JOIN Customers c ON o.CustomerId = c.Id JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -264,8 +248,7 @@ JOIN ]],
     number = 4317,
     description = "FK chain - Customers -> Countries (existing) + Regions (2 hop)",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Customers c JOIN Countries co ON c.CountryID = co.CountryID JOIN ]],
-    cursor = { line = 0, col = 78 },
+    query = [[SELECT * FROM Customers c JOIN Countries co ON c.CountryID = co.CountryID JOIN█ ]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -283,8 +266,7 @@ JOIN ]],
 FROM Orders o
 JOIN Customers c ON o.CustomerId = c.Id
 JOIN Countries co ON c.CountryID = co.CountryID
-JOIN ]],
-    cursor = { line = 4, col = 5 },
+JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -303,8 +285,7 @@ JOIN ]],
 JOIN Customers c ON o.CustomerId = c.Id
 JOIN Countries co ON c.CountryID = co.CountryID
 JOIN Regions r ON co.RegionID = r.RegionID
-JOIN ]],
-    cursor = { line = 4, col = 5 },
+JOIN █]],
     expected = {
       type = "table",
       items = {
@@ -319,8 +300,7 @@ JOIN ]],
     number = 4320,
     description = "FK chain - Employees -> Departments (existing) + next hops",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN Departments d ON e.DepartmentID = d.DepartmentID JOIN ]],
-    cursor = { line = 0, col = 83 },
+    query = [[SELECT * FROM Employees e JOIN Departments d ON e.DepartmentID = d.DepartmentID JOI█N ]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -335,8 +315,7 @@ JOIN ]],
     number = 4321,
     description = "FK chain - suggests tables reachable in 2 hops",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Orders o JOIN ]],
-    cursor = { line = 0, col = 28 },
+    query = [[SELECT * FROM Orders o JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -353,8 +332,7 @@ JOIN ]],
     number = 4322,
     description = "FK chain - 2-hop suggestions show via indicator",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Orders o JOIN ]],
-    cursor = { line = 0, col = 28 },
+    query = [[SELECT * FROM Orders o JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -369,8 +347,7 @@ JOIN ]],
     number = 4323,
     description = "FK chain - skip already joined tables",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Orders o JOIN Customers c ON o.CustomerId = c.Id JOIN ]],
-    cursor = { line = 0, col = 70 },
+    query = [[SELECT * FROM Orders o JOIN Customers c ON o.CustomerId = c.Id JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -394,8 +371,7 @@ JOIN ]],
 FROM Orders o
 INNER JOIN Customers c ON o.CustomerId = c.Id
 LEFT JOIN Countries co ON c.CountryID = co.CountryID
-JOIN ]],
-    cursor = { line = 7, col = 5 },
+JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -410,8 +386,7 @@ JOIN ]],
     number = 4325,
     description = "FK chain - chain from middle table",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Customers c JOIN ]],
-    cursor = { line = 0, col = 31 },
+    query = [[SELECT * FROM Customers c JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -427,8 +402,7 @@ JOIN ]],
     number = 4326,
     description = "FK chain - bidirectional FK navigation",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Departments d JOIN ]],
-    cursor = { line = 0, col = 33 },
+    query = [[SELECT * FROM Departments d JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -442,8 +416,7 @@ JOIN ]],
     number = 4327,
     description = "FK chain - cycle prevention (don't suggest circular)",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Departments d1 JOIN Departments d2 ON d1.ManagerID = d2.ManagerID JOIN ]],
-    cursor = { line = 0, col = 85 },
+    query = [[SELECT * FROM Departments d1 JOIN Departments d2 ON d1.ManagerID = d2.ManagerID JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -462,8 +435,7 @@ JOIN ]],
 FROM Orders o
 INNER JOIN Customers c ON o.CustomerId = c.Id
 LEFT JOIN Countries co ON c.CountryID = co.CountryID
-RIGHT JOIN ]],
-    cursor = { line = 4, col = 11 },
+RIGHT JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -477,8 +449,7 @@ RIGHT JOIN ]],
     number = 4329,
     description = "FK chain - schema-qualified tables in chain",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM dbo.Orders o JOIN dbo.Customers c ON o.CustomerId = c.Id JOIN ]],
-    cursor = { line = 0, col = 75 },
+    query = [[SELECT * FROM dbo.Orders o JOIN dbo.Customers c ON o.CustomerId = c.Id JOIN█ ]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -492,8 +463,7 @@ RIGHT JOIN ]],
     number = 4330,
     description = "FK chain - prefix filter in multi-hop",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Orders o JOIN Customers c ON o.CustomerId = c.Id JOIN Coun]],
-    cursor = { line = 0, col = 74 },
+    query = [[SELECT * FROM Orders o JOIN Customers c ON o.CustomerId = c.Id JOIN Coun█]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -511,8 +481,7 @@ RIGHT JOIN ]],
     number = 4331,
     description = "Alias generation - single letter for short table",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN ]],
-    cursor = { line = 0, col = 32 },
+    query = [[SELECT * FROM Employees e JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -526,8 +495,7 @@ RIGHT JOIN ]],
     number = 4332,
     description = "Alias generation - avoids conflict with existing 'd'",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e, Products d JOIN ]],
-    cursor = { line = 0, col = 43 },
+    query = [[SELECT * FROM Employees e, Products d JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -541,8 +509,7 @@ RIGHT JOIN ]],
     number = 4333,
     description = "Alias generation - multiple conflicting aliases",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e, Products d, Projects de JOIN ]],
-    cursor = { line = 0, col = 57 },
+    query = [[SELECT * FROM Employees e, Products d, Projects de JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -556,8 +523,7 @@ RIGHT JOIN ]],
     number = 4334,
     description = "Alias generation - case insensitive conflict check",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees E JOIN ]],
-    cursor = { line = 0, col = 32 },
+    query = [[SELECT * FROM Employees E JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -571,8 +537,7 @@ RIGHT JOIN ]],
     number = 4335,
     description = "ON clause generation - single column FK",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN ]],
-    cursor = { line = 0, col = 32 },
+    query = [[SELECT * FROM Employees e JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -587,8 +552,7 @@ RIGHT JOIN ]],
     number = 4336,
     description = "ON clause generation - uses correct source alias",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees emp JOIN ]],
-    cursor = { line = 0, col = 34 },
+    query = [[SELECT * FROM Employees emp JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -603,8 +567,7 @@ RIGHT JOIN ]],
     number = 4337,
     description = "Complex scenario - mixed aliases and table names",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees, Departments d JOIN ]],
-    cursor = { line = 0, col = 44 },
+    query = [[SELECT * FROM Employees, Departments d JOIN █]],
     expected = {
       type = "table",
       items = {
@@ -619,8 +582,7 @@ RIGHT JOIN ]],
     number = 4338,
     description = "Complex scenario - subquery in FROM",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM (SELECT * FROM Employees WHERE DepartmentID = 1) e JOIN ]],
-    cursor = { line = 0, col = 71 },
+    query = [[SELECT * FROM (SELECT * FROM Employees WHERE DepartmentID = 1) e JOIN █]],
     expected = {
       type = "table",
       items = {
@@ -635,8 +597,7 @@ RIGHT JOIN ]],
     description = "Complex scenario - CTE as source",
     database = "vim_dadbod_test",
     query = [[WITH EmpCTE AS (SELECT * FROM Employees)
-SELECT * FROM EmpCTE e JOIN ]],
-    cursor = { line = 1, col = 28 },
+SELECT * FROM EmpCTE e JOIN █]],
     expected = {
       type = "table",
       items = {
@@ -650,8 +611,7 @@ SELECT * FROM EmpCTE e JOIN ]],
     number = 4340,
     description = "Complex scenario - cross-database JOIN",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN TEST.dbo.]],
-    cursor = { line = 0, col = 40 },
+    query = [[SELECT * FROM Employees e JOIN TEST.dbo.█]],
     expected = {
       type = "table",
       items = {
@@ -665,8 +625,7 @@ SELECT * FROM EmpCTE e JOIN ]],
     number = 4341,
     description = "FK suggestion - preserves schema in insertText",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM hr.Benefits b JOIN ]],
-    cursor = { line = 0, col = 33 },
+    query = [[SELECT * FROM hr.Benefits b JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -680,8 +639,7 @@ SELECT * FROM EmpCTE e JOIN ]],
     number = 4342,
     description = "FK suggestion - view with underlying FK",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM vw_ActiveEmployees v JOIN ]],
-    cursor = { line = 0, col = 40 },
+    query = [[SELECT * FROM vw_ActiveEmployees v JOIN █]],
     expected = {
       type = "table",
       items = {
@@ -695,8 +653,7 @@ SELECT * FROM EmpCTE e JOIN ]],
     number = 4343,
     description = "CROSS JOIN - no ON clause needed",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e CROSS JOIN ]],
-    cursor = { line = 0, col = 38 },
+    query = [[SELECT * FROM Employees e CROSS JOIN █]],
     expected = {
       type = "table",
       items = {
@@ -711,8 +668,7 @@ SELECT * FROM EmpCTE e JOIN ]],
     number = 4344,
     description = "JOIN after CROSS JOIN",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e CROSS JOIN Departments d JOIN ]],
-    cursor = { line = 0, col = 55 },
+    query = [[SELECT * FROM Employees e CROSS JOIN Departments d JOIN█ ]],
     expected = {
       type = "table",
       items = {
@@ -726,8 +682,7 @@ SELECT * FROM EmpCTE e JOIN ]],
     number = 4345,
     description = "Projects has no FKs - all tables available",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Projects p JOIN ]],
-    cursor = { line = 0, col = 30 },
+    query = [[SELECT * FROM Projects p JOIN █]],
     expected = {
       type = "table",
       items = {
@@ -744,8 +699,7 @@ SELECT * FROM EmpCTE e JOIN ]],
     number = 4346,
     description = "Orders has multiple FKs",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Orders o JOIN ]],
-    cursor = { line = 0, col = 28 },
+    query = [[SELECT * FROM Orders o JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -760,8 +714,7 @@ SELECT * FROM EmpCTE e JOIN ]],
     number = 4347,
     description = "FK with same column names",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN ]],
-    cursor = { line = 0, col = 32 },
+    query = [[SELECT * FROM Employees e JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -776,8 +729,7 @@ SELECT * FROM EmpCTE e JOIN ]],
     number = 4348,
     description = "Documentation shows FK path",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Orders o JOIN ]],
-    cursor = { line = 0, col = 28 },
+    query = [[SELECT * FROM Orders o JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -792,8 +744,7 @@ SELECT * FROM EmpCTE e JOIN ]],
     number = 4349,
     description = "Priority - FK tables before non-FK tables",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Employees e JOIN ]],
-    cursor = { line = 0, col = 32 },
+    query = [[SELECT * FROM Employees e JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
@@ -808,8 +759,7 @@ SELECT * FROM EmpCTE e JOIN ]],
     number = 4350,
     description = "Priority - 1-hop before 2-hop",
     database = "vim_dadbod_test",
-    query = [[SELECT * FROM Orders o JOIN ]],
-    cursor = { line = 0, col = 28 },
+    query = [[SELECT * FROM Orders o JOIN █]],
     expected = {
       type = "join_suggestion",
       items = {
