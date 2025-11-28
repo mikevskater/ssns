@@ -7,13 +7,9 @@ return {
 FROM
     dbo.Employees;
 SELECT
-
+    █
 FROM
     dbo.Departments;]],
-  cursor = {
-    line = 5,
-    col = 4
-  },
   expected = {
     type = [[column]],
     includes = {

@@ -3,11 +3,7 @@ return {
   description = [[Autocomplete for columns in second select with multiple select statements in query with same aliases]],
   database = [[vim_dadbod_test]],
   query = [[SELECT * FROM dbo.Employees e
-SELECT e. FROM dbo.Departments e]],
-  cursor = {
-    line = 1,
-    col = 9
-  },
+SELECT e.█ FROM dbo.Departments e]],
   expected = {
     type = [[column]],
     includes = {

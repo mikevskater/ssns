@@ -3,17 +3,13 @@ return {
   description = [[Autocomplete for columns in select with multiple select statements in query with same aliases (Multi-line handling)]],
   database = [[vim_dadbod_test]],
   query = [[SELECT
-    e.
+    e.█
 FROM
     dbo.Employees e;
 SELECT
     *
 FROM
     dbo.Departments e;]],
-  cursor = {
-    line = 1,
-    col = 6
-  },
   expected = {
     type = [[column]],
     includes = {
