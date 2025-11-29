@@ -410,13 +410,9 @@ function Source:get_completions(ctx, callback)
     context_result.mode or "nil"))
 
   if context_result.type == Context.Type.TABLE then
-    -- Check if this is a JOIN context (Phase 10.8)
-    if context_result.mode == "join" or context_result.mode == "join_qualified" then
-      Debug.log("[COMPLETION] Calling JoinsProvider")
-      local JoinsProvider = require('ssns.completion.providers.joins')
-      JoinsProvider.get_completions(provider_ctx, wrapped_callback)
-      return
-    end
+    -- NOTE: JoinsProvider (FK-based suggestions) is not used for basic TABLE completion
+    -- All TABLE contexts (including "join" mode) use TablesProvider for consistent behavior
+    -- FK suggestions can be added as an enhancement layer on top of TablesProvider results
 
     -- Check if this is a cross-database schema completion ("TEST.█" pattern)
     -- potential_database is set when we have a single identifier + dot that could be a database name
