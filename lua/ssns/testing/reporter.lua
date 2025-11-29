@@ -4,6 +4,13 @@ local M = {}
 
 local utils = require("ssns.testing.utils")
 
+-- Track incremental file state
+local incremental_state = {
+  file_path = nil,
+  started = false,
+  results_count = 0,
+}
+
 --- Format a single test result
 --- @param result table Test result object
 --- @return string formatted Formatted result as markdown
@@ -553,6 +560,183 @@ function M.display_unit_results(results)
   end
 
   vim.notify("==============================", vim.log.levels.INFO)
+end
+
+--- Start incremental test results file
+--- @param output_path string Output file path
+--- @param total_tests number Total number of tests to run
+--- @return boolean success True if file was created
+function M.start_incremental(output_path, total_tests)
+  -- Ensure output directory exists
+  local output_dir = vim.fn.fnamemodify(output_path, ":h")
+  vim.fn.mkdir(output_dir, "p")
+
+  -- Reset state
+  incremental_state.file_path = output_path
+  incremental_state.started = true
+  incremental_state.results_count = 0
+
+  -- Write header
+  local file = io.open(output_path, "w")
+  if not file then
+    vim.notify(string.format("Failed to open file for writing: %s", output_path), vim.log.levels.ERROR)
+    return false
+  end
+
+  file:write("# SSNS IntelliSense Test Results (Incremental)\n\n")
+  file:write(string.format("**Started**: %s\n", os.date("%Y-%m-%d %H:%M:%S")))
+  file:write(string.format("**Total Tests**: %d\n\n", total_tests))
+  file:write("---\n\n")
+  file:write("## Test Results (Live)\n\n")
+  file:close()
+
+  return true
+end
+
+--- Write a single test result incrementally
+--- @param result table Test result object
+--- @param test_index number Current test index (1-based)
+--- @param total_tests number Total number of tests
+--- @return boolean success True if write succeeded
+function M.write_incremental_result(result, test_index, total_tests)
+  if not incremental_state.started or not incremental_state.file_path then
+    return false
+  end
+
+  local file = io.open(incremental_state.file_path, "a")
+  if not file then
+    return false
+  end
+
+  -- Write progress marker
+  local status_icon = result.passed and "PASS" or "FAIL"
+  local status_emoji = result.passed and "✓" or "✗"
+
+  file:write(string.format("### [%d/%d] %s Test #%d: %s\n",
+    test_index, total_tests,
+    status_emoji,
+    result.test_number or 0,
+    result.description or "Unknown"))
+
+  file:write(string.format("- **Status**: %s\n", status_icon))
+  file:write(string.format("- **Category**: %s\n", utils.clean_category_name(result.category or "uncategorized")))
+  file:write(string.format("- **Database**: %s\n", result.database or "N/A"))
+  file:write(string.format("- **Duration**: %.2fms\n", result.duration_ms or 0))
+  file:write(string.format("- **Timestamp**: %s\n", os.date("%H:%M:%S")))
+
+  if result.error then
+    file:write("\n**Error:**\n```\n")
+    file:write(result.error)
+    file:write("\n```\n")
+  end
+
+  if result.comparison then
+    if #result.comparison.missing > 0 then
+      file:write(string.format("\n**Missing**: %s\n", utils.format_item_list(result.comparison.missing, 10)))
+    end
+    if #result.comparison.unexpected > 0 then
+      file:write(string.format("**Unexpected**: %s\n", utils.format_item_list(result.comparison.unexpected, 10)))
+    end
+  end
+
+  file:write("\n---\n\n")
+  file:close()
+
+  incremental_state.results_count = incremental_state.results_count + 1
+
+  return true
+end
+
+--- Finish incremental test results file with summary
+--- @param results table[] Array of all test results
+--- @return boolean success True if file was updated
+function M.finish_incremental(results)
+  if not incremental_state.started or not incremental_state.file_path then
+    return false
+  end
+
+  local file = io.open(incremental_state.file_path, "a")
+  if not file then
+    return false
+  end
+
+  -- Calculate summary
+  local total = #results
+  local passed = 0
+  local failed = 0
+  local total_duration = 0
+
+  for _, result in ipairs(results) do
+    if result.passed then
+      passed = passed + 1
+    else
+      failed = failed + 1
+    end
+    total_duration = total_duration + (result.duration_ms or 0)
+  end
+
+  local pass_rate = total > 0 and (passed / total * 100) or 0
+
+  -- Write summary
+  file:write("## Final Summary\n\n")
+  file:write(string.format("**Completed**: %s\n\n", os.date("%Y-%m-%d %H:%M:%S")))
+  file:write(string.format("- **Total Tests**: %d\n", total))
+  file:write(string.format("- **Passed**: %d\n", passed))
+  file:write(string.format("- **Failed**: %d\n", failed))
+  file:write(string.format("- **Pass Rate**: %.1f%%\n", pass_rate))
+  file:write(string.format("- **Total Duration**: %.2fms\n", total_duration))
+
+  -- Write category summary table
+  file:write("\n## Results by Category\n\n")
+  file:write(M.create_summary_table(results))
+  file:write("\n")
+
+  -- Write failed tests summary
+  if failed > 0 then
+    file:write("\n## Failed Tests Summary\n\n")
+    for _, result in ipairs(results) do
+      if not result.passed then
+        file:write(string.format("- **Test #%d**: %s (Category: %s)\n",
+          result.test_number or 0,
+          result.description or "Unknown",
+          utils.clean_category_name(result.category or "uncategorized")))
+      end
+    end
+  end
+
+  file:close()
+
+  -- Reset state
+  incremental_state.started = false
+
+  return true
+end
+
+--- Write a "currently running" marker for a test
+--- @param test_info table Test info {number, description, category, path}
+--- @param test_index number Current test index (1-based)
+--- @param total_tests number Total number of tests
+--- @return boolean success
+function M.mark_test_running(test_info, test_index, total_tests)
+  if not incremental_state.started or not incremental_state.file_path then
+    return false
+  end
+
+  local file = io.open(incremental_state.file_path, "a")
+  if not file then
+    return false
+  end
+
+  file:write(string.format("### [%d/%d] RUNNING: Test #%d - %s\n",
+    test_index, total_tests,
+    test_info.number or 0,
+    test_info.description or test_info.name or "Unknown"))
+  file:write(string.format("- **Category**: %s\n", utils.clean_category_name(test_info.category or "uncategorized")))
+  file:write(string.format("- **Path**: %s\n", test_info.path or "unknown"))
+  file:write(string.format("- **Started**: %s\n\n", os.date("%H:%M:%S")))
+  file:close()
+
+  return true
 end
 
 return M

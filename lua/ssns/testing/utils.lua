@@ -104,9 +104,27 @@ function M._validate_single_test(test_data, filepath, index)
     return false, string.format("%s has invalid expected structure (missing type)", prefix)
   end
 
-  -- items can be an array or an object with includes/excludes/count
-  if test_data.expected.items == nil then
-    return false, string.format("%s has invalid expected structure (missing items)", prefix)
+  -- Support both formats:
+  -- Format 1: expected.items = {...} (array or object with includes/excludes)
+  -- Format 2: expected.includes/excludes directly (shorthand)
+  local has_items = test_data.expected.items ~= nil
+  local has_direct_includes = test_data.expected.includes ~= nil
+  local has_direct_excludes = test_data.expected.excludes ~= nil
+  local has_direct_includes_any = test_data.expected.includes_any ~= nil
+  local has_direct_count = test_data.expected.count ~= nil
+
+  if not has_items and not has_direct_includes and not has_direct_excludes and not has_direct_includes_any and not has_direct_count then
+    return false, string.format("%s has invalid expected structure (missing items or includes/excludes)", prefix)
+  end
+
+  -- Normalize: if using direct format, create items wrapper for consistency
+  if not has_items then
+    test_data.expected.items = {
+      includes = test_data.expected.includes,
+      excludes = test_data.expected.excludes,
+      includes_any = test_data.expected.includes_any,
+      count = test_data.expected.count,
+    }
   end
 
   return true, nil

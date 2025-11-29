@@ -250,6 +250,9 @@ end
 function M.run_all_tests(opts)
   opts = opts or {}
 
+  -- Get reporter for incremental output
+  local reporter = require("ssns.testing.reporter")
+
   -- Scan for test files
   local test_files = utils.scan_test_folders()
 
@@ -270,7 +273,12 @@ function M.run_all_tests(opts)
 
   vim.notify(string.format("Running %d tests across %d database types...", #test_files, vim.tbl_count(tests_by_db)), vim.log.levels.INFO)
 
+  -- Start incremental results file
+  local output_path = vim.fn.stdpath("data") .. "/ssns/test_results_live.md"
+  reporter.start_incremental(output_path, #test_files)
+
   local results = {}
+  local global_test_index = 0
 
   -- Run tests for each database type
   for db_type, db_test_files in pairs(tests_by_db) do
@@ -282,33 +290,55 @@ function M.run_all_tests(opts)
       vim.notify(string.format("Failed to connect to %s: %s", db_type, conn_err), vim.log.levels.ERROR)
       -- Skip tests for this database type
       for _, test_file in ipairs(db_test_files) do
-        table.insert(results, {
+        global_test_index = global_test_index + 1
+        local fail_result = {
           path = test_file.path,
           category = test_file.category,
           name = test_file.name,
           database_type = test_file.database_type,
           passed = false,
           error = string.format("Database connection failed: %s", conn_err),
-        })
+          test_number = 0,
+          description = test_file.name,
+        }
+        table.insert(results, fail_result)
+        reporter.write_incremental_result(fail_result, global_test_index, #test_files)
       end
     else
       -- Run tests for this database type
       for i, test_file in ipairs(db_test_files) do
+        global_test_index = global_test_index + 1
+
         -- Show progress
         if i % 10 == 0 or i == 1 then
           vim.notify(string.format("[%s] Running test %d/%d...", db_type, i, #db_test_files), vim.log.levels.INFO)
         end
+
+        -- Mark test as running BEFORE execution (so we know which test hangs)
+        reporter.mark_test_running({
+          number = 0,
+          name = test_file.name,
+          category = test_file.category,
+          path = test_file.path,
+        }, global_test_index, #test_files)
 
         local result = M.run_single_test(test_file.path, vim.tbl_extend("force", opts, { database_type = test_file.database_type }))
         result.category = test_file.category
         result.name = test_file.name
         result.database_type = test_file.database_type
         table.insert(results, result)
+
+        -- Write result immediately after completion
+        reporter.write_incremental_result(result, global_test_index, #test_files)
       end
     end
   end
 
+  -- Finish incremental file with summary
+  reporter.finish_incremental(results)
+
   vim.notify(string.format("Completed %d tests", #results), vim.log.levels.INFO)
+  vim.notify(string.format("Live results written to: %s", output_path), vim.log.levels.INFO)
 
   return results
 end
