@@ -2,7 +2,7 @@ return {
   number = 11,
   description = [[Autocomplete for columns after WHERE clause]],
   database = [[vim_dadbod_test]],
-  query = [[SELECT * FROM dbo.EMPLOYEES █WHERE]],
+  query = [[SELECT * FROM dbo.EMPLOYEES WHERE █]],
   expected = {
     type = [[column]],
     includes = {

@@ -3,7 +3,7 @@ return {
   description = [[Autocomplete for columns after WHERE clause (Multi-line handling)]],
   database = [[vim_dadbod_test]],
   query = [[SELECT * FROM dbo.EMPLOYEES
-█WHERE]],
+WHERE █]],
   expected = {
     type = [[column]],
     includes = {

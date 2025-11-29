@@ -5,7 +5,7 @@ return {
   query = [[SELECT * FROM dbo.EMPLOYEES
 WHERE
     IsActive = 1
-    █AND]],
+    AND █]],
   expected = {
     type = [[column]],
     includes = {
