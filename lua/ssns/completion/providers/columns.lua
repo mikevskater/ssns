@@ -351,6 +351,12 @@ function ColumnsProvider._get_all_columns_from_query(connection, context)
     item.sortText = string.format("%05d_%04d_%s", priority, ordinal, col_name)
   end
 
+  -- Add scalar functions for unqualified column contexts
+  local function_items = ColumnsProvider._get_scalar_functions(connection, context)
+  for _, item in ipairs(function_items) do
+    table.insert(items, item)
+  end
+
   return items
 end
 
@@ -916,6 +922,103 @@ function ColumnsProvider._get_values_completions(connection, context)
       insertText = "",
       sortText = "0001_" .. target_column_name,
     })
+  end
+
+  return items
+end
+
+---Get scalar functions for unqualified column contexts (SELECT, WHERE, etc.)
+---Scalar functions can be used in expressions alongside columns
+---@param connection table Connection context
+---@param context table SQL context
+---@return table[] items CompletionItems for scalar functions
+function ColumnsProvider._get_scalar_functions(connection, context)
+  local items = {}
+
+  if not connection or not connection.database then
+    return items
+  end
+
+  local database = connection.database
+
+  -- Ensure database is loaded
+  if not database.is_loaded then
+    database:load()
+  end
+
+  -- Helper to add functions from a functions_group
+  local function add_functions_from_group(functions_group, default_schema)
+    if not functions_group or not functions_group.children then
+      return
+    end
+
+    for _, func_obj in ipairs(functions_group.children) do
+      -- Skip table-valued functions - only include scalar functions
+      if func_obj.is_table_valued and func_obj:is_table_valued() then
+        goto continue_func
+      end
+
+      local func_name = func_obj.name or func_obj.function_name
+      local schema = func_obj.schema or func_obj.schema_name or default_schema or "dbo"
+
+      if func_name then
+        -- Build schema-qualified name (e.g., "dbo.fn_GetEmployeeFullName")
+        local qualified_name = schema .. "." .. func_name
+
+        local item = {
+          label = qualified_name,
+          kind = vim.lsp.protocol.CompletionItemKind.Function,
+          detail = "Scalar Function",
+          insertText = qualified_name,
+          filterText = func_name, -- Allow filtering by just function name
+          sortText = string.format("%05d_%s", 6000, func_name), -- After columns
+          data = {
+            type = "function",
+            schema = schema,
+            name = func_name,
+          },
+        }
+
+        -- Add documentation if return type is available
+        if func_obj.return_type then
+          item.detail = string.format("Scalar Function → %s", func_obj.return_type)
+          item.documentation = {
+            kind = "markdown",
+            value = string.format("**%s**\n\nReturns: `%s`", qualified_name, func_obj.return_type),
+          }
+        end
+
+        table.insert(items, item)
+      end
+
+      ::continue_func::
+    end
+  end
+
+  -- First, check for top-level functions_group in database
+  for _, child in ipairs(database.children or {}) do
+    if child.object_type == "functions_group" then
+      add_functions_from_group(child, "dbo")
+    end
+  end
+
+  -- Also iterate through schemas to get functions from all schemas (e.g., hr.fn_*)
+  local schemas = database:get_schemas()
+  if schemas then
+    for _, schema_obj in ipairs(schemas) do
+      local schema_name = schema_obj.name or schema_obj.schema_name
+      -- Skip system schemas
+      if schema_name and not schema_name:match("^sys") and not schema_name:match("^INFORMATION_SCHEMA") then
+        -- Check if schema has functions_group
+        if schema_obj.children then
+          for _, child in ipairs(schema_obj.children) do
+            if child.object_type == "functions_group" then
+              add_functions_from_group(child, schema_name)
+            end
+          end
+        end
+      end
+    end
   end
 
   return items
