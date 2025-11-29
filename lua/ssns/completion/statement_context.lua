@@ -304,8 +304,34 @@ function Context._detect_type_from_line(before_cursor, chunk)
     return Context.Type.TABLE, "join", extra
   end
 
+  -- UPDATE/DELETE/MERGE checks - must come BEFORE qualified column check
+  -- so that "UPDATE dbo.█" is recognized as TABLE context, not COLUMN
+  if upper_trimmed:match("UPDATE%s+$") or upper:match("UPDATE%s+[%w_#@%.%[%]]*$") then
+    return Context.Type.TABLE, "update", extra
+  end
+
+  if upper_trimmed:match("DELETE%s+FROM%s+$") or upper:match("DELETE%s+FROM%s+[%w_#@%.%[%]]*$") then
+    return Context.Type.TABLE, "delete", extra
+  end
+
+  -- DELETE without FROM is valid T-SQL: DELETE table or DELETE dbo.table
+  if upper_trimmed:match("DELETE%s+$") or upper:match("DELETE%s+[%w_#@%.%[%]]*$") then
+    return Context.Type.TABLE, "delete", extra
+  end
+
+  -- MERGE INTO target_table: MERGE INTO table AS target
+  if upper_trimmed:match("MERGE%s+INTO%s+$") or upper:match("MERGE%s+INTO%s+[%w_#@%.%[%]]*$") then
+    return Context.Type.TABLE, "merge", extra
+  end
+
+  -- MERGE USING source_table: MERGE ... USING table AS source
+  if upper_trimmed:match("USING%s+$") or upper:match("USING%s+[%w_#@%.%[%]]*$") then
+    return Context.Type.TABLE, "merge", extra
+  end
+
   -- Check for qualified column reference (alias.column, table.column)
-  -- This check comes AFTER FROM/JOIN checks to avoid misinterpreting "FROM dbo." as a column reference
+  -- This check comes AFTER FROM/JOIN/UPDATE/DELETE/MERGE checks to avoid
+  -- misinterpreting "FROM dbo." or "UPDATE dbo." as a column reference
   if before_cursor:match("%.%s*$") or before_cursor:match("%.[%w_]*$") then
     local ref = Context._get_reference_before_dot(before_cursor)
     if ref then
@@ -314,14 +340,6 @@ function Context._detect_type_from_line(before_cursor, chunk)
       extra.omit_table = true
       return Context.Type.COLUMN, "qualified", extra
     end
-  end
-
-  if upper_trimmed:match("UPDATE%s+$") or upper:match("UPDATE%s+[%w_#@%.%[%]]*$") then
-    return Context.Type.TABLE, "update", extra
-  end
-
-  if upper_trimmed:match("DELETE%s+FROM%s+$") or upper:match("DELETE%s+FROM%s+[%w_#@%.%[%]]*$") then
-    return Context.Type.TABLE, "delete", extra
   end
 
   -- VALUES clause context: INSERT INTO table (...) VALUES (val1, |val2)
@@ -459,6 +477,19 @@ function Context._detect_type_from_line(before_cursor, chunk)
     local db = before_cursor:match("USE%s+([%w_]+)%.")
     extra.database = db
     return Context.Type.SCHEMA, "cross_db", extra
+  end
+
+  -- Multiline fallback: Check chunk.statement_type for UPDATE/DELETE/MERGE statements
+  -- This handles cases like "UPDATE\n  █" where the current line is empty/whitespace
+  -- but we're still waiting for the table name
+  if chunk then
+    if chunk.statement_type == "UPDATE" and (not chunk.update_target or not chunk.update_target.name) then
+      return Context.Type.TABLE, "update", extra
+    elseif chunk.statement_type == "DELETE" and #(chunk.tables or {}) == 0 then
+      return Context.Type.TABLE, "delete", extra
+    elseif chunk.statement_type == "MERGE" and #(chunk.tables or {}) == 0 then
+      return Context.Type.TABLE, "merge", extra
+    end
   end
 
   -- KEYWORD context (default fallback)
@@ -634,9 +665,11 @@ function Context.detect(bufnr, line_num, col)
       end
 
       -- Check for qualified column reference (alias.column, table.column)
-      -- BUT: Don't override FROM/JOIN context - those are qualified table references
+      -- BUT: Don't override TABLE context clauses - those are qualified table references
+      -- TABLE context clauses: from, join, into, update, delete, merge
       if (before_cursor:match("%.%s*$") or before_cursor:match("%.[%w_]*$")) and
-         clause ~= "from" and clause ~= "join" then
+         clause ~= "from" and clause ~= "join" and clause ~= "into" and
+         clause ~= "update" and clause ~= "delete" and clause ~= "merge" then
         local ref = Context._get_reference_before_dot(before_cursor)
         if ref then
           extra.table_ref = ref
