@@ -37,6 +37,7 @@
 ---@field parameters ParameterInfo[] Parameters used in this subquery
 ---@field start_pos {line: number, col: number}
 ---@field end_pos {line: number, col: number}
+---@field clause_positions table<string, ClausePosition>? Clause positions within subquery
 
 ---@class CTEInfo
 ---@field name string CTE name
@@ -1039,28 +1040,63 @@ function ParserState:parse_subquery(known_ctes)
     parameters = {},
     start_pos = { line = start_token.line, col = start_token.col },
     end_pos = { line = start_token.line, col = start_token.col },
+    clause_positions = {},
   }
 
-  -- We're at SELECT keyword
+  -- We're at SELECT keyword - save it for position tracking
+  local select_token = self:current()
   self:advance()
 
   local paren_depth = 0
 
-  -- Parse SELECT list (no position tracking for subqueries)
-  subquery.columns = self:parse_select_columns(paren_depth, known_ctes, subquery.subqueries, nil)
+  -- Parse SELECT list with position tracking
+  local select_clause_pos
+  subquery.columns, select_clause_pos = self:parse_select_columns(paren_depth, known_ctes, subquery.subqueries, select_token)
+  if select_clause_pos then
+    subquery.clause_positions["select"] = select_clause_pos
+  end
 
-  -- Parse FROM clause (no position tracking for subqueries)
+  -- Parse FROM clause with position tracking
   if self:is_keyword("FROM") then
-    subquery.tables = self:parse_from_clause(known_ctes, paren_depth, subquery.subqueries, nil)
+    local from_token = self:current()
+    local from_clause_pos, join_positions, on_positions
+    subquery.tables, from_clause_pos, join_positions, on_positions = self:parse_from_clause(known_ctes, paren_depth, subquery.subqueries, from_token)
+    if from_clause_pos then
+      subquery.clause_positions["from"] = from_clause_pos
+    end
+    -- Add join and on positions
+    if join_positions then
+      for i, pos in ipairs(join_positions) do
+        subquery.clause_positions["join_" .. i] = pos
+      end
+    end
+    if on_positions then
+      for i, pos in ipairs(on_positions) do
+        subquery.clause_positions["on_" .. i] = pos
+      end
+    end
   end
 
   -- Handle set operations (UNION, INTERSECT, EXCEPT) to capture tables from all members
   -- Also capture nested subqueries in WHERE/HAVING clauses along the way
+  -- Track WHERE clause position for subquery context detection
+  local where_start = nil
+  local last_token_before_end = nil
+
   while self:current() do
     -- Skip until we hit UNION/INTERSECT/EXCEPT or end of subquery, parsing nested subqueries
     local set_op_paren_depth = 0
     while self:current() do
       local token = self:current()
+
+      -- Track WHERE clause start
+      if set_op_paren_depth == 0 and self:is_keyword("WHERE") and not where_start then
+        where_start = token
+      end
+
+      -- Track last token for WHERE clause end position
+      last_token_before_end = token
+
       if token.type == "paren_open" then
         set_op_paren_depth = set_op_paren_depth + 1
         self:advance()
@@ -1072,19 +1108,36 @@ function ParserState:parse_subquery(known_ctes)
           end
           -- After parse_subquery, parser is AT the closing ) - consume it and decrement depth
           if self:is_type("paren_close") then
+            last_token_before_end = self:current()
             self:advance()
           end
           set_op_paren_depth = set_op_paren_depth - 1
         end
       elseif token.type == "paren_close" then
         if set_op_paren_depth == 0 then
-          -- End of subquery
+          -- End of subquery - record WHERE clause position if we found one
+          if where_start and last_token_before_end then
+            subquery.clause_positions["where"] = {
+              start_line = where_start.line,
+              start_col = where_start.col,
+              end_line = last_token_before_end.line,
+              end_col = last_token_before_end.col + #last_token_before_end.text - 1,
+            }
+          end
           break
         end
         set_op_paren_depth = set_op_paren_depth - 1
         self:advance()
       elseif set_op_paren_depth == 0 and (self:is_keyword("UNION") or self:is_keyword("INTERSECT") or self:is_keyword("EXCEPT")) then
-        -- Found set operation
+        -- Found set operation - record WHERE clause position if we found one
+        if where_start and last_token_before_end then
+          subquery.clause_positions["where"] = {
+            start_line = where_start.line,
+            start_col = where_start.col,
+            end_line = last_token_before_end.line,
+            end_col = last_token_before_end.col + #last_token_before_end.text - 1,
+          }
+        end
         break
       else
         self:advance()
@@ -1871,6 +1924,8 @@ function ParserState:parse_statement(known_ctes, temp_tables)
             subquery.alias = self:parse_alias()
           end
           table.insert(chunk.subqueries, subquery)
+          -- Update last_statement_token to reflect tokens consumed by subquery
+          last_statement_token = self.pos > 1 and self.tokens[self.pos - 1] or last_statement_token
         end
       end
     elseif token.type == "paren_close" then

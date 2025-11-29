@@ -442,7 +442,9 @@ function Context._detect_type_from_line(before_cursor, chunk)
   end
 
   -- COLUMN contexts
-  if upper_trimmed:match("SELECT%s+$") or (upper:match("SELECT%s+") and not upper:match("FROM")) then
+  -- Check before_cursor for SELECT context (not full line - handles nested SELECT ... FROM)
+  local before_upper = before_cursor:upper()
+  if upper_trimmed:match("SELECT%s+$") or (before_upper:match("SELECT%s+") and not before_upper:match("FROM")) then
     return Context.Type.COLUMN, "select", extra
   end
 
@@ -624,12 +626,30 @@ function Context.detect(bufnr, line_num, col)
     end
     ctx_type = Context.Type.COLUMN
     mode = "on"
+    -- Check for qualified column reference in ON clause (e.g., d.█)
+    if before_cursor:match("%.%s*$") or before_cursor:match("%.[%w_]*$") then
+      local ref = Context._get_reference_before_dot(before_cursor)
+      if ref then
+        extra.table_ref = ref
+        mode = "qualified"
+      end
+    end
     goto build_context
   end
 
   if chunk then
     local StatementParser = require('ssns.completion.statement_parser')
-    local clause = StatementParser.get_clause_at_position(chunk, line_num, col)
+
+    -- Check if we're inside a subquery with its own clause positions
+    local clause_source = chunk
+    if cache_ctx and cache_ctx.subquery and cache_ctx.subquery.clause_positions then
+      -- Create a pseudo-chunk with subquery's clause positions for clause detection
+      clause_source = {
+        clause_positions = cache_ctx.subquery.clause_positions
+      }
+    end
+
+    local clause = StatementParser.get_clause_at_position(clause_source, line_num, col)
 
     if clause then
       -- Use clause position to determine context
@@ -860,8 +880,10 @@ function Context.detect(bufnr, line_num, col)
   -- Build tables_in_scope array from cache_ctx.tables
   -- Format: {alias = "e", table = "dbo.EMPLOYEES", scope = "main"}
   -- or for CTEs: {name = "CTE_Name", is_cte = true, columns = {...}}
+  -- or for subqueries: {name = "sub", is_subquery = true, columns = {...}}
   local tables_in_scope = {}
   local seen_ctes = {} -- Track which CTEs have been added to avoid duplicates
+  local seen_subqueries = {} -- Track which subqueries have been added to avoid duplicates
   if cache_ctx and cache_ctx.tables then
     for _, table_ref in ipairs(cache_ctx.tables) do
       -- Preserve CTE entries with their columns
@@ -881,6 +903,18 @@ function Context.detect(bufnr, line_num, col)
             name = cte_name,
             is_cte = true,
             columns = cte_columns,
+          })
+        end
+      elseif table_ref.is_subquery then
+        -- Preserve subquery/derived table entries with their columns
+        local sq_name = table_ref.name or table_ref.alias
+        if sq_name and not seen_subqueries[sq_name:lower()] then
+          seen_subqueries[sq_name:lower()] = true
+          table.insert(tables_in_scope, {
+            name = sq_name,
+            alias = table_ref.alias,
+            is_subquery = true,
+            columns = table_ref.columns,
           })
         end
       else

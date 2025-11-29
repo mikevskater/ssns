@@ -253,6 +253,7 @@ function Resolver.resolve_all_tables_in_query(connection, context)
   for _, table_info in ipairs(context.tables_in_scope) do
     -- table_info structure: {alias = "e", table = "dbo.EMPLOYEES", scope = "main"}
     -- or for CTEs: {name = "CTE_Name", is_cte = true, columns = {...}}
+    -- or for subqueries: {name = "sub", is_subquery = true, columns = {...}}
     local table_name = table_info.table or table_info.name or table_info.alias or table_info
     local table_name_lower = type(table_name) == "string" and table_name:lower() or ""
 
@@ -283,6 +284,32 @@ function Resolver.resolve_all_tables_in_query(connection, context)
         table.insert(resolved_tables, cte_table)
         seen_tables[table_name_lower] = true
         debug_log(string.format("[RESOLVER] Added CTE '%s' with %d columns", table_name, #cte_columns))
+      elseif table_info.is_subquery then
+        -- Handle subqueries/derived tables - use pre-stored columns instead of database lookup
+        local sq_columns = table_info.columns or {}
+        -- Create pseudo-table object with get_columns method for subquery
+        local sq_table = {
+          name = table_info.name or table_name,
+          is_subquery = true,
+          get_columns = function()
+            -- Convert subquery ColumnInfo objects to column format expected by completion
+            local cols = {}
+            for _, col_info in ipairs(sq_columns) do
+              local col_name = type(col_info) == "table" and col_info.name or col_info
+              if col_name then
+                table.insert(cols, {
+                  name = col_name,
+                  column_name = col_name,
+                  data_type = type(col_info) == "table" and col_info.data_type or "unknown",
+                })
+              end
+            end
+            return cols
+          end
+        }
+        table.insert(resolved_tables, sq_table)
+        seen_tables[table_name_lower] = true
+        debug_log(string.format("[RESOLVER] Added subquery '%s' with %d columns", table_name, #sq_columns))
       else
         -- Try pre-resolved scope first, then on-demand resolution
         local resolved_table = nil

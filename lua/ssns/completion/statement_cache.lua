@@ -17,6 +17,70 @@ local StatementCache = {}
 -- Private cache storage: bufnr -> BufferStatementCache
 local _cache = {}
 
+---Expand star columns in a column array to actual columns from source table
+---@param columns ColumnInfo[] Array of column info objects
+---@param connection table? Database connection for lookups
+---@return ColumnInfo[] Expanded columns with stars replaced by actual columns
+local function expand_star_columns(columns, connection)
+  if not columns or #columns == 0 then
+    return columns or {}
+  end
+
+  -- If no connection, can't expand - return as-is
+  if not connection or not connection.database then
+    return columns
+  end
+
+  local expanded = {}
+  local Resolver = require('ssns.completion.metadata.resolver')
+
+  for _, col in ipairs(columns) do
+    if col.is_star and col.parent_table then
+      -- This is a star column that needs expansion
+      -- Try to resolve the parent table and get its columns
+      local success, table_obj = pcall(function()
+        local ref = {
+          name = col.parent_table,
+          schema = col.parent_schema,
+        }
+        return Resolver.resolve_table(col.parent_table, connection, {})
+      end)
+
+      if success and table_obj then
+        -- Get columns from the resolved table
+        local col_success, table_cols = pcall(function()
+          return Resolver.get_columns(table_obj, connection)
+        end)
+
+        if col_success and table_cols and #table_cols > 0 then
+          -- Add each actual column, preserving source info
+          for _, tc in ipairs(table_cols) do
+            table.insert(expanded, {
+              name = tc.name or tc.column_name,
+              source_table = col.source_table,
+              parent_table = col.parent_table,
+              parent_schema = col.parent_schema,
+              data_type = tc.data_type,
+              is_star = false,
+            })
+          end
+        else
+          -- Couldn't get columns, keep the star as-is
+          table.insert(expanded, col)
+        end
+      else
+        -- Couldn't resolve table, keep the star as-is
+        table.insert(expanded, col)
+      end
+    else
+      -- Regular column, keep as-is
+      table.insert(expanded, col)
+    end
+  end
+
+  return expanded
+end
+
 -- Pending update timers: bufnr -> timer_id
 local pending_timers = {}
 
@@ -208,8 +272,9 @@ end
 ---@param bufnr number Buffer number
 ---@param line number 1-indexed line
 ---@param col number 1-indexed column
+---@param connection table? Optional database connection for star column expansion
 ---@return table? context Context with tables, aliases, temp_tables, ctes, subquery, chunk
-function StatementCache.get_context_at_position(bufnr, line, col)
+function StatementCache.get_context_at_position(bufnr, line, col, connection)
   local cache = StatementCache.get_or_build_cache(bufnr)
   if not cache then
     return nil
@@ -236,70 +301,106 @@ function StatementCache.get_context_at_position(bufnr, line, col)
         aliases[t.alias] = t
       end
     end
-    -- Also add subquery's own nested subqueries as available aliases
+    -- Also add subquery's own nested subqueries as available aliases (with star expansion)
     for _, sq in ipairs(subquery.subqueries or {}) do
       if sq.alias then
+        local expanded_sq_cols = expand_star_columns(sq.columns, connection)
         aliases[sq.alias] = {
           name = sq.alias,
           alias = sq.alias,
           is_subquery = true,
-          columns = sq.columns,  -- Include columns for asterisk expansion
+          columns = expanded_sq_cols,
         }
         -- Add to tables array like CTEs for consistent handling
         table.insert(tables, {
           name = sq.alias,
           alias = sq.alias,
           is_subquery = true,
-          columns = sq.columns,
+          columns = expanded_sq_cols,
         })
+      end
+    end
+
+    -- Include outer query tables/aliases for correlated subquery support
+    -- Add parent chunk's tables (subquery tables take precedence)
+    for _, t in ipairs(chunk.tables or {}) do
+      if t.alias and not aliases[t.alias] then
+        aliases[t.alias] = t
+      end
+      -- Add to tables array if not already present
+      local found = false
+      for _, existing in ipairs(tables) do
+        if existing.name == t.name and existing.alias == t.alias then
+          found = true
+          break
+        end
+      end
+      if not found then
+        table.insert(tables, t)
+      end
+    end
+
+    -- Also add chunk.aliases for outer scope references
+    for alias_name, table_ref in pairs(chunk.aliases or {}) do
+      if not aliases[alias_name] then
+        aliases[alias_name] = table_ref
       end
     end
   else
     -- At statement level: use chunk's tables
     tables = vim.deepcopy(chunk.tables or {})
     aliases = vim.deepcopy(chunk.aliases or {})
-    -- Add subqueries as available aliases
+    -- Add subqueries as available aliases (with star expansion)
     for _, sq in ipairs(chunk.subqueries or {}) do
       if sq.alias then
+        local expanded_sq_cols = expand_star_columns(sq.columns, connection)
         aliases[sq.alias] = {
           name = sq.alias,
           alias = sq.alias,
           is_subquery = true,
-          columns = sq.columns,  -- Include columns for asterisk expansion
+          columns = expanded_sq_cols,
         }
         -- Add to tables array like CTEs for consistent handling
         table.insert(tables, {
           name = sq.alias,
           alias = sq.alias,
           is_subquery = true,
-          columns = sq.columns,
+          columns = expanded_sq_cols,
         })
       end
     end
   end
 
-  -- Add CTEs as available references
+  -- Add CTEs as available references (with star column expansion)
   local ctes = {}
   for _, cte in ipairs(chunk.ctes or {}) do
-    ctes[cte.name] = cte
+    -- Expand star columns if connection is available
+    local expanded_columns = expand_star_columns(cte.columns, connection)
+    local cte_with_expanded = {
+      name = cte.name,
+      columns = expanded_columns,
+      tables = cte.tables,
+    }
+    ctes[cte.name] = cte_with_expanded
     -- CTEs can be referenced like tables
     table.insert(tables, {
       name = cte.name,
       is_cte = true,
-      columns = cte.columns,
+      columns = expanded_columns,
     })
   end
 
-  -- Get visible temp tables
+  -- Get visible temp tables (with star expansion)
   local temp_tables = StatementCache.get_visible_temp_tables(bufnr, line, col)
 
   -- Add temp tables to available tables
   for name, temp_info in pairs(temp_tables) do
+    local expanded_temp_cols = expand_star_columns(temp_info.columns, connection)
     table.insert(tables, {
       name = name,
       is_temp_table = true,
       is_global = temp_info.is_global,
-      columns = temp_info.columns,
+      columns = expanded_temp_cols,
     })
   end
 
@@ -356,6 +457,14 @@ function StatementCache.get_stats()
   end
 
   return stats
+end
+
+---Export expand_star_columns for use by column provider
+---@param columns ColumnInfo[] Array of column info objects
+---@param connection table? Database connection for lookups
+---@return ColumnInfo[] Expanded columns with stars replaced by actual columns
+function StatementCache.expand_star_columns(columns, connection)
+  return expand_star_columns(columns, connection)
 end
 
 return StatementCache

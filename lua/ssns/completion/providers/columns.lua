@@ -186,11 +186,14 @@ function ColumnsProvider._get_qualified_columns(sql_context, connection, context
     end
     local cte_info = context.ctes[cte_name] or context.ctes[cte_name:lower()]
     if cte_info and cte_info.columns and #cte_info.columns > 0 then
+      -- Expand star columns (SELECT * in CTE) to actual columns from source table
+      local StatementCache = require('ssns.completion.statement_cache')
+      local expanded_columns = StatementCache.expand_star_columns(cte_info.columns, connection)
       local items = {}
-      for _, col_info in ipairs(cte_info.columns) do
+      for _, col_info in ipairs(expanded_columns) do
         -- CTE columns are ColumnInfo objects with a 'name' property
         local col_name = type(col_info) == "table" and col_info.name or col_info
-        if col_name then
+        if col_name and col_name ~= "*" then  -- Skip unexpanded stars
           table.insert(items, {
             label = col_name,
             kind = vim.lsp.protocol.CompletionItemKind.Field,
@@ -200,6 +203,31 @@ function ColumnsProvider._get_qualified_columns(sql_context, connection, context
         end
       end
       return items
+    end
+  end
+
+  -- Try subquery/derived table columns from tables_in_scope
+  if context and context.tables_in_scope then
+    for _, table_info in ipairs(context.tables_in_scope) do
+      if table_info.is_subquery then
+        local sq_name = table_info.name or table_info.alias
+        if sq_name and sq_name:lower() == reference:lower() then
+          local sq_columns = table_info.columns or {}
+          local items = {}
+          for _, col_info in ipairs(sq_columns) do
+            local col_name = type(col_info) == "table" and col_info.name or col_info
+            if col_name then
+              table.insert(items, {
+                label = col_name,
+                kind = vim.lsp.protocol.CompletionItemKind.Field,
+                detail = "Derived table column",
+                insertText = col_name,
+              })
+            end
+          end
+          return items
+        end
+      end
     end
   end
 
