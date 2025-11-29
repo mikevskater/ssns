@@ -287,6 +287,9 @@ function Resolver.resolve_all_tables_in_query(connection, context)
       elseif table_info.is_subquery then
         -- Handle subqueries/derived tables - use pre-stored columns instead of database lookup
         local sq_columns = table_info.columns or {}
+        -- Expand star columns (SELECT * in subquery) to actual columns from source table
+        local StatementCache = require('ssns.completion.statement_cache')
+        local expanded_sq_columns = StatementCache.expand_star_columns(sq_columns, connection)
         -- Create pseudo-table object with get_columns method for subquery
         local sq_table = {
           name = table_info.name or table_name,
@@ -294,9 +297,9 @@ function Resolver.resolve_all_tables_in_query(connection, context)
           get_columns = function()
             -- Convert subquery ColumnInfo objects to column format expected by completion
             local cols = {}
-            for _, col_info in ipairs(sq_columns) do
+            for _, col_info in ipairs(expanded_sq_columns) do
               local col_name = type(col_info) == "table" and col_info.name or col_info
-              if col_name then
+              if col_name and col_name ~= "*" then  -- Skip unexpanded stars
                 table.insert(cols, {
                   name = col_name,
                   column_name = col_name,
@@ -309,7 +312,7 @@ function Resolver.resolve_all_tables_in_query(connection, context)
         }
         table.insert(resolved_tables, sq_table)
         seen_tables[table_name_lower] = true
-        debug_log(string.format("[RESOLVER] Added subquery '%s' with %d columns", table_name, #sq_columns))
+        debug_log(string.format("[RESOLVER] Added subquery '%s' with %d columns (expanded from %d)", table_name, #expanded_sq_columns, #sq_columns))
       else
         -- Try pre-resolved scope first, then on-demand resolution
         local resolved_table = nil

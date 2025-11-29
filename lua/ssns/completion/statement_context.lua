@@ -307,6 +307,21 @@ function Context._detect_type_from_line(before_cursor, chunk)
   -- UPDATE/DELETE/MERGE checks - must come BEFORE qualified column check
   -- so that "UPDATE dbo.█" is recognized as TABLE context, not COLUMN
   if upper_trimmed:match("UPDATE%s+$") or upper:match("UPDATE%s+[%w_#@%.%[%]]*$") then
+    -- Parse qualified name for cross-database support: UPDATE TEST.dbo.█
+    local qualified_text = before_cursor:match("[Uu][Pp][Dd][Aa][Tt][Ee]%s+([%w_%[%]%.]+)$")
+    if qualified_text and qualified_text:match("%.") then
+      local qualified = Context._parse_qualified_name(qualified_text)
+      if qualified.database then
+        extra.database = qualified.database
+        extra.schema = qualified.schema
+        extra.filter_database = qualified.database
+        extra.filter_schema = qualified.schema
+        return Context.Type.TABLE, "update", extra
+      elseif qualified.schema then
+        extra.schema = qualified.schema
+        extra.filter_schema = qualified.schema
+      end
+    end
     return Context.Type.TABLE, "update", extra
   end
 
@@ -414,6 +429,21 @@ function Context._detect_type_from_line(before_cursor, chunk)
   end
 
   if upper_trimmed:match("INSERT%s+INTO%s+$") or upper:match("INSERT%s+INTO%s+[%w_#@%.%[%]]*$") then
+    -- Parse qualified name for cross-database support: INSERT INTO TEST.dbo.█
+    local qualified_text = before_cursor:match("[Ii][Nn][Ss][Ee][Rr][Tt]%s+[Ii][Nn][Tt][Oo]%s+([%w_%[%]%.]+)$")
+    if qualified_text and qualified_text:match("%.") then
+      local qualified = Context._parse_qualified_name(qualified_text)
+      if qualified.database then
+        extra.database = qualified.database
+        extra.schema = qualified.schema
+        extra.filter_database = qualified.database
+        extra.filter_schema = qualified.schema
+        return Context.Type.TABLE, "insert", extra
+      elseif qualified.schema then
+        extra.schema = qualified.schema
+        extra.filter_schema = qualified.schema
+      end
+    end
     return Context.Type.TABLE, "insert", extra
   end
 
@@ -662,14 +692,24 @@ function Context.detect(bufnr, line_num, col)
         mode = "from"
         -- Parse qualified name from line (e.g., "FROM dbo.█" or "FROM TEST.dbo.█")
         -- Handle comma-separated tables: "FROM Table1, dbo.█" should extract "dbo."
+        -- Also handle JOIN within FROM clause: "FROM ... JOIN TEST.dbo.█"
         -- Look for the last segment that could be a qualified name
         local qualified_text = nil
-        -- Try after last comma first (handles comma-separated tables)
-        local after_comma = before_cursor:match(",[ \t]*([%w_%[%]%.]+)$")
-        if after_comma then
-          qualified_text = after_comma
-        else
-          -- No comma - try after FROM
+        -- Try after JOIN keyword first (handles "FROM ... JOIN TEST.dbo.█")
+        local after_join = before_cursor:match("[Jj][Oo][Ii][Nn]%s+([%w_%[%]%.]+)$")
+        if after_join then
+          qualified_text = after_join
+          mode = "join"  -- Switch to join mode since we're actually in a JOIN context
+        end
+        -- Try after last comma (handles comma-separated tables)
+        if not qualified_text then
+          local after_comma = before_cursor:match(",[ \t]*([%w_%[%]%.]+)$")
+          if after_comma then
+            qualified_text = after_comma
+          end
+        end
+        -- Try after FROM keyword
+        if not qualified_text then
           local after_from = before_cursor:match("[Ff][Rr][Oo][Mm]%s+([%w_%[%]%.]+)$")
           qualified_text = after_from
         end
@@ -678,6 +718,8 @@ function Context.detect(bufnr, line_num, col)
           -- Multi-line: before_cursor might be just "dbo." or "TEST.dbo."
           qualified_text = before_cursor:match("^%s*([%w_%[%]]+%.[%w_%[%]%.]*)$")
         end
+        -- Track if we're in JOIN context (detected after_join above)
+        local is_join_context = (mode == "join")
         if qualified_text and qualified_text:match("%.") then
           local qualified = Context._parse_qualified_name(qualified_text)
           if qualified.database then
@@ -686,7 +728,7 @@ function Context.detect(bufnr, line_num, col)
             extra.filter_database = qualified.database
             extra.filter_schema = qualified.schema
             extra.omit_schema = true
-            mode = "from_cross_db_qualified"
+            mode = is_join_context and "join_cross_db_qualified" or "from_cross_db_qualified"
           elseif qualified.schema then
             -- Check if this single identifier is a database name (cross-db schema completion)
             -- For "TEST.█", qualified.schema would be "TEST"
@@ -697,7 +739,7 @@ function Context.detect(bufnr, line_num, col)
             extra.schema = qualified.schema
             extra.filter_schema = qualified.schema
             extra.omit_schema = true
-            mode = "from_qualified"
+            mode = is_join_context and "join_qualified" or "from_qualified"
           end
         end
       elseif clause == "join" then
@@ -767,6 +809,31 @@ function Context.detect(bufnr, line_num, col)
       elseif clause == "into" then
         ctx_type = Context.Type.TABLE
         mode = "into"
+        -- Parse qualified name for cross-database support: INSERT INTO TEST.dbo.█
+        local qualified_text = nil
+        -- Try after INSERT INTO keyword
+        local after_into = before_cursor:match("[Ii][Nn][Ss][Ee][Rr][Tt]%s+[Ii][Nn][Tt][Oo]%s+([%w_%[%]%.]+)$")
+        qualified_text = after_into
+        -- If no INSERT INTO on this line, check if we have a qualified pattern (multi-line case)
+        if not qualified_text then
+          qualified_text = before_cursor:match("^%s*([%w_%[%]]+%.[%w_%[%]%.]*)$")
+        end
+        if qualified_text and qualified_text:match("%.") then
+          local qualified = Context._parse_qualified_name(qualified_text)
+          if qualified.database then
+            extra.database = qualified.database
+            extra.schema = qualified.schema
+            extra.filter_database = qualified.database
+            extra.filter_schema = qualified.schema
+            extra.omit_schema = true
+            mode = "into_cross_db_qualified"
+          elseif qualified.schema then
+            extra.schema = qualified.schema
+            extra.filter_schema = qualified.schema
+            extra.omit_schema = true
+            mode = "into_qualified"
+          end
+        end
       elseif clause == "insert_columns" then
         ctx_type = Context.Type.COLUMN
         mode = "insert_columns"
@@ -838,7 +905,24 @@ function Context.detect(bufnr, line_num, col)
 
       if in_from_context or in_join_context then
         -- We're continuing a FROM or JOIN clause - check for qualified name
-        local qualified_text = before_cursor:match("^%s*([%w_%[%]]+%.[%w_%[%]%.]*)$")
+        local qualified_text = nil
+        -- Try multiple patterns to find qualified name
+        if in_join_context then
+          -- Try after JOIN keyword (single-line case: "... JOIN TEST.dbo.")
+          qualified_text = before_cursor:match("[Jj][Oo][Ii][Nn]%s+([%w_%[%]%.]+)$")
+        end
+        if not qualified_text and in_from_context then
+          -- Try after FROM keyword (single-line case: "... FROM TEST.dbo.")
+          qualified_text = before_cursor:match("[Ff][Rr][Oo][Mm]%s+([%w_%[%]%.]+)$")
+          -- Also try after comma for second table (single-line case: "FROM Table1, TEST.dbo.")
+          if not qualified_text then
+            qualified_text = before_cursor:match(",%s*([%w_%[%]%.]+)$")
+          end
+        end
+        -- Fallback: Try multi-line case where line starts with qualified name
+        if not qualified_text then
+          qualified_text = before_cursor:match("^%s*([%w_%[%]]+%.[%w_%[%]%.]*)$")
+        end
         if qualified_text and qualified_text:match("%.") then
           local qualified = Context._parse_qualified_name(qualified_text)
           if qualified.database then
