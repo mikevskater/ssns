@@ -141,6 +141,24 @@ function TablesProvider._get_completions_impl(ctx)
   -- Get database adapter to check features
   local adapter = target_db:get_adapter()
 
+  -- In basic FROM/JOIN context (no qualification), also include databases and schemas
+  -- This allows users to type "SELECT * FROM <db>." or "SELECT * FROM <schema>."
+  local is_basic_from_join = (mode == "from" or mode == "join") and not filter_schema and not filter_database
+
+  if is_basic_from_join then
+    -- Include other databases from the server (for cross-db queries)
+    local databases = TablesProvider._collect_databases(server)
+    for _, item in ipairs(databases) do
+      table.insert(items, item)
+    end
+
+    -- Include schemas from the current database (for qualified queries)
+    local schemas = TablesProvider._collect_schemas(target_db)
+    for _, item in ipairs(schemas) do
+      table.insert(items, item)
+    end
+  end
+
   -- Collect tables (if enabled)
   if include_tables then
     local tables = TablesProvider._collect_tables(target_db, show_schema_prefix, omit_schema, filter_schema)
@@ -400,6 +418,66 @@ function TablesProvider._collect_functions(database, show_schema_prefix, omit_sc
     table.insert(items, item)
 
     ::continue::
+  end
+
+  return items
+end
+
+---Collect database completion items from server (for cross-db queries)
+---@param server table Server object
+---@return table[] items Array of CompletionItems
+function TablesProvider._collect_databases(server)
+  local Utils = require('ssns.completion.utils')
+  local items = {}
+
+  if not server then
+    return items
+  end
+
+  -- Ensure server is loaded (loads all databases from server)
+  if not server.is_loaded then
+    server:load()
+  end
+
+  -- Server structure: server.children contains groups like "databases_group"
+  -- The actual databases are in databases_group.children
+  for _, child in ipairs(server.children or {}) do
+    if child.object_type == "databases_group" and child.children then
+      -- Found the databases group - iterate through actual databases
+      for _, db in ipairs(child.children) do
+        if db.object_type == "database" then
+          local item = Utils.format_database(db, {})
+          table.insert(items, item)
+        end
+      end
+    end
+  end
+
+  return items
+end
+
+---Collect schema completion items from database (for qualified queries)
+---@param database table Database object
+---@return table[] items Array of CompletionItems
+function TablesProvider._collect_schemas(database)
+  local Utils = require('ssns.completion.utils')
+  local items = {}
+
+  if not database then
+    return items
+  end
+
+  -- Get all schemas from database
+  local schemas = database:get_schemas()
+
+  if not schemas then
+    return items
+  end
+
+  -- Format each schema as CompletionItem
+  for _, schema in ipairs(schemas) do
+    local item = Utils.format_schema(schema, {})
+    table.insert(items, item)
   end
 
   return items
