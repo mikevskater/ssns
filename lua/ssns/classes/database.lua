@@ -3,7 +3,12 @@ local BaseDbObject = require('ssns.classes.base')
 ---@class DbClass : BaseDbObject
 ---@field db_name string The database name
 ---@field parent ServerClass The parent server object
----@field schemas SchemaClass[]? Array of schema objects
+---@field schemas SchemaClass[]? Array of schema objects (for schema-based servers like SQL Server/PostgreSQL)
+---@field tables TableClass[]? Array of table objects (for non-schema servers like MySQL)
+---@field views ViewClass[]? Array of view objects (for non-schema servers like MySQL)
+---@field procedures ProcedureClass[]? Array of procedure objects (for non-schema servers like MySQL)
+---@field functions FunctionClass[]? Array of function objects (for non-schema servers like MySQL)
+---@field synonyms SynonymClass[]? Array of synonym objects (for non-schema servers)
 ---@field is_connected boolean Whether this database is the active connection
 local DbClass = setmetatable({}, { __index = BaseDbObject })
 DbClass.__index = DbClass
@@ -19,13 +24,23 @@ function DbClass.new(opts)
 
   self.object_type = "database"
   self.db_name = opts.name
-  self.schemas = nil
+
+  -- Typed arrays - which are populated depends on server type
+  self.schemas = nil     -- For schema-based servers (SQL Server, PostgreSQL)
+  self.tables = nil      -- For non-schema servers (MySQL)
+  self.views = nil
+  self.procedures = nil
+  self.functions = nil
+  self.synonyms = nil
+
   self.is_connected = false
 
   return self
 end
 
----Load objects from database (vim-dadbod-ui style - no schema nodes)
+---Load objects from database (server-type aware)
+---For schema-based servers (SQL Server, PostgreSQL): loads schemas, objects live in schemas
+---For non-schema servers (MySQL): loads objects directly on database
 ---@return boolean success
 function DbClass:load()
   if self.is_loaded then
@@ -33,51 +48,141 @@ function DbClass:load()
   end
 
   local adapter = self:get_adapter()
-  self:clear_children()
 
-  -- Load all objects across ALL schemas and group by type
-  -- This matches vim-dadbod-ui structure: Database -> TABLES/VIEWS/etc (no schema nodes)
+  -- Check if this is a schema-based server
+  if adapter.features.schemas then
+    -- SQL Server/PostgreSQL: Load schemas, objects live inside schemas
+    self.schemas = self:_load_schemas()
 
-  -- Load tables from all schemas
-  local tables = self:load_all_tables()
-
-  -- Load views from all schemas
-  local views = self:load_all_views()
-
-  -- Load procedures from all schemas
-  local procedures = self:load_all_procedures()
-
-  -- Load functions from all schemas
-  local functions = self:load_all_functions()
-
-  -- Load synonyms from all schemas
-  local synonyms = self:load_all_synonyms()
-
-  -- Create object type groups
-  self:create_object_type_groups(tables, views, procedures, functions, synonyms)
+    -- Load each schema's objects
+    for _, schema in ipairs(self.schemas) do
+      schema:load()
+    end
+  else
+    -- MySQL/SQLite: Load objects directly on database
+    self.tables = self:_load_tables()
+    self.views = self:_load_views()
+    self.procedures = self:_load_procedures()
+    self.functions = self:_load_functions()
+    -- Non-schema servers typically don't have synonyms
+  end
 
   self.is_loaded = true
   return true
 end
 
----Load tables directly for databases without schema support
----@return boolean success
-function DbClass:load_tables_directly()
-  -- For databases like MySQL/SQLite that don't have schemas,
-  -- create a single "default" schema to hold all objects
-  self:clear_children()
-
+---Load schemas for this database
+---@return SchemaClass[]
+function DbClass:_load_schemas()
+  local adapter = self:get_adapter()
   local SchemaClass = require('ssns.classes.schema')
-  local default_schema = SchemaClass.new({
-    name = self.db_name,  -- Use database name as schema name
-    parent = self,
-  })
 
-  self.is_loaded = true
-  return true
+  -- Get schemas query
+  local query = adapter:get_schemas_query(self.db_name)
+  local results = adapter:execute(self:get_server().connection, query)
+  local schema_data_list = adapter:parse_schemas(results)
+
+  local schemas = {}
+  for _, schema_data in ipairs(schema_data_list) do
+    local schema = SchemaClass.new({
+      name = schema_data.name,
+      parent = self,
+    })
+    table.insert(schemas, schema)
+  end
+
+  return schemas
 end
 
----Reload schemas from database
+---Load tables directly (for non-schema servers)
+---@return TableClass[]
+function DbClass:_load_tables()
+  local adapter = self:get_adapter()
+
+  local query = adapter:get_tables_query(self.db_name, nil)
+  local results = adapter:execute(self:get_server().connection, query)
+  local table_data_list = adapter:parse_tables(results)
+
+  local tables = {}
+  for _, table_data in ipairs(table_data_list) do
+    local table_obj = adapter:create_table(nil, table_data)
+    table_obj.parent = self
+    table.insert(tables, table_obj)
+  end
+
+  return tables
+end
+
+---Load views directly (for non-schema servers)
+---@return ViewClass[]
+function DbClass:_load_views()
+  local adapter = self:get_adapter()
+
+  if not adapter.features.views then
+    return {}
+  end
+
+  local query = adapter:get_views_query(self.db_name, nil)
+  local results = adapter:execute(self:get_server().connection, query)
+  local view_data_list = adapter:parse_views(results)
+
+  local views = {}
+  for _, view_data in ipairs(view_data_list) do
+    local view_obj = adapter:create_view(nil, view_data)
+    view_obj.parent = self
+    table.insert(views, view_obj)
+  end
+
+  return views
+end
+
+---Load procedures directly (for non-schema servers)
+---@return ProcedureClass[]
+function DbClass:_load_procedures()
+  local adapter = self:get_adapter()
+
+  if not adapter.features.procedures then
+    return {}
+  end
+
+  local query = adapter:get_procedures_query(self.db_name, nil)
+  local results = adapter:execute(self:get_server().connection, query)
+  local proc_data_list = adapter:parse_procedures(results)
+
+  local procedures = {}
+  for _, proc_data in ipairs(proc_data_list) do
+    local proc_obj = adapter:create_procedure(nil, proc_data)
+    proc_obj.parent = self
+    table.insert(procedures, proc_obj)
+  end
+
+  return procedures
+end
+
+---Load functions directly (for non-schema servers)
+---@return FunctionClass[]
+function DbClass:_load_functions()
+  local adapter = self:get_adapter()
+
+  if not adapter.features.functions then
+    return {}
+  end
+
+  local query = adapter:get_functions_query(self.db_name, nil)
+  local results = adapter:execute(self:get_server().connection, query)
+  local func_data_list = adapter:parse_functions(results)
+
+  local functions = {}
+  for _, func_data in ipairs(func_data_list) do
+    local func_obj = adapter:create_function(nil, func_data)
+    func_obj.parent = self
+    table.insert(functions, func_obj)
+  end
+
+  return functions
+end
+
+---Reload objects from database
 ---@return boolean success
 function DbClass:reload()
   -- Invalidate query cache for this database's server connection
@@ -87,7 +192,14 @@ function DbClass:reload()
     Connection.invalidate_cache(server.connection_string)
   end
 
-  self:clear_children()
+  -- Clear typed arrays
+  self.schemas = nil
+  self.tables = nil
+  self.views = nil
+  self.procedures = nil
+  self.functions = nil
+  self.synonyms = nil
+  self.is_loaded = false
   return self:load()
 end
 
@@ -95,7 +207,19 @@ end
 ---@param schema_name string
 ---@return SchemaClass?
 function DbClass:find_schema(schema_name)
-  return self:find_child(schema_name)
+  if not self.is_loaded then
+    self:load()
+  end
+
+  -- Search schemas array directly (case-insensitive)
+  local lower_name = schema_name:lower()
+  for _, schema in ipairs(self.schemas or {}) do
+    if schema.name:lower() == lower_name then
+      return schema
+    end
+  end
+
+  return nil
 end
 
 ---Get all schemas
@@ -104,19 +228,132 @@ function DbClass:get_schemas()
   if not self.is_loaded then
     self:load()
   end
+  return self.schemas or {}
+end
 
-  -- Find the SCHEMAS group in children
-  if not self.children then
-    return {}
+---Get all tables (server-type aware - aggregates from schemas if needed)
+---@param schema_filter string? Optional schema name to filter by
+---@return TableClass[]
+function DbClass:get_tables(schema_filter)
+  if not self.is_loaded then
+    self:load()
   end
 
-  for _, child in ipairs(self.children) do
-    if child.object_type == "schemas_group" and child.children then
-      return child.children
+  -- Schema-based servers: aggregate from schemas
+  if self.schemas then
+    local all_tables = {}
+    for _, schema in ipairs(self.schemas) do
+      if not schema_filter or schema.name:lower() == schema_filter:lower() then
+        for _, t in ipairs(schema:get_tables()) do
+          table.insert(all_tables, t)
+        end
+      end
     end
+    return all_tables
   end
 
-  return {}
+  -- Non-schema servers: return direct array
+  return self.tables or {}
+end
+
+---Get all views (server-type aware - aggregates from schemas if needed)
+---@param schema_filter string? Optional schema name to filter by
+---@return ViewClass[]
+function DbClass:get_views(schema_filter)
+  if not self.is_loaded then
+    self:load()
+  end
+
+  -- Schema-based servers: aggregate from schemas
+  if self.schemas then
+    local all_views = {}
+    for _, schema in ipairs(self.schemas) do
+      if not schema_filter or schema.name:lower() == schema_filter:lower() then
+        for _, v in ipairs(schema:get_views()) do
+          table.insert(all_views, v)
+        end
+      end
+    end
+    return all_views
+  end
+
+  -- Non-schema servers: return direct array
+  return self.views or {}
+end
+
+---Get all procedures (server-type aware - aggregates from schemas if needed)
+---@param schema_filter string? Optional schema name to filter by
+---@return ProcedureClass[]
+function DbClass:get_procedures(schema_filter)
+  if not self.is_loaded then
+    self:load()
+  end
+
+  -- Schema-based servers: aggregate from schemas
+  if self.schemas then
+    local all_procedures = {}
+    for _, schema in ipairs(self.schemas) do
+      if not schema_filter or schema.name:lower() == schema_filter:lower() then
+        for _, p in ipairs(schema:get_procedures()) do
+          table.insert(all_procedures, p)
+        end
+      end
+    end
+    return all_procedures
+  end
+
+  -- Non-schema servers: return direct array
+  return self.procedures or {}
+end
+
+---Get all functions (server-type aware - aggregates from schemas if needed)
+---@param schema_filter string? Optional schema name to filter by
+---@return FunctionClass[]
+function DbClass:get_functions(schema_filter)
+  if not self.is_loaded then
+    self:load()
+  end
+
+  -- Schema-based servers: aggregate from schemas
+  if self.schemas then
+    local all_functions = {}
+    for _, schema in ipairs(self.schemas) do
+      if not schema_filter or schema.name:lower() == schema_filter:lower() then
+        for _, f in ipairs(schema:get_functions()) do
+          table.insert(all_functions, f)
+        end
+      end
+    end
+    return all_functions
+  end
+
+  -- Non-schema servers: return direct array
+  return self.functions or {}
+end
+
+---Get all synonyms (server-type aware - aggregates from schemas if needed)
+---@param schema_filter string? Optional schema name to filter by
+---@return SynonymClass[]
+function DbClass:get_synonyms(schema_filter)
+  if not self.is_loaded then
+    self:load()
+  end
+
+  -- Schema-based servers: aggregate from schemas
+  if self.schemas then
+    local all_synonyms = {}
+    for _, schema in ipairs(self.schemas) do
+      if not schema_filter or schema.name:lower() == schema_filter:lower() then
+        for _, s in ipairs(schema:get_synonyms()) do
+          table.insert(all_synonyms, s)
+        end
+      end
+    end
+    return all_synonyms
+  end
+
+  -- Non-schema servers: return direct array (usually empty)
+  return self.synonyms or {}
 end
 
 ---Get the default schema for this database type
@@ -141,39 +378,6 @@ function DbClass:get_default_schema()
   end
 
   return "dbo"  -- Fallback
-end
-
----Load all synonyms from all schemas
----@return table[] Array of synonym objects
-function DbClass:load_all_synonyms()
-  local adapter = self:get_adapter()
-
-  if not adapter.features.synonyms then
-    return {}
-  end
-
-  -- Get synonyms query - pass nil for schema_name to get ALL synonyms
-  local query = adapter:get_synonyms_query(self.db_name, nil)
-  local results = adapter:execute(self:get_server().connection, query)
-  local synonym_data_list = adapter:parse_synonyms(results)
-
-  local SynonymClass = require('ssns.classes.synonym')
-  local synonyms = {}
-  for _, syn_data in ipairs(synonym_data_list) do
-    -- Pass nil as parent to avoid auto-adding to database.children
-    local syn_obj = SynonymClass.new({
-      name = syn_data.name,
-      schema_name = syn_data.schema,
-      base_object_name = syn_data.base_object_name,
-      base_object_type = syn_data.base_object_type,
-      parent = nil,  -- Don't auto-add to children
-    })
-    -- Set parent manually for hierarchy navigation (without adding to children)
-    syn_obj.parent = self
-    table.insert(synonyms, syn_obj)
-  end
-
-  return synonyms
 end
 
 ---Connect to this database (make it the active database)
@@ -229,411 +433,18 @@ end
 ---Get string representation for debugging
 ---@return string
 function DbClass:to_string()
+  local count = 0
+  if self.schemas then
+    count = #self.schemas
+  elseif self.tables then
+    count = #self.tables
+  end
   return string.format(
-    "DbClass{name=%s, schemas=%d, connected=%s}",
+    "DbClass{name=%s, objects=%d, connected=%s}",
     self.name,
-    #self.children,
+    count,
     tostring(self.is_connected)
   )
-end
-
----Load all tables from all schemas
----@return table[] Array of table objects
-function DbClass:load_all_tables()
-  local adapter = self:get_adapter()
-
-  -- Get tables query - pass nil for schema_name to get ALL tables
-  local query = adapter:get_tables_query(self.db_name, nil)
-  local results = adapter:execute(self:get_server().connection, query)
-  local table_data_list = adapter:parse_tables(results)
-
-  local tables = {}
-  for _, table_data in ipairs(table_data_list) do
-    -- Pass nil as parent to avoid auto-adding to database.children
-    local table_obj = adapter:create_table(nil, table_data)
-    -- Set parent manually for hierarchy navigation (without adding to children)
-    table_obj.parent = self
-    table.insert(tables, table_obj)
-  end
-
-  return tables
-end
-
----Load all views from all schemas
----@return table[] Array of view objects
-function DbClass:load_all_views()
-  local adapter = self:get_adapter()
-
-  if not adapter.features.views then
-    return {}
-  end
-
-  local query = adapter:get_views_query(self.db_name, nil)
-  local results = adapter:execute(self:get_server().connection, query)
-  local view_data_list = adapter:parse_views(results)
-
-  local views = {}
-  for _, view_data in ipairs(view_data_list) do
-    local view_obj = adapter:create_view(nil, view_data)
-    view_obj.parent = self
-    table.insert(views, view_obj)
-  end
-
-  return views
-end
-
----Load all procedures from all schemas
----@return table[] Array of procedure objects
-function DbClass:load_all_procedures()
-  local adapter = self:get_adapter()
-
-  if not adapter.features.procedures then
-    return {}
-  end
-
-  local query = adapter:get_procedures_query(self.db_name, nil)
-  local results = adapter:execute(self:get_server().connection, query)
-  local proc_data_list = adapter:parse_procedures(results)
-
-  local procedures = {}
-  for _, proc_data in ipairs(proc_data_list) do
-    local proc_obj = adapter:create_procedure(nil, proc_data)
-    proc_obj.parent = self
-    table.insert(procedures, proc_obj)
-  end
-
-  return procedures
-end
-
----Load all functions from all schemas
----@return table[] Array of function objects
-function DbClass:load_all_functions()
-  local adapter = self:get_adapter()
-
-  if not adapter.features.functions then
-    return {}
-  end
-
-  local query = adapter:get_functions_query(self.db_name, nil)
-  local results = adapter:execute(self:get_server().connection, query)
-  local func_data_list = adapter:parse_functions(results)
-
-  local functions = {}
-  for _, func_data in ipairs(func_data_list) do
-    local func_obj = adapter:create_function(nil, func_data)
-    func_obj.parent = self
-    table.insert(functions, func_obj)
-  end
-
-  return functions
-end
-
----Create object type groups (TABLES, VIEWS, PROCEDURES, FUNCTIONS, SYNONYMS)
----@param tables table[]
----@param views table[]
----@param procedures table[]
----@param functions table[]
----@param synonyms table[]
-function DbClass:create_object_type_groups(tables, views, procedures, functions, synonyms)
-  -- Always create TABLES group (even if empty)
-  local tables_group = BaseDbObject.new({
-    name = string.format("TABLES (%d)", #tables),
-    parent = self,
-  })
-  tables_group.object_type = "tables_group"
-
-  -- Add tables to group (but keep their parent as database for hierarchy)
-  for _, table_obj in ipairs(tables) do
-    table.insert(tables_group.children, table_obj)
-  end
-
-  tables_group.is_loaded = true
-
-  -- Always create VIEWS group (even if empty)
-  local views_group = BaseDbObject.new({
-    name = string.format("VIEWS (%d)", #views),
-    parent = self,
-  })
-  views_group.object_type = "views_group"
-
-  for _, view_obj in ipairs(views) do
-    table.insert(views_group.children, view_obj)
-  end
-
-  views_group.is_loaded = true
-
-  -- Always create PROCEDURES group (even if empty)
-  local procs_group = BaseDbObject.new({
-    name = string.format("PROCEDURES (%d)", #procedures),
-    parent = self,
-  })
-  procs_group.object_type = "procedures_group"
-
-  for _, proc_obj in ipairs(procedures) do
-    table.insert(procs_group.children, proc_obj)
-  end
-
-  procs_group.is_loaded = true
-
-  -- Always create FUNCTIONS group (even if empty)
-  local funcs_group = BaseDbObject.new({
-    name = string.format("FUNCTIONS (%d)", #functions),
-    parent = self,
-  })
-  funcs_group.object_type = "functions_group"
-
-  for _, func_obj in ipairs(functions) do
-    table.insert(funcs_group.children, func_obj)
-  end
-
-  funcs_group.is_loaded = true
-
-  -- Create SYNONYMS group if adapter supports synonyms
-  local adapter = self:get_adapter()
-  if adapter.features.synonyms then
-    local synonyms_group = BaseDbObject.new({
-      name = string.format("SYNONYMS (%d)", #synonyms),
-      parent = self,
-    })
-    synonyms_group.object_type = "synonyms_group"
-
-    for _, syn_obj in ipairs(synonyms) do
-      table.insert(synonyms_group.children, syn_obj)
-    end
-
-    synonyms_group.is_loaded = true
-  end
-
-  -- Create SCHEMAS group (alternate schema-based view)
-  self:create_schemas_group(tables, views, procedures, functions, synonyms)
-end
-
----Create SCHEMAS group with schema-based organization
----@param tables table[]
----@param views table[]
----@param procedures table[]
----@param functions table[]
----@param synonyms table[]
-function DbClass:create_schemas_group(tables, views, procedures, functions, synonyms)
-  local BaseDbObject = require('ssns.classes.base')
-
-  -- Collect unique schemas
-  local schemas_map = {}
-
-  for _, table_obj in ipairs(tables) do
-    if table_obj.schema_name then
-      schemas_map[table_obj.schema_name] = true
-    end
-  end
-  for _, view_obj in ipairs(views) do
-    if view_obj.schema_name then
-      schemas_map[view_obj.schema_name] = true
-    end
-  end
-  for _, proc_obj in ipairs(procedures) do
-    if proc_obj.schema_name then
-      schemas_map[proc_obj.schema_name] = true
-    end
-  end
-  for _, func_obj in ipairs(functions) do
-    if func_obj.schema_name then
-      schemas_map[func_obj.schema_name] = true
-    end
-  end
-  for _, syn_obj in ipairs(synonyms) do
-    if syn_obj.schema_name then
-      schemas_map[syn_obj.schema_name] = true
-    end
-  end
-
-  local schema_names = {}
-  for schema_name in pairs(schemas_map) do
-    table.insert(schema_names, schema_name)
-  end
-  table.sort(schema_names)
-
-  -- Create SCHEMAS group
-  local schemas_group = BaseDbObject.new({
-    name = string.format("SCHEMAS (%d)", #schema_names),
-    parent = self,
-  })
-  schemas_group.object_type = "schemas_group"
-
-  -- Create schema nodes with lazy loading
-  for _, schema_name in ipairs(schema_names) do
-    local schema_node = BaseDbObject.new({
-      name = schema_name,
-      parent = schemas_group,
-    })
-    schema_node.object_type = "schema_view"
-    schema_node.schema_name = schema_name
-
-    -- Lazy load function for schema node
-    schema_node.load = function(self_node)
-      if self_node.is_loaded then
-        return true
-      end
-
-      self_node:clear_children()
-
-      -- Collect all objects in this schema
-      local schema_objects = {}
-
-      for _, table_obj in ipairs(tables) do
-        if table_obj.schema_name == schema_name then
-          table.insert(schema_objects, {
-            obj = table_obj,
-            name = string.format("[%s].[%s]", table_obj.schema_name, table_obj.table_name),
-            type = "table"
-          })
-        end
-      end
-      for _, view_obj in ipairs(views) do
-        if view_obj.schema_name == schema_name then
-          table.insert(schema_objects, {
-            obj = view_obj,
-            name = string.format("[%s].[%s]", view_obj.schema_name, view_obj.view_name),
-            type = "view"
-          })
-        end
-      end
-      for _, proc_obj in ipairs(procedures) do
-        if proc_obj.schema_name == schema_name then
-          table.insert(schema_objects, {
-            obj = proc_obj,
-            name = string.format("[%s].[%s]", proc_obj.schema_name, proc_obj.procedure_name),
-            type = "procedure"
-          })
-        end
-      end
-      for _, func_obj in ipairs(functions) do
-        if func_obj.schema_name == schema_name then
-          table.insert(schema_objects, {
-            obj = func_obj,
-            name = string.format("[%s].[%s]", func_obj.schema_name, func_obj.function_name),
-            type = "function"
-          })
-        end
-      end
-      for _, syn_obj in ipairs(synonyms) do
-        if syn_obj.schema_name == schema_name then
-          table.insert(schema_objects, {
-            obj = syn_obj,
-            name = string.format("[%s].[%s]", syn_obj.schema_name, syn_obj.synonym_name),
-            type = "synonym"
-          })
-        end
-      end
-
-      -- Sort objects by name
-      table.sort(schema_objects, function(a, b)
-        return a.name < b.name
-      end)
-
-      -- Add reference nodes that point to the actual objects
-      for _, item in ipairs(schema_objects) do
-        local ref_node = BaseDbObject.new({
-          name = item.name,
-          parent = self_node,
-        })
-        ref_node.object_type = "object_reference"
-        ref_node.referenced_object = item.obj
-
-        -- Proxy methods to the referenced object for full functionality
-        ref_node.has_children = function(self_ref)
-          return self_ref.referenced_object:has_children()
-        end
-
-        ref_node.get_children = function(self_ref)
-          return self_ref.referenced_object:get_children()
-        end
-
-        ref_node.load = function(self_ref)
-          -- Load the referenced object
-          if self_ref.referenced_object.load then
-            return self_ref.referenced_object:load()
-          end
-          return true
-        end
-
-        -- Proxy all query generation methods for actions
-        ref_node.generate_select = function(self_ref, limit)
-          if self_ref.referenced_object.generate_select then
-            return self_ref.referenced_object:generate_select(limit)
-          end
-        end
-
-        ref_node.generate_exec = function(self_ref)
-          if self_ref.referenced_object.generate_exec then
-            return self_ref.referenced_object:generate_exec()
-          end
-        end
-
-        ref_node.generate_count = function(self_ref)
-          if self_ref.referenced_object.generate_count then
-            return self_ref.referenced_object:generate_count()
-          end
-        end
-
-        ref_node.generate_describe = function(self_ref)
-          if self_ref.referenced_object.generate_describe then
-            return self_ref.referenced_object:generate_describe()
-          end
-        end
-
-        ref_node.generate_insert = function(self_ref)
-          if self_ref.referenced_object.generate_insert then
-            return self_ref.referenced_object:generate_insert()
-          end
-        end
-
-        ref_node.generate_update = function(self_ref)
-          if self_ref.referenced_object.generate_update then
-            return self_ref.referenced_object:generate_update()
-          end
-        end
-
-        ref_node.generate_delete = function(self_ref)
-          if self_ref.referenced_object.generate_delete then
-            return self_ref.referenced_object:generate_delete()
-          end
-        end
-
-        ref_node.get_definition = function(self_ref)
-          if self_ref.referenced_object.get_definition then
-            return self_ref.referenced_object:get_definition()
-          end
-        end
-
-        -- Proxy methods for getting server/database/adapter
-        ref_node.get_server = function(self_ref)
-          return self_ref.referenced_object:get_server()
-        end
-
-        ref_node.get_database = function(self_ref)
-          return self_ref.referenced_object:get_database()
-        end
-
-        ref_node.get_adapter = function(self_ref)
-          return self_ref.referenced_object:get_adapter()
-        end
-
-        -- Proxy synonym resolve method for GO-TO action
-        ref_node.resolve = function(self_ref)
-          if self_ref.referenced_object.resolve then
-            return self_ref.referenced_object:resolve()
-          end
-        end
-
-        ref_node.is_loaded = false  -- Will be loaded on demand
-      end
-
-      self_node.is_loaded = true
-      return true
-    end
-  end
-
-  schemas_group.is_loaded = true
 end
 
 return DbClass

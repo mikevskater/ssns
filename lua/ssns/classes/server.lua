@@ -118,7 +118,7 @@ function ServerClass:connect()
   if config.completion and config.completion.eager_load then
     -- Load databases in background to avoid blocking
     vim.schedule(function()
-      -- Load databases (this will trigger eager loading of tables/views/procedures/functions/synonyms)
+      -- Load databases
       local load_success = self:load()
       if not load_success then
         -- Silent failure - metadata will be loaded on-demand if eager load fails
@@ -130,26 +130,18 @@ function ServerClass:connect()
         end
       end
 
-      -- For each database, trigger load() to populate tables/views/procedures/functions/synonyms
-      if load_success and self.children then
-        for _, child in ipairs(self.children) do
-          -- Skip non-database children (like "Databases (N)" group)
-          if child.object_type == "databases_group" and child.children then
-            for _, db in ipairs(child.children) do
-              if db.object_type == "database" then
-                vim.schedule(function()
-                  -- Database:load() eagerly loads tables/views/procedures/functions/synonyms
-                  local db_load_success = db:load()
-                  if not db_load_success and config.completion.debug then
-                    vim.notify(
-                      string.format("SSNS: Failed to eagerly load database '%s'", db.name),
-                      vim.log.levels.WARN
-                    )
-                  end
-                end)
-              end
+      -- For each database, trigger load() to populate objects
+      if load_success and self.databases then
+        for _, db in ipairs(self.databases) do
+          vim.schedule(function()
+            local db_load_success = db:load()
+            if not db_load_success and config.completion.debug then
+              vim.notify(
+                string.format("SSNS: Failed to eagerly load database '%s'", db.name),
+                vim.log.levels.WARN
+              )
             end
-          end
+          end)
         end
       end
     end)
@@ -173,7 +165,8 @@ function ServerClass:disconnect()
   self.last_connected_at = nil
 
   -- Clear loaded databases (will need to reconnect and reload)
-  self:clear_children()
+  self.databases = nil
+  self.is_loaded = false
 end
 
 ---Toggle connection state (connect if disconnected, disconnect if connected)
@@ -216,21 +209,10 @@ function ServerClass:load()
     end
   end
 
-  -- Create UI structure similar to vim-dadbod-ui
-  self:clear_children()
+  -- Initialize databases array
+  self.databases = {}
 
-  -- TODO: Add "New Query" action node (Phase 6)
-
-  -- TODO: Add "Saved Queries (0)" group (Phase 6)
-
-  -- Create "Databases (N)" group
-  local databases_group = BaseDbObject.new({
-    name = "Databases",
-    parent = self,
-  })
-  databases_group.object_type = "databases_group"
-
-  -- Load databases
+  -- Load databases from adapter
   local success, query = pcall(self.adapter.get_databases_query, self.adapter)
   if not success then
     self.error_message = "Failed to get databases query: " .. tostring(query)
@@ -254,19 +236,15 @@ function ServerClass:load()
     return false
   end
 
-  -- Create database objects as children of the databases group
+  -- Create database objects in direct array (NOT in group container)
   for _, db_data in ipairs(databases) do
     local DbClass = require('ssns.classes.database')
     local db = DbClass.new({
       name = db_data.name,
-      parent = databases_group,
+      parent = self,  -- Parent is server directly
     })
-    -- Note: db is automatically added to databases_group.children by BaseDbObject.new()
+    table.insert(self.databases, db)
   end
-
-  -- Update the group name with count
-  databases_group.name = string.format("Databases (%d)", #databases_group.children)
-  databases_group.is_loaded = true
 
   self.is_loaded = true
   return true
@@ -279,32 +257,26 @@ function ServerClass:reload()
   local Connection = require('ssns.connection')
   Connection.invalidate_cache(self.connection_string)
 
-  self:clear_children()
+  -- Clear databases array and reset loaded state
+  self.databases = nil
+  self.is_loaded = false
   local load_success = self:load()
 
   -- Eagerly load metadata for completion if enabled
   local Config = require('ssns.config')
   local config = Config.get()
-  if config.completion and config.completion.eager_load and load_success and self.children then
-    -- For each database, trigger load() to populate tables/views/procedures/functions/synonyms
-    for _, child in ipairs(self.children) do
-      -- Skip non-database children (like "Databases (N)" group)
-      if child.object_type == "databases_group" and child.children then
-        for _, db in ipairs(child.children) do
-          if db.object_type == "database" then
-            vim.schedule(function()
-              -- Database:load() eagerly loads tables/views/procedures/functions/synonyms
-              local db_load_success = db:load()
-              if not db_load_success and config.completion.debug then
-                vim.notify(
-                  string.format("SSNS: Failed to eagerly load database '%s'", db.name),
-                  vim.log.levels.WARN
-                )
-              end
-            end)
-          end
+  if config.completion and config.completion.eager_load and load_success and self.databases then
+    -- For each database, trigger load() to populate objects
+    for _, db in ipairs(self.databases) do
+      vim.schedule(function()
+        local db_load_success = db:load()
+        if not db_load_success and config.completion.debug then
+          vim.notify(
+            string.format("SSNS: Failed to eagerly load database '%s'", db.name),
+            vim.log.levels.WARN
+          )
         end
-      end
+      end)
     end
   end
 
@@ -318,7 +290,7 @@ function ServerClass:find_database(database_name)
   return self:get_database(database_name)
 end
 
----Get a database by name, traversing the DatabasesGroup wrapper
+---Get a database by name
 ---@param database_name string
 ---@return DbClass?
 function ServerClass:get_database(database_name)
@@ -330,26 +302,11 @@ function ServerClass:get_database(database_name)
     end
   end
 
-  -- Find the DatabasesGroup in children
-  local databases_group = nil
-  for _, child in ipairs(self.children) do
-    if child.object_type == "databases_group" then
-      databases_group = child
-      break
-    end
-  end
-
-  if not databases_group then
-    return nil
-  end
-
-  -- Search the DatabasesGroup's children for the database by name (case-insensitive)
-  if databases_group.children then
-    local lower_database_name = database_name:lower()
-    for _, db in ipairs(databases_group.children) do
-      if db.name:lower() == lower_database_name then
-        return db
-      end
+  -- Search databases array directly (case-insensitive)
+  local lower_name = database_name:lower()
+  for _, db in ipairs(self.databases or {}) do
+    if db.name:lower() == lower_name then
+      return db
     end
   end
 
@@ -362,7 +319,7 @@ function ServerClass:get_databases()
   if not self.is_loaded then
     self:load()
   end
-  return self.children
+  return self.databases or {}
 end
 
 ---Get connection status indicator for UI
@@ -414,7 +371,7 @@ function ServerClass:to_string()
     self.name,
     self.connection_state,
     self:get_db_type() or "unknown",
-    #self.children
+    self.databases and #self.databases or 0
   )
 end
 

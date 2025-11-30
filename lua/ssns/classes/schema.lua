@@ -21,15 +21,13 @@ function SchemaClass.new(opts)
     parent = opts.parent,
   }), SchemaClass)
 
+  self.object_type = "schema"
   self.schema_name = opts.name
   self.tables = nil
   self.views = nil
   self.procedures = nil
   self.functions = nil
   self.synonyms = nil
-  self.object_groups = nil
-
-  -- Set appropriate icon for schema
 
   return self
 end
@@ -41,15 +39,15 @@ function SchemaClass:load()
     return true
   end
 
-  -- Load all object types
+  -- Load all object types into typed arrays
   self:load_tables()
   self:load_views()
   self:load_procedures()
   self:load_functions()
   self:load_synonyms()
 
-  -- Create object groups for UI display
-  self:create_object_groups()
+  -- NOTE: Removed create_object_groups() call
+  -- UI groups are now created on-demand during tree render()
 
   self.is_loaded = true
   return true
@@ -330,12 +328,12 @@ function SchemaClass:reload()
     Connection.invalidate_cache(server.connection_string)
   end
 
+  -- Clear typed arrays
   self.tables = nil
   self.views = nil
   self.procedures = nil
   self.functions = nil
   self.synonyms = nil
-  self:clear_children()
   self.is_loaded = false
   return self:load()
 end

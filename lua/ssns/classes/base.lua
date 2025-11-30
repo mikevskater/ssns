@@ -16,14 +16,14 @@ BaseDbObject.__index = BaseDbObject
 ---@field error string? Error message if loading failed
 
 ---Create a new BaseDbObject instance
----@param opts {name: string, parent: BaseDbObject?}
+---@param opts {name: string, parent: BaseDbObject?, skip_auto_add: boolean?}
 ---@return BaseDbObject
 function BaseDbObject.new(opts)
   local self = setmetatable({}, BaseDbObject)
 
   self.name = opts.name or ""
   self.parent = opts.parent
-  self.children = {}
+  self.children = {}  -- Used for ephemeral UI groups only, not for data storage
   self.is_loaded = false
 
   -- UI state separate from data
@@ -36,10 +36,9 @@ function BaseDbObject.new(opts)
     error = nil,
   }
 
-  -- If parent is provided, add this as a child
-  if self.parent then
-    self.parent:add_child(self)
-  end
+  -- NOTE: Removed auto-add to parent.children
+  -- Data classes now use typed arrays (databases[], tables[], etc.)
+  -- The children[] array is only used for ephemeral UI groups
 
   return self
 end
