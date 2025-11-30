@@ -261,11 +261,11 @@ local default_config = {
       collapsed = { fg = "#808080" },                      -- Gray
 
       -- Semantic highlighting (query buffers)
-      keyword = { fg = "#569CD6", bold = true },           -- Blue (SQL keywords)
+      keyword = { fg = "#56cdd6", bold = true },           -- Blue (SQL keywords)
       operator = { fg = "#D4D4D4" },                       -- Light gray (operators)
       string = { fg = "#CE9178" },                         -- Orange (string literals)
       number = { fg = "#B5CEA8" },                         -- Green (numeric literals)
-      alias = { fg = "#4EC9B0", italic = true },           -- Cyan italic (table aliases)
+      alias = { fg = "#0affce", italic = true },           -- Cyan italic (table aliases)
       unresolved = { fg = "#808080" },                     -- Gray (unresolved identifiers)
       comment = { fg = "#6A9955", italic = true },         -- Green italic (comments)
     },

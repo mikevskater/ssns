@@ -9,18 +9,35 @@ local ns_id = nil
 -- Track which buffers have semantic highlighting enabled
 local enabled_buffers = {}
 
+-- Pending highlight timers per buffer (for minimal debounce)
+local pending_timers = {}
+
+-- Debounce delay in ms (very short for responsiveness)
+local DEBOUNCE_MS = 10
+
 ---Setup the semantic highlighter (call once during plugin init)
 function SemanticHighlighter.setup()
   -- Create namespace for our highlights
   ns_id = vim.api.nvim_create_namespace(NAMESPACE)
+end
 
-  -- Register callback with StatementCache for debounced updates
-  local StatementCache = require('ssns.completion.statement_cache')
-  StatementCache.on_update(function(bufnr, cache)
-    -- Only update if this buffer has semantic highlighting enabled
-    if enabled_buffers[bufnr] then
-      SemanticHighlighter.update(bufnr, cache)
-    end
+---Schedule a highlight update with minimal debounce
+---@param bufnr number Buffer number
+local function schedule_update(bufnr)
+  -- Cancel existing timer
+  if pending_timers[bufnr] then
+    vim.fn.timer_stop(pending_timers[bufnr])
+    pending_timers[bufnr] = nil
+  end
+
+  -- Schedule new update with minimal debounce
+  pending_timers[bufnr] = vim.fn.timer_start(DEBOUNCE_MS, function()
+    pending_timers[bufnr] = nil
+    vim.schedule(function()
+      if vim.api.nvim_buf_is_valid(bufnr) and enabled_buffers[bufnr] then
+        SemanticHighlighter.update(bufnr)
+      end
+    end)
   end)
 end
 
@@ -34,32 +51,48 @@ function SemanticHighlighter.setup_buffer(bufnr)
     return
   end
 
+  -- Already enabled for this buffer
+  if enabled_buffers[bufnr] then
+    return
+  end
+
   -- Mark buffer as enabled
   enabled_buffers[bufnr] = true
 
-  -- Trigger initial highlight
-  vim.schedule(function()
-    if vim.api.nvim_buf_is_valid(bufnr) then
-      local StatementCache = require('ssns.completion.statement_cache')
-      local cache = StatementCache.get_or_build_cache(bufnr)
-      if cache then
-        SemanticHighlighter.update(bufnr, cache)
-      end
-    end
-  end)
-
-  -- Clean up on buffer delete
+  -- Attach to buffer for text change events
   vim.api.nvim_buf_attach(bufnr, false, {
-    on_detach = function()
-      enabled_buffers[bufnr] = nil
+    on_lines = function(_, buf, _, _, _, _)
+      -- Trigger highlight update on any text change
+      if enabled_buffers[buf] then
+        schedule_update(buf)
+      end
+    end,
+    on_detach = function(_, buf)
+      -- Clean up on buffer detach
+      enabled_buffers[buf] = nil
+      if pending_timers[buf] then
+        vim.fn.timer_stop(pending_timers[buf])
+        pending_timers[buf] = nil
+      end
     end,
   })
+
+  -- Trigger initial highlight immediately
+  vim.schedule(function()
+    if vim.api.nvim_buf_is_valid(bufnr) then
+      SemanticHighlighter.update(bufnr)
+    end
+  end)
 end
 
 ---Disable semantic highlighting for a buffer
 ---@param bufnr number Buffer number
 function SemanticHighlighter.disable_buffer(bufnr)
   enabled_buffers[bufnr] = nil
+  if pending_timers[bufnr] then
+    vim.fn.timer_stop(pending_timers[bufnr])
+    pending_timers[bufnr] = nil
+  end
   SemanticHighlighter.clear(bufnr)
 end
 

@@ -35,6 +35,7 @@ local HIGHLIGHT_MAP = {
   view = "SsnsView",
   procedure = "SsnsProcedure",
   ["function"] = "SsnsFunction",
+  synonym = "SsnsSynonym",
   column = "SsnsColumn",
   alias = "SsnsAlias",
   cte = "SsnsTable",      -- CTEs use table color
@@ -43,6 +44,11 @@ local HIGHLIGHT_MAP = {
   string = "SsnsString",
   number = "SsnsNumber",
   unresolved = "SsnsUnresolved",
+}
+
+-- Keywords that indicate the next identifier is a database name
+local DATABASE_CONTEXT_KEYWORDS = {
+  USE = true,
 }
 
 ---Classify all tokens in the buffer
@@ -57,6 +63,9 @@ function Classifier.classify(tokens, chunks, connection, config)
   -- Build index for quick chunk lookup by position
   local chunk_index = Classifier._build_chunk_index(chunks)
 
+  -- Track the last keyword for context (only for USE database detection)
+  local last_keyword = nil
+
   -- Gather multi-part identifiers (sequences of IDENTIFIER/BRACKET_ID separated by DOT)
   local i = 1
   while i <= #tokens do
@@ -65,6 +74,9 @@ function Classifier.classify(tokens, chunks, connection, config)
 
     if token.type == TOKEN_TYPES.KEYWORD or token.type == TOKEN_TYPES.GO then
       -- SQL keyword
+      local keyword_upper = token.text:upper()
+      last_keyword = keyword_upper
+
       if config.highlight_keywords then
         result = {
           token = token,
@@ -106,11 +118,19 @@ function Classifier.classify(tokens, chunks, connection, config)
       local parts, consumed = Classifier._gather_multipart(tokens, i)
       local chunk = Classifier._find_chunk_at_position(chunk_index, token.line, token.col)
 
-      -- Classify each part
-      local part_results = Classifier._classify_multipart(parts, chunk, connection, config)
+      -- Build keyword context (only for USE database detection)
+      local keyword_context = {
+        is_database_context = last_keyword and DATABASE_CONTEXT_KEYWORDS[last_keyword],
+      }
+
+      -- Classify each part by resolving against cache
+      local part_results = Classifier._classify_multipart(parts, chunk, connection, config, keyword_context)
       for _, part_result in ipairs(part_results) do
         table.insert(classified, part_result)
       end
+
+      -- Reset last_keyword after consuming identifier
+      last_keyword = nil
 
       i = i + consumed
       -- Skip adding result since we added directly
@@ -136,8 +156,13 @@ function Classifier.classify(tokens, chunks, connection, config)
       -- Variable/parameter - skip for now (could add SsnsVariable highlight)
       i = i + 1
 
+    elseif token.type == TOKEN_TYPES.SEMICOLON then
+      -- Semicolon resets keyword context (new statement)
+      last_keyword = nil
+      i = i + 1
+
     else
-      -- Other tokens (DOT, COMMA, PAREN, SEMICOLON, STAR) - skip
+      -- Other tokens (DOT, COMMA, PAREN, STAR) - skip
       i = i + 1
     end
 
@@ -184,14 +209,16 @@ function Classifier._gather_multipart(tokens, start_idx)
   return parts, i - start_idx
 end
 
----Classify a multi-part identifier
+---Classify a multi-part identifier by resolving each part against the cache
 ---@param parts Token[] Array of identifier tokens
 ---@param chunk StatementChunk? The statement chunk containing this identifier
 ---@param connection table? Connection context
 ---@param config SemanticHighlightingConfig Configuration
+---@param keyword_context table? Context from previous keywords {last_keyword, in_table_context, is_database_context}
 ---@return ClassifiedToken[] results Classified tokens for each part
-function Classifier._classify_multipart(parts, chunk, connection, config)
+function Classifier._classify_multipart(parts, chunk, connection, config, keyword_context)
   local results = {}
+  keyword_context = keyword_context or {}
 
   if #parts == 0 then
     return results
@@ -204,266 +231,604 @@ function Classifier._classify_multipart(parts, chunk, connection, config)
     table.insert(names, name)
   end
 
-  -- Build context for resolution
-  local context = Classifier._build_context(chunk)
+  -- Build context for resolution (aliases, CTEs, temp tables from chunk)
+  local sql_context = Classifier._build_context(chunk)
 
-  -- Classify based on number of parts
-  if #parts == 1 then
-    -- Single identifier: could be table, column, alias, CTE, or temp table
-    local result = Classifier._classify_single(parts[1], names[1], chunk, context, connection, config)
-    table.insert(results, result)
+  -- Resolve each part against the cache, building context as we go
+  local resolved_types = Classifier._resolve_multipart_from_cache(names, sql_context, connection, keyword_context)
 
-  elseif #parts == 2 then
-    -- Two parts: table.column OR schema.table
-    local part1_result, part2_result = Classifier._classify_two_parts(parts, names, chunk, context, connection, config)
-    table.insert(results, part1_result)
-    table.insert(results, part2_result)
+  -- Build results from resolved types
+  for i, part in ipairs(parts) do
+    local semantic_type = resolved_types[i] or "unresolved"
+    local highlight_group = nil
 
-  elseif #parts == 3 then
-    -- Three parts: schema.table.column OR database.schema.table
-    local results_array = Classifier._classify_three_parts(parts, names, chunk, context, connection, config)
-    for _, r in ipairs(results_array) do
-      table.insert(results, r)
+    -- Map semantic type to highlight group based on config
+    if semantic_type == "database" and config.highlight_databases then
+      highlight_group = HIGHLIGHT_MAP.database
+    elseif semantic_type == "schema" and config.highlight_schemas then
+      highlight_group = HIGHLIGHT_MAP.schema
+    elseif semantic_type == "table" and config.highlight_tables then
+      highlight_group = HIGHLIGHT_MAP.table
+    elseif semantic_type == "view" and config.highlight_tables then
+      highlight_group = HIGHLIGHT_MAP.view
+    elseif semantic_type == "column" and config.highlight_columns then
+      highlight_group = HIGHLIGHT_MAP.column
+    elseif semantic_type == "alias" and config.highlight_tables then
+      highlight_group = HIGHLIGHT_MAP.alias
+    elseif semantic_type == "cte" and config.highlight_tables then
+      highlight_group = HIGHLIGHT_MAP.cte
+    elseif semantic_type == "temp_table" and config.highlight_tables then
+      highlight_group = HIGHLIGHT_MAP.temp_table
+    elseif semantic_type == "procedure" then
+      highlight_group = HIGHLIGHT_MAP.procedure
+    elseif semantic_type == "function" then
+      highlight_group = HIGHLIGHT_MAP["function"]
+    elseif semantic_type == "synonym" then
+      highlight_group = HIGHLIGHT_MAP.synonym
+    elseif semantic_type == "unresolved" and config.highlight_unresolved then
+      highlight_group = HIGHLIGHT_MAP.unresolved
     end
 
-  elseif #parts == 4 then
-    -- Four parts: database.schema.table.column
-    local results_array = Classifier._classify_four_parts(parts, names, chunk, context, connection, config)
-    for _, r in ipairs(results_array) do
-      table.insert(results, r)
-    end
-
-  else
-    -- More than 4 parts: mark as unresolved
-    for _, part in ipairs(parts) do
-      table.insert(results, {
-        token = part,
-        semantic_type = "unresolved",
-        highlight_group = config.highlight_unresolved and HIGHLIGHT_MAP.unresolved or nil,
-      })
-    end
+    table.insert(results, {
+      token = part,
+      semantic_type = semantic_type,
+      highlight_group = highlight_group,
+    })
   end
 
   return results
 end
 
----Classify a single identifier
----@param token Token The token
----@param name string The identifier name (without brackets)
----@param chunk StatementChunk? Statement chunk
----@param context table Context with aliases, CTEs, temp tables
----@param connection table? Connection context
----@param config SemanticHighlightingConfig Configuration
----@return ClassifiedToken result
-function Classifier._classify_single(token, name, chunk, context, connection, config)
+---Scan the UI tree cache for an object by name
+---Returns the object type if found: "database", "schema", "table", "view", "procedure", "function"
+---@param name string Object name to search for (case-insensitive)
+---@return string? object_type The type if found, nil otherwise
+---@return table? object The found object (for database/table/view/etc) or parent database (for schema)
+---@return table? parent The parent object
+function Classifier._find_in_tree_cache(name)
+  local Cache = require('ssns.cache')
   local name_lower = name:lower()
 
-  -- Check if it's an alias
-  if context.aliases[name_lower] then
-    return {
-      token = token,
-      semantic_type = "alias",
-      highlight_group = config.highlight_tables and HIGHLIGHT_MAP.alias or nil,
-    }
-  end
+  -- Scan all servers
+  for _, server in ipairs(Cache.servers or {}) do
+    -- Find databases_group
+    if server.children then
+      for _, server_child in ipairs(server.children) do
+        if server_child.object_type == "databases_group" and server_child.children then
+          -- Check each database
+          for _, db in ipairs(server_child.children) do
+            if db.object_type == "database" then
+              local db_name = db.db_name or db.name
+              if db_name and db_name:lower() == name_lower then
+                return "database", db, server
+              end
 
-  -- Check if it's a CTE name
-  if context.ctes[name_lower] then
-    return {
-      token = token,
-      semantic_type = "cte",
-      highlight_group = config.highlight_tables and HIGHLIGHT_MAP.cte or nil,
-    }
-  end
-
-  -- Check if it's a temp table
-  if name:match("^#") or context.temp_tables[name_lower] then
-    return {
-      token = token,
-      semantic_type = "temp_table",
-      highlight_group = config.highlight_tables and HIGHLIGHT_MAP.temp_table or nil,
-    }
-  end
-
-  -- Check if it's a known table name in the chunk
-  for _, tbl in ipairs(context.tables) do
-    local tbl_name = tbl.name or tbl.table
-    if tbl_name and tbl_name:lower() == name_lower then
-      return {
-        token = token,
-        semantic_type = "table",
-        highlight_group = config.highlight_tables and HIGHLIGHT_MAP.table or nil,
-      }
+              -- Check inside database for tables/views/procedures/functions
+              if db.children then
+                for _, db_child in ipairs(db.children) do
+                  -- Check tables_group
+                  if db_child.object_type == "tables_group" and db_child.children then
+                    for _, tbl in ipairs(db_child.children) do
+                      local tbl_name = tbl.table_name or tbl.name
+                      if tbl_name and tbl_name:lower() == name_lower then
+                        return "table", tbl, db
+                      end
+                      -- Also check if name matches a schema_name (schema is a property, not an object)
+                      local schema_name = tbl.schema_name
+                      if schema_name and schema_name:lower() == name_lower then
+                        return "schema", db, server  -- Return db as the object for schema context
+                      end
+                    end
+                  -- Check views_group
+                  elseif db_child.object_type == "views_group" and db_child.children then
+                    for _, view in ipairs(db_child.children) do
+                      local view_name = view.view_name or view.name
+                      if view_name and view_name:lower() == name_lower then
+                        return "view", view, db
+                      end
+                      local schema_name = view.schema_name
+                      if schema_name and schema_name:lower() == name_lower then
+                        return "schema", db, server
+                      end
+                    end
+                  -- Check procedures_group
+                  elseif db_child.object_type == "procedures_group" and db_child.children then
+                    for _, proc in ipairs(db_child.children) do
+                      local proc_name = proc.procedure_name or proc.name
+                      if proc_name and proc_name:lower() == name_lower then
+                        return "procedure", proc, db
+                      end
+                      local schema_name = proc.schema_name
+                      if schema_name and schema_name:lower() == name_lower then
+                        return "schema", db, server
+                      end
+                    end
+                  -- Check functions_group
+                  elseif db_child.object_type == "functions_group" and db_child.children then
+                    for _, func in ipairs(db_child.children) do
+                      local func_name = func.function_name or func.name
+                      if func_name and func_name:lower() == name_lower then
+                        return "function", func, db
+                      end
+                      local schema_name = func.schema_name
+                      if schema_name and schema_name:lower() == name_lower then
+                        return "schema", db, server
+                      end
+                    end
+                  -- Check synonyms_group
+                  elseif db_child.object_type == "synonyms_group" and db_child.children then
+                    for _, syn in ipairs(db_child.children) do
+                      local syn_name = syn.synonym_name or syn.name
+                      if syn_name and syn_name:lower() == name_lower then
+                        return "synonym", syn, db
+                      end
+                      local schema_name = syn.schema_name
+                      if schema_name and schema_name:lower() == name_lower then
+                        return "schema", db, server
+                      end
+                    end
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
     end
   end
 
-  -- Check if it's a column from any table in scope
-  if config.highlight_columns and Classifier._is_column_in_scope(name, context, connection) then
-    return {
-      token = token,
-      semantic_type = "column",
-      highlight_group = HIGHLIGHT_MAP.column,
-    }
-  end
-
-  -- Try to resolve against database
-  if connection and connection.database then
-    local resolved = Classifier._resolve_identifier(name, connection)
-    if resolved then
-      return {
-        token = token,
-        semantic_type = resolved.type,
-        highlight_group = HIGHLIGHT_MAP[resolved.type],
-      }
-    end
-  end
-
-  -- Unresolved
-  return {
-    token = token,
-    semantic_type = "unresolved",
-    highlight_group = config.highlight_unresolved and HIGHLIGHT_MAP.unresolved or nil,
-  }
+  return nil, nil, nil
 end
 
----Classify two-part identifier (table.column or schema.table)
----@return ClassifiedToken part1, ClassifiedToken part2
-function Classifier._classify_two_parts(parts, names, chunk, context, connection, config)
+---Scan for schema in a specific database (checks schema_name property on tables/views/etc)
+---@param db table Database object
+---@param name string Schema name
+---@return boolean found True if schema exists in this database
+function Classifier._find_schema_in_db(db, name)
+  local name_lower = name:lower()
+  if db.children then
+    for _, db_child in ipairs(db.children) do
+      if db_child.object_type == "tables_group" and db_child.children then
+        for _, tbl in ipairs(db_child.children) do
+          if tbl.schema_name and tbl.schema_name:lower() == name_lower then
+            return true
+          end
+        end
+      elseif db_child.object_type == "views_group" and db_child.children then
+        for _, view in ipairs(db_child.children) do
+          if view.schema_name and view.schema_name:lower() == name_lower then
+            return true
+          end
+        end
+      elseif db_child.object_type == "procedures_group" and db_child.children then
+        for _, proc in ipairs(db_child.children) do
+          if proc.schema_name and proc.schema_name:lower() == name_lower then
+            return true
+          end
+        end
+      elseif db_child.object_type == "functions_group" and db_child.children then
+        for _, func in ipairs(db_child.children) do
+          if func.schema_name and func.schema_name:lower() == name_lower then
+            return true
+          end
+        end
+      elseif db_child.object_type == "synonyms_group" and db_child.children then
+        for _, syn in ipairs(db_child.children) do
+          if syn.schema_name and syn.schema_name:lower() == name_lower then
+            return true
+          end
+        end
+      end
+    end
+  end
+  return false
+end
+
+---Scan for table/view in a specific database with optional schema filter
+---@param db table Database object
+---@param name string Table/view name
+---@param schema_name string? Optional schema name to filter by
+---@return string? type "table" or "view"
+---@return table? object The table/view if found
+function Classifier._find_table_in_db(db, name, schema_name)
+  local name_lower = name:lower()
+  local schema_lower = schema_name and schema_name:lower()
+
+  if db.children then
+    for _, db_child in ipairs(db.children) do
+      if db_child.object_type == "tables_group" and db_child.children then
+        for _, tbl in ipairs(db_child.children) do
+          local tbl_name = tbl.table_name or tbl.name
+          if tbl_name and tbl_name:lower() == name_lower then
+            -- If schema filter provided, check it matches
+            if not schema_lower or (tbl.schema_name and tbl.schema_name:lower() == schema_lower) then
+              return "table", tbl
+            end
+          end
+        end
+      elseif db_child.object_type == "views_group" and db_child.children then
+        for _, view in ipairs(db_child.children) do
+          local view_name = view.view_name or view.name
+          if view_name and view_name:lower() == name_lower then
+            if not schema_lower or (view.schema_name and view.schema_name:lower() == schema_lower) then
+              return "view", view
+            end
+          end
+        end
+      end
+    end
+  end
+  return nil, nil
+end
+
+---Scan for procedure/function in a specific database with optional schema filter
+---@param db table Database object
+---@param name string Procedure/function name
+---@param schema_name string? Optional schema name to filter by
+---@return string? type "procedure" or "function"
+---@return table? object The procedure/function if found
+function Classifier._find_routine_in_db(db, name, schema_name)
+  local name_lower = name:lower()
+  local schema_lower = schema_name and schema_name:lower()
+
+  if db.children then
+    for _, db_child in ipairs(db.children) do
+      if db_child.object_type == "procedures_group" and db_child.children then
+        for _, proc in ipairs(db_child.children) do
+          local proc_name = proc.procedure_name or proc.name
+          if proc_name and proc_name:lower() == name_lower then
+            if not schema_lower or (proc.schema_name and proc.schema_name:lower() == schema_lower) then
+              return "procedure", proc
+            end
+          end
+        end
+      elseif db_child.object_type == "functions_group" and db_child.children then
+        for _, func in ipairs(db_child.children) do
+          local func_name = func.function_name or func.name
+          if func_name and func_name:lower() == name_lower then
+            if not schema_lower or (func.schema_name and func.schema_name:lower() == schema_lower) then
+              return "function", func
+            end
+          end
+        end
+      end
+    end
+  end
+  return nil, nil
+end
+
+---Scan for synonym in a specific database with optional schema filter
+---@param db table Database object
+---@param name string Synonym name
+---@param schema_name string? Optional schema name to filter by
+---@return table? object The synonym if found
+function Classifier._find_synonym_in_db(db, name, schema_name)
+  local name_lower = name:lower()
+  local schema_lower = schema_name and schema_name:lower()
+
+  if db.children then
+    for _, db_child in ipairs(db.children) do
+      if db_child.object_type == "synonyms_group" and db_child.children then
+        for _, syn in ipairs(db_child.children) do
+          local syn_name = syn.synonym_name or syn.name
+          if syn_name and syn_name:lower() == name_lower then
+            if not schema_lower or (syn.schema_name and syn.schema_name:lower() == schema_lower) then
+              return syn
+            end
+          end
+        end
+      end
+    end
+  end
+  return nil
+end
+
+---Check if a column exists in a table/view object
+---@param obj table Table or view object
+---@param column_name string Column name to find
+---@return boolean found True if column exists
+function Classifier._find_column_in_object(obj, column_name)
+  if not obj then
+    return false
+  end
+
+  local name_lower = column_name:lower()
+
+  -- Check columns array (may need to be loaded)
+  if obj.columns then
+    for _, col in ipairs(obj.columns) do
+      local col_name = col.column_name or col.name
+      if col_name and col_name:lower() == name_lower then
+        return true
+      end
+    end
+  end
+
+  -- Check children for column_group containing columns
+  if obj.children then
+    for _, child in ipairs(obj.children) do
+      if child.object_type == "column_group" and child.children then
+        for _, col in ipairs(child.children) do
+          local col_name = col.column_name or col.name
+          if col_name and col_name:lower() == name_lower then
+            return true
+          end
+        end
+      elseif child.object_type == "column" then
+        local col_name = child.column_name or child.name
+        if col_name and col_name:lower() == name_lower then
+          return true
+        end
+      end
+    end
+  end
+
+  return false
+end
+
+---Find all columns across all loaded tables/views in the cache
+---@param column_name string Column name to search for
+---@return boolean found True if column exists anywhere
+function Classifier._find_column_in_cache(column_name)
+  local Cache = require('ssns.cache')
+  local name_lower = column_name:lower()
+
+  for _, server in ipairs(Cache.servers or {}) do
+    if server.children then
+      for _, server_child in ipairs(server.children) do
+        if server_child.object_type == "databases_group" and server_child.children then
+          for _, db in ipairs(server_child.children) do
+            if db.object_type == "database" and db.children then
+              for _, db_child in ipairs(db.children) do
+                -- Check tables
+                if db_child.object_type == "tables_group" and db_child.children then
+                  for _, tbl in ipairs(db_child.children) do
+                    if Classifier._find_column_in_object(tbl, column_name) then
+                      return true
+                    end
+                  end
+                -- Check views
+                elseif db_child.object_type == "views_group" and db_child.children then
+                  for _, view in ipairs(db_child.children) do
+                    if Classifier._find_column_in_object(view, column_name) then
+                      return true
+                    end
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+
+  return false
+end
+
+---Resolve multi-part identifier by scanning the UI tree cache
+---@param names string[] Array of identifier names (without brackets)
+---@param sql_context table Context with aliases, CTEs, temp tables
+---@param connection table? Connection context
+---@param keyword_context table? Keyword context
+---@return string[] types Array of semantic types for each part
+function Classifier._resolve_multipart_from_cache(names, sql_context, connection, keyword_context)
+  local types = {}
+  keyword_context = keyword_context or {}
+
+  if #names == 0 then
+    return types
+  end
+
   local name1 = names[1]
-  local name2 = names[2]
   local name1_lower = name1:lower()
-  local name2_lower = name2:lower()
 
-  -- Check if first part is an alias -> alias.column
-  if context.aliases[name1_lower] then
-    return {
-      token = parts[1],
-      semantic_type = "alias",
-      highlight_group = config.highlight_tables and HIGHLIGHT_MAP.alias or nil,
-    }, {
-      token = parts[2],
-      semantic_type = "column",
-      highlight_group = config.highlight_columns and HIGHLIGHT_MAP.column or nil,
-    }
+  -- Special case: after USE keyword, first part is always database
+  if keyword_context.is_database_context and #names == 1 then
+    return { "database" }
   end
 
-  -- Check if first part is a CTE -> cte.column
-  if context.ctes[name1_lower] then
-    return {
-      token = parts[1],
-      semantic_type = "cte",
-      highlight_group = config.highlight_tables and HIGHLIGHT_MAP.cte or nil,
-    }, {
-      token = parts[2],
-      semantic_type = "column",
-      highlight_group = config.highlight_columns and HIGHLIGHT_MAP.column or nil,
-    }
+  -- Check local SQL context first (aliases, CTEs, temp tables)
+  -- These take precedence over database objects
+
+  -- Check if first part is an alias
+  if sql_context.aliases[name1_lower] then
+    types[1] = "alias"
+    for i = 2, #names do
+      types[i] = "column"
+    end
+    return types
   end
 
-  -- Check if first part is a table in scope -> table.column
-  for _, tbl in ipairs(context.tables) do
+  -- Check if first part is a CTE
+  if sql_context.ctes[name1_lower] then
+    types[1] = "cte"
+    for i = 2, #names do
+      types[i] = "column"
+    end
+    return types
+  end
+
+  -- Check if first part is a temp table
+  if name1:match("^#") or sql_context.temp_tables[name1_lower] then
+    types[1] = "temp_table"
+    for i = 2, #names do
+      types[i] = "column"
+    end
+    return types
+  end
+
+  -- Scan the UI tree cache for the first part
+  local obj_type, obj, parent = Classifier._find_in_tree_cache(name1)
+
+  if obj_type == "database" then
+    types[1] = "database"
+
+    if #names >= 2 then
+      -- Second part: look for schema in this database
+      local schema_found = Classifier._find_schema_in_db(obj, names[2])
+      if schema_found then
+        types[2] = "schema"
+
+        if #names >= 3 then
+          -- Third part: look for table/view in this database with schema filter
+          local tbl_type, tbl_obj = Classifier._find_table_in_db(obj, names[3], names[2])
+          if tbl_type then
+            types[3] = tbl_type
+
+            -- Verify columns exist
+            if #names >= 4 and tbl_obj then
+              for i = 4, #names do
+                if Classifier._find_column_in_object(tbl_obj, names[i]) then
+                  types[i] = "column"
+                else
+                  types[i] = "unresolved"
+                end
+              end
+            elseif #names >= 4 then
+              for i = 4, #names do
+                types[i] = "column"  -- Can't verify, assume column
+              end
+            end
+          else
+            -- Check for procedure/function/synonym
+            local routine_type, _ = Classifier._find_routine_in_db(obj, names[3], names[2])
+            if routine_type then
+              types[3] = routine_type
+            else
+              local syn = Classifier._find_synonym_in_db(obj, names[3], names[2])
+              types[3] = syn and "synonym" or "unresolved"
+            end
+            for i = 4, #names do
+              types[i] = "unresolved"
+            end
+          end
+        end
+      else
+        -- Schema not found, mark as unresolved
+        types[2] = "unresolved"
+        for i = 3, #names do
+          types[i] = "unresolved"
+        end
+      end
+    end
+    return types
+
+  elseif obj_type == "schema" then
+    -- obj is the database containing this schema
+    types[1] = "schema"
+
+    if #names >= 2 then
+      -- Second part: look for table/view in the database with this schema
+      local tbl_type, tbl_obj = Classifier._find_table_in_db(obj, names[2], name1)
+      if tbl_type then
+        types[2] = tbl_type
+
+        -- Verify columns exist in this table/view
+        if #names >= 3 and tbl_obj then
+          for i = 3, #names do
+            if Classifier._find_column_in_object(tbl_obj, names[i]) then
+              types[i] = "column"
+            else
+              types[i] = "unresolved"
+            end
+          end
+        elseif #names >= 3 then
+          for i = 3, #names do
+            types[i] = "column"  -- Can't verify, assume column
+          end
+        end
+      else
+        -- Check procedures/functions
+        local routine_type, _ = Classifier._find_routine_in_db(obj, names[2], name1)
+        if routine_type then
+          types[2] = routine_type
+          for i = 3, #names do
+            types[i] = "unresolved"  -- Procedures/functions don't have columns
+          end
+        else
+          -- Check synonyms
+          local syn = Classifier._find_synonym_in_db(obj, names[2], name1)
+          if syn then
+            types[2] = "synonym"
+            for i = 3, #names do
+              types[i] = "column"  -- Synonyms might have columns
+            end
+          else
+            types[2] = "unresolved"
+            for i = 3, #names do
+              types[i] = "unresolved"
+            end
+          end
+        end
+      end
+    end
+    return types
+
+  elseif obj_type == "synonym" then
+    types[1] = "synonym"
+    -- For synonyms, we can't easily check columns without resolving the base object
+    -- Mark remaining parts as column (they might be valid)
+    for i = 2, #names do
+      types[i] = "column"
+    end
+    return types
+
+  elseif obj_type == "table" or obj_type == "view" then
+    types[1] = obj_type
+    -- Verify columns exist in this table/view
+    for i = 2, #names do
+      if Classifier._find_column_in_object(obj, names[i]) then
+        types[i] = "column"
+      else
+        -- Column not found - mark as unresolved
+        types[i] = "unresolved"
+      end
+    end
+    return types
+
+  elseif obj_type == "procedure" then
+    types[1] = "procedure"
+    for i = 2, #names do
+      types[i] = "unresolved"
+    end
+    return types
+
+  elseif obj_type == "function" then
+    types[1] = "function"
+    for i = 2, #names do
+      types[i] = "unresolved"
+    end
+    return types
+  end
+
+  -- Check if first part is a table from the SQL chunk's tables list
+  for _, tbl in ipairs(sql_context.tables or {}) do
     local tbl_name = tbl.name or tbl.table
-    if tbl_name and tbl_name:lower() == name1_lower then
-      return {
-        token = parts[1],
-        semantic_type = "table",
-        highlight_group = config.highlight_tables and HIGHLIGHT_MAP.table or nil,
-      }, {
-        token = parts[2],
-        semantic_type = "column",
-        highlight_group = config.highlight_columns and HIGHLIGHT_MAP.column or nil,
-      }
+    if tbl_name then
+      local simple_name = tbl_name:match("%.([^%.]+)$") or tbl_name
+      if simple_name:lower() == name1_lower then
+        types[1] = "table"
+        for i = 2, #names do
+          types[i] = "column"
+        end
+        return types
+      end
     end
   end
 
-  -- Assume schema.table pattern
-  return {
-    token = parts[1],
-    semantic_type = "schema",
-    highlight_group = config.highlight_schemas and HIGHLIGHT_MAP.schema or nil,
-  }, {
-    token = parts[2],
-    semantic_type = "table",
-    highlight_group = config.highlight_tables and HIGHLIGHT_MAP.table or nil,
-  }
-end
-
----Classify three-part identifier
----@return ClassifiedToken[] results
-function Classifier._classify_three_parts(parts, names, chunk, context, connection, config)
-  local name1 = names[1]
-  local name2 = names[2]
-  local name1_lower = name1:lower()
-  local name2_lower = name2:lower()
-
-  -- Check if first part is an alias/table -> alias.*.column (error, but handle)
-  -- More likely: schema.table.column
-  if context.aliases[name1_lower] or context.ctes[name1_lower] then
-    -- alias.something.column - first is alias, second is unknown, third is column
-    return {
-      {
-        token = parts[1],
-        semantic_type = "alias",
-        highlight_group = config.highlight_tables and HIGHLIGHT_MAP.alias or nil,
-      },
-      {
-        token = parts[2],
-        semantic_type = "unresolved",
-        highlight_group = config.highlight_unresolved and HIGHLIGHT_MAP.unresolved or nil,
-      },
-      {
-        token = parts[3],
-        semantic_type = "column",
-        highlight_group = config.highlight_columns and HIGHLIGHT_MAP.column or nil,
-      },
-    }
+  -- Check if first part is a column name in any loaded table
+  if #names == 1 and Classifier._find_column_in_cache(name1) then
+    types[1] = "column"
+    return types
   end
 
-  -- Default: schema.table.column
-  return {
-    {
-      token = parts[1],
-      semantic_type = "schema",
-      highlight_group = config.highlight_schemas and HIGHLIGHT_MAP.schema or nil,
-    },
-    {
-      token = parts[2],
-      semantic_type = "table",
-      highlight_group = config.highlight_tables and HIGHLIGHT_MAP.table or nil,
-    },
-    {
-      token = parts[3],
-      semantic_type = "column",
-      highlight_group = config.highlight_columns and HIGHLIGHT_MAP.column or nil,
-    },
-  }
-end
+  -- Nothing matched in tree or context - mark all as unresolved
+  for i = 1, #names do
+    types[i] = "unresolved"
+  end
 
----Classify four-part identifier (database.schema.table.column)
----@return ClassifiedToken[] results
-function Classifier._classify_four_parts(parts, names, chunk, context, connection, config)
-  return {
-    {
-      token = parts[1],
-      semantic_type = "database",
-      highlight_group = config.highlight_databases and HIGHLIGHT_MAP.database or nil,
-    },
-    {
-      token = parts[2],
-      semantic_type = "schema",
-      highlight_group = config.highlight_schemas and HIGHLIGHT_MAP.schema or nil,
-    },
-    {
-      token = parts[3],
-      semantic_type = "table",
-      highlight_group = config.highlight_tables and HIGHLIGHT_MAP.table or nil,
-    },
-    {
-      token = parts[4],
-      semantic_type = "column",
-      highlight_group = config.highlight_columns and HIGHLIGHT_MAP.column or nil,
-    },
-  }
+  return types
 end
 
 ---Build context from statement chunk
@@ -546,70 +911,6 @@ function Classifier._strip_brackets(text)
   name = name:gsub('^"(.-)"$', "%1")
   name = name:gsub("^`(.-)`$", "%1")
   return name
-end
-
----Check if a name is a column in any table in scope
----@param name string Column name
----@param context table Context with tables
----@param connection table? Connection context
----@return boolean
-function Classifier._is_column_in_scope(name, context, connection)
-  if not connection or not connection.database then
-    return false
-  end
-
-  -- Check columns from tables in scope
-  for _, tbl in ipairs(context.tables) do
-    -- If table has inline columns (CTEs, subqueries, temp tables)
-    if tbl.columns then
-      for _, col in ipairs(tbl.columns) do
-        local col_name = type(col) == "table" and col.name or col
-        if col_name and col_name:lower() == name:lower() then
-          return true
-        end
-      end
-    end
-  end
-
-  return false
-end
-
----Resolve identifier against database
----@param name string Identifier name
----@param connection table Connection context
----@return table? resolved { type = "table"|"view"|"schema"|"database"|"procedure"|"function" }
-function Classifier._resolve_identifier(name, connection)
-  if not connection or not connection.database then
-    return nil
-  end
-
-  local Cache = require('ssns.cache')
-
-  -- Try to find as table
-  local table_obj = Cache.find_table(name)
-  if table_obj then
-    return { type = "table" }
-  end
-
-  -- Try to find as view
-  local view_obj = Cache.find_view and Cache.find_view(name)
-  if view_obj then
-    return { type = "view" }
-  end
-
-  -- Try to find as schema
-  local schema_obj = Cache.find_schema and Cache.find_schema(name)
-  if schema_obj then
-    return { type = "schema" }
-  end
-
-  -- Try to find as database
-  local database_obj = Cache.find_database and Cache.find_database(name)
-  if database_obj then
-    return { type = "database" }
-  end
-
-  return nil
 end
 
 return Classifier
