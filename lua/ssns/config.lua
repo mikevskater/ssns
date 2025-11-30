@@ -9,6 +9,7 @@
 ---@field performance PerformanceConfig Performance tuning options
 ---@field lualine LualineConfig Lualine statusline integration
 ---@field completion CompletionConfig IntelliSense completion configuration
+---@field semantic_highlighting SemanticHighlightingConfig Semantic highlighting configuration
 
 ---@class UiConfig
 ---@field position string Window position: "left", "right", "float"
@@ -121,6 +122,15 @@
 ---@field usage_auto_save boolean Auto-save usage data (default: true)
 ---@field usage_save_interval number Auto-save interval in seconds (default: 30)
 ---@field usage_max_items number Maximum items to track per type (default: 10000, 0 = unlimited)
+
+---@class SemanticHighlightingConfig
+---@field enabled boolean Enable/disable semantic highlighting (default: true)
+---@field highlight_keywords boolean Highlight SQL keywords (default: true)
+---@field highlight_columns boolean Highlight column names (default: true)
+---@field highlight_tables boolean Highlight table names (default: true)
+---@field highlight_schemas boolean Highlight schema names (default: true)
+---@field highlight_databases boolean Highlight database names (default: true)
+---@field highlight_unresolved boolean Highlight unresolved identifiers (default: true)
 
 ---Default configuration
 ---@type SsnsConfig
@@ -249,6 +259,15 @@ local default_config = {
       -- Tree expand/collapse indicators
       expanded = { fg = "#808080" },                       -- Gray
       collapsed = { fg = "#808080" },                      -- Gray
+
+      -- Semantic highlighting (query buffers)
+      keyword = { fg = "#569CD6", bold = true },           -- Blue (SQL keywords)
+      operator = { fg = "#D4D4D4" },                       -- Light gray (operators)
+      string = { fg = "#CE9178" },                         -- Orange (string literals)
+      number = { fg = "#B5CEA8" },                         -- Green (numeric literals)
+      alias = { fg = "#4EC9B0", italic = true },           -- Cyan italic (table aliases)
+      unresolved = { fg = "#808080" },                     -- Gray (unresolved identifiers)
+      comment = { fg = "#6A9955", italic = true },         -- Green italic (comments)
     },
   },
 
@@ -378,6 +397,17 @@ local default_config = {
     usage_save_interval = 30,    -- Auto-save interval in seconds
     usage_max_items = 10000,     -- Maximum items to track per type (0 = unlimited)
   },
+
+  -- Semantic highlighting for SQL query buffers
+  semantic_highlighting = {
+    enabled = true,              -- Enable/disable semantic highlighting
+    highlight_keywords = true,   -- Highlight SQL keywords (SELECT, FROM, etc.)
+    highlight_columns = true,    -- Highlight column names
+    highlight_tables = true,     -- Highlight table names
+    highlight_schemas = true,    -- Highlight schema names
+    highlight_databases = true,  -- Highlight database names
+    highlight_unresolved = true, -- Highlight unresolved identifiers in gray
+  },
 }
 
 ---@class Config
@@ -480,6 +510,12 @@ end
 ---@return FiltersConfig
 function Config.get_filters()
   return Config.current.ui.filters
+end
+
+---Get semantic highlighting configuration
+---@return SemanticHighlightingConfig
+function Config.get_semantic_highlighting()
+  return Config.current.semantic_highlighting
 end
 
 ---Validate configuration

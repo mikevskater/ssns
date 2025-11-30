@@ -51,6 +51,10 @@ function Ssns.setup(user_config)
   Highlights.setup()
   Highlights.setup_filetype()
 
+  -- Setup semantic highlighting for SQL query buffers
+  local SemanticHighlighter = require('ssns.highlighting.semantic')
+  SemanticHighlighter.setup()
+
   -- Initialize query history
   local QueryHistory = require('ssns.query_history')
   local config = Config.get()
@@ -80,6 +84,13 @@ function Ssns.setup(user_config)
         silent = true,
         desc = 'Expand asterisk (Columns Expand)'
       })
+
+      -- Enable semantic highlighting for SQL files
+      local sh_config = Config.get_semantic_highlighting()
+      if sh_config.enabled then
+        local SemanticHighlighter = require('ssns.highlighting.semantic')
+        SemanticHighlighter.setup_buffer(bufnr)
+      end
     end,
   })
 end
@@ -246,6 +257,14 @@ function Ssns._register_commands()
   end, {
     nargs = 0,
     desc = "Toggle usage tracking on/off",
+  })
+
+  -- :SSNSHighlightToggle - Toggle semantic highlighting on/off for current buffer
+  vim.api.nvim_create_user_command("SSNSHighlightToggle", function()
+    Ssns.toggle_semantic_highlighting()
+  end, {
+    nargs = 0,
+    desc = "Toggle semantic highlighting for current buffer",
   })
 
   -- Testing Framework Commands
@@ -963,6 +982,20 @@ function Ssns.toggle_usage_tracking()
   -- Notify user
   local status = config.completion.track_usage and "enabled" or "disabled"
   vim.notify(string.format("Usage tracking %s", status), vim.log.levels.INFO)
+end
+
+---Toggle semantic highlighting for current buffer
+function Ssns.toggle_semantic_highlighting()
+  local SemanticHighlighter = require('ssns.highlighting.semantic')
+  local bufnr = vim.api.nvim_get_current_buf()
+
+  if SemanticHighlighter.is_enabled(bufnr) then
+    SemanticHighlighter.disable_buffer(bufnr)
+    vim.notify("Semantic highlighting disabled for this buffer", vim.log.levels.INFO)
+  else
+    SemanticHighlighter.setup_buffer(bufnr)
+    vim.notify("Semantic highlighting enabled for this buffer", vim.log.levels.INFO)
+  end
 end
 
 ---Run all IntelliSense tests

@@ -18,6 +18,9 @@ local StatementCache = {}
 -- Private cache storage: bufnr -> BufferStatementCache
 local _cache = {}
 
+-- Callbacks to invoke after cache update: array of functions(bufnr, cache)
+local _update_callbacks = {}
+
 -- Forward declaration for mutual recursion
 local expand_subquery_columns
 
@@ -261,6 +264,12 @@ local pending_timers = {}
 -- Autocmd group for change listeners
 local augroup = nil
 
+---Register a callback to be called after cache updates
+---@param callback fun(bufnr: number, cache: BufferStatementCache) Callback function
+function StatementCache.on_update(callback)
+  table.insert(_update_callbacks, callback)
+end
+
 ---Initialize the cache system (call once on plugin setup)
 function StatementCache.setup()
   -- Create augroup for autocmds
@@ -390,6 +399,17 @@ function StatementCache._update_cache(bufnr)
     last_update = os.clock(),
     buffer_tick = tick,
   }
+
+  -- Notify registered callbacks
+  for _, callback in ipairs(_update_callbacks) do
+    local success, err = pcall(callback, bufnr, _cache[bufnr])
+    if not success then
+      -- Log error but don't break other callbacks
+      vim.schedule(function()
+        vim.notify(string.format("[SSNS] StatementCache callback error: %s", tostring(err)), vim.log.levels.DEBUG)
+      end)
+    end
+  end
 end
 
 ---Get or build cache for a buffer

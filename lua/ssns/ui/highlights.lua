@@ -55,6 +55,15 @@ function UiHighlights.setup()
   -- Tree expand/collapse indicators
   vim.api.nvim_set_hl(0, "SsnsExpanded", vim.tbl_extend("force", hl.expanded, { default = true }))
   vim.api.nvim_set_hl(0, "SsnsCollapsed", vim.tbl_extend("force", hl.collapsed, { default = true }))
+
+  -- Semantic highlighting for query buffers
+  vim.api.nvim_set_hl(0, "SsnsKeyword", hl.keyword or { fg = "#569CD6", bold = true })
+  vim.api.nvim_set_hl(0, "SsnsOperator", hl.operator or { fg = "#D4D4D4" })
+  vim.api.nvim_set_hl(0, "SsnsString", hl.string or { fg = "#CE9178" })
+  vim.api.nvim_set_hl(0, "SsnsNumber", hl.number or { fg = "#B5CEA8" })
+  vim.api.nvim_set_hl(0, "SsnsAlias", hl.alias or { fg = "#4EC9B0", italic = true })
+  vim.api.nvim_set_hl(0, "SsnsUnresolved", hl.unresolved or { fg = "#808080" })
+  vim.api.nvim_set_hl(0, "SsnsComment", hl.comment or { fg = "#6A9955", italic = true })
 end
 
 ---Apply highlights to buffer

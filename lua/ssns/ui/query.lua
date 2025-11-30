@@ -138,6 +138,10 @@ function UiQuery.create_query_buffer(server, database, sql, object_name)
   -- Set buffer-local keymaps
   UiQuery.setup_query_keymaps(bufnr)
 
+  -- Setup semantic highlighting for this buffer
+  local SemanticHighlighter = require('ssns.highlighting.semantic')
+  SemanticHighlighter.setup_buffer(bufnr)
+
   -- If SQL provided, prepend USE statement and set it in the buffer
   if sql then
     local final_sql = UiQuery.prepend_use_statement(sql, server, database)
