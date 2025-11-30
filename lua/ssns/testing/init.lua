@@ -132,6 +132,59 @@ function M.run_test(test_number, opts)
   return result
 end
 
+--- Run multiple tests by their numbers
+--- @param test_numbers number[] Array of test numbers to run
+--- @param opts table|nil Optional run configuration
+--- @return table Test results array
+function M.run_tests(test_numbers, opts)
+  opts = opts or {}
+
+  if not test_numbers or #test_numbers == 0 then
+    vim.notify("No test numbers provided", vim.log.levels.ERROR)
+    return {}
+  end
+
+  vim.notify(string.format("Running %d tests: %s", #test_numbers, table.concat(test_numbers, ", ")), vim.log.levels.INFO)
+
+  local results = {}
+
+  for i, test_number in ipairs(test_numbers) do
+    -- Find test by number
+    local test_path = runner.find_test_by_number(test_number)
+
+    if not test_path then
+      vim.notify(string.format("Test #%d not found, skipping", test_number), vim.log.levels.WARN)
+      table.insert(results, {
+        test_number = test_number,
+        passed = false,
+        error = "Test not found",
+      })
+    else
+      -- Progress indicator
+      if i % 5 == 0 or i == 1 then
+        vim.notify(string.format("Running test %d/%d (#%d)...", i, #test_numbers, test_number), vim.log.levels.INFO)
+      end
+
+      -- Run single test
+      local result = runner.run_single_test(test_path, opts)
+      table.insert(results, result)
+    end
+  end
+
+  -- Display results
+  reporter.display_results(results)
+
+  -- Write markdown report
+  local output_path = vim.fn.stdpath("data") .. "/ssns/test_batch_results.md"
+  local success = reporter.write_markdown(results, output_path)
+
+  if success then
+    vim.notify(string.format("Test results written to: %s", output_path), vim.log.levels.INFO)
+  end
+
+  return results
+end
+
 --- Run tests filtered by type
 --- @param completion_type string The completion type (table, column, schema, etc.)
 --- @param opts table|nil Optional run configuration

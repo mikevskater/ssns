@@ -264,7 +264,15 @@ function M.run_all_tests(opts)
   local reporter = require("ssns.testing.reporter")
 
   -- Scan for test files
-  local test_files = utils.scan_test_folders()
+  local all_test_files = utils.scan_test_folders()
+
+  -- Filter out unit tests (they have different format and should use unit_runner)
+  local test_files = {}
+  for _, test_file in ipairs(all_test_files) do
+    if not test_file.is_unit then
+      table.insert(test_files, test_file)
+    end
+  end
 
   if #test_files == 0 then
     vim.notify("No test files found", vim.log.levels.WARN)
@@ -363,13 +371,18 @@ function M.run_category_tests(category_folder, opts)
   -- Scan for all test files
   local all_test_files = utils.scan_test_folders()
 
-  -- Filter by category
+  -- Filter by category (excluding unit tests)
   local category_tests = {}
   for _, test_file in ipairs(all_test_files) do
+    -- Skip unit tests
+    if test_file.is_unit then
+      goto continue
+    end
     -- Match category with or without numeric prefix
     if test_file.category == category_folder or test_file.category:match("^%d+_" .. category_folder .. "$") then
       table.insert(category_tests, test_file)
     end
+    ::continue::
   end
 
   if #category_tests == 0 then
@@ -402,8 +415,14 @@ end
 function M.run_tests_by_type(completion_type, opts)
   opts = opts or {}
 
-  -- Scan for all test files
-  local all_test_files = utils.scan_test_folders()
+  -- Scan for all test files (excluding unit tests)
+  local scanned_files = utils.scan_test_folders()
+  local all_test_files = {}
+  for _, test_file in ipairs(scanned_files) do
+    if not test_file.is_unit then
+      table.insert(all_test_files, test_file)
+    end
+  end
 
   vim.notify(string.format("Filtering tests by type: %s", completion_type), vim.log.levels.INFO)
 
@@ -441,10 +460,15 @@ function M.find_test_by_number(test_number)
   local all_test_files = utils.scan_test_folders()
 
   for _, test_file in ipairs(all_test_files) do
+    -- Skip unit tests (they use different ID format)
+    if test_file.is_unit then
+      goto continue
+    end
     local test_data, _ = utils.load_test_file(test_file.path)
     if test_data and test_data.number == test_number then
       return test_file.path
     end
+    ::continue::
   end
 
   return nil
