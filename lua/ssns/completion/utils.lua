@@ -631,4 +631,84 @@ function Utils.format_synonym(synonym_obj, opts)
   }
 end
 
+---Format a SQL Server built-in function as an LSP CompletionItem
+---@param func_obj table Function object { name: string, signature: string, description: string, category: string, returns?: string }
+---@param opts table? Options { priority: number? }
+---@return table completion_item LSP CompletionItem
+function Utils.format_builtin_function(func_obj, opts)
+  opts = opts or {}
+  local priority = opts.priority or 7 -- Built-in functions priority (before keywords, after db objects)
+
+  local name = func_obj.name
+  local signature = func_obj.signature or name .. "()"
+  local description = func_obj.description or "SQL Server built-in function"
+  local category = func_obj.category or "function"
+  local returns = func_obj.returns
+
+  -- Build detail string
+  local detail = string.format("%s (%s)", signature, category)
+
+  -- Build documentation (markdown)
+  local doc_lines = {
+    "### " .. name,
+    "",
+    description,
+    "",
+    "**Signature:**",
+    "```sql",
+    signature,
+    "```",
+  }
+
+  if returns then
+    table.insert(doc_lines, "")
+    table.insert(doc_lines, string.format("**Returns:** `%s`", returns))
+  end
+
+  table.insert(doc_lines, "")
+  table.insert(doc_lines, string.format("**Category:** %s", category))
+
+  local documentation = {
+    kind = "markdown",
+    value = table.concat(doc_lines, "\n")
+  }
+
+  -- Generate insert text based on function type
+  -- System variables (@@...) don't need parentheses
+  -- Regular functions get parentheses and placeholder
+  local insertText = name
+  local insertTextFormat = nil
+
+  if name:match("^@@") then
+    -- System variables: @@ROWCOUNT, @@ERROR, etc.
+    insertText = name
+  elseif name:match("%(%s*%)$") then
+    -- Already has empty parens in name
+    insertText = name
+  elseif name == "CURRENT_TIMESTAMP" or name == "CURRENT_USER" or name == "SESSION_USER" or name == "SYSTEM_USER" or name == "CURRENT_DATE" then
+    -- ANSI standard niladic functions (no parens)
+    insertText = name
+  else
+    -- Regular functions: add () and placeholder
+    insertText = name .. "($0)"
+    insertTextFormat = 2 -- LSP snippet format
+  end
+
+  return {
+    label = name,
+    kind = Utils.CompletionItemKind.Function,
+    detail = detail,
+    documentation = documentation,
+    insertText = insertText,
+    insertTextFormat = insertTextFormat,
+    filterText = name,
+    sortText = Utils.generate_sort_text(priority, name),
+    data = {
+      type = "builtin_function",
+      name = name,
+      category = category,
+    }
+  }
+end
+
 return Utils

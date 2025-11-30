@@ -467,17 +467,24 @@ function Source:get_completions(ctx, callback)
     return
   elseif context_result.type == Context.Type.KEYWORD then
     -- Keyword completion (Phase 10.7)
-    Debug.log("[COMPLETION] Calling KeywordsProvider + SnippetsProvider")
+    Debug.log("[COMPLETION] Calling KeywordsProvider + FunctionsProvider + SnippetsProvider")
     local KeywordsProvider = require('ssns.completion.providers.keywords')
+    local FunctionsProvider = require('ssns.completion.providers.functions')
     local SnippetsProvider = require('ssns.completion.providers.snippets')
 
-    -- Get both keywords and snippets
+    -- Get keywords, built-in functions, and snippets
     local items = {}
 
     -- Get keywords
     local keyword_success, keyword_items = pcall(KeywordsProvider._get_completions_impl, provider_ctx)
     if keyword_success and keyword_items then
       vim.list_extend(items, keyword_items)
+    end
+
+    -- Get built-in functions (SQL Server functions like GETDATE(), LEN(), etc.)
+    local func_success, func_items = pcall(FunctionsProvider._get_completions_impl, provider_ctx)
+    if func_success and func_items then
+      vim.list_extend(items, func_items)
     end
 
     -- Get snippets
