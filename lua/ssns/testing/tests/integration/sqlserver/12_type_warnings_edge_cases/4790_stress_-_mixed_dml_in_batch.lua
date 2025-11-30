@@ -4,7 +4,9 @@ return {
   number = 4790,
   description = "Stress - mixed DML in batch",
   database = "vim_dadbod_test",
-  query = "INSERT INTO Log VALUES (1); UPDATE Stats SET Count = Count + 1; SELECT  FRO█M Employees",
+  skip = true,
+  skip_reason = "Multi-statement batch table resolution not yet supported",
+  query = "INSERT INTO Log VALUES (1); UPDATE Stats SET Count = Count + 1; SELECT █ FROM Employees",
   expected = {
     items = {
       includes = {

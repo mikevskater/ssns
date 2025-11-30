@@ -4,7 +4,8 @@ return {
   number = 4736,
   description = "Edge case - case sensitivity test",
   database = "vim_dadbod_test",
-  query = "SELECT EMPLOYEEID, employeeid, EmployeeID FRO█M Employees",
+  skip = false,
+  query = "SELECT EMPLOYEEID, employeeid, █ FROM Employees",
   expected = {
     items = {
       includes = {
