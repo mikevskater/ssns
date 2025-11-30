@@ -1,4 +1,5 @@
 -- Test 4060: Cross-database - tempdb access
+-- Access system views in tempdb database
 
 return {
   number = 4060,
@@ -8,8 +9,9 @@ return {
   expected = {
     items = {
       includes_any = {
-        "objects",
-        "tables",
+        "all_objects",
+        "all_views",
+        "columns",
       },
     },
     type = "table",

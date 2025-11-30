@@ -1,4 +1,5 @@
 -- Test 4050: Cross-database - master database system tables
+-- Access system views in master database
 
 return {
   number = 4050,

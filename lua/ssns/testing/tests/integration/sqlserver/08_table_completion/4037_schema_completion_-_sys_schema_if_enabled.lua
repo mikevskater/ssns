@@ -1,4 +1,5 @@
 -- Test 4037: Schema completion - sys schema (if enabled)
+-- System catalog views in the sys schema
 
 return {
   number = 4037,

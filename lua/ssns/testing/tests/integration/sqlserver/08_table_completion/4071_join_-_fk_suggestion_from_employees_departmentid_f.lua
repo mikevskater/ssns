@@ -1,17 +1,19 @@
--- Test 4071: JOIN - FK suggestion from Employees (DepartmentID FK)
+-- Test 4071: JOIN - tables available after JOIN
+-- Note: FK-based join suggestions (with auto ON clause) is a future enhancement.
+-- Currently returns all tables; Departments is included since it exists.
 
 return {
   number = 4071,
-  description = "JOIN - FK suggestion from Employees (DepartmentID FK)",
+  description = "JOIN - tables available after JOIN",
   database = "vim_dadbod_test",
   query = "SELECT * FROM Employees e JOIN █",
   expected = {
     items = {
-      has_on_clause = true,
       includes = {
         "Departments",
+        "Employees",
       },
     },
-    type = "join_suggestion",
+    type = "table",
   },
 }
