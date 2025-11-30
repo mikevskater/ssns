@@ -347,10 +347,11 @@ function Cache.get_stats()
     end
 
     if server.is_loaded then
-      server_stats.database_count = #server.children
+      local databases = server:get_databases()
+      server_stats.database_count = #databases
       stats.total_databases = stats.total_databases + server_stats.database_count
 
-      for _, db in ipairs(server:get_databases()) do
+      for _, db in ipairs(databases) do
         if db.is_connected then
           stats.connected_databases = stats.connected_databases + 1
         end
@@ -371,9 +372,10 @@ function Cache.debug_print()
   for i, server in ipairs(Cache.servers) do
     print(string.format("  [%d] %s (%s) - %s", i, server.name, server:get_db_type() or "unknown", server.connection_state))
 
-    if server.is_loaded and #server.children > 0 then
-      print(string.format("      Databases: %d", #server.children))
-      for _, db in ipairs(server.children) do
+    local databases = server:get_databases()
+    if server.is_loaded and #databases > 0 then
+      print(string.format("      Databases: %d", #databases))
+      for _, db in ipairs(databases) do
         local connected = db.is_connected and "✓" or ""
         print(string.format("        - %s %s", db.name, connected))
       end

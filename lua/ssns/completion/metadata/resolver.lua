@@ -85,60 +85,34 @@ function Resolver.resolve_table(reference, connection, context)
     end
   end
 
-  -- Search in tables, views, and synonyms groups
-  local groups_to_search = { 'tables_group', 'views_group', 'synonyms_group' }
+  -- Helper function to search in a collection of objects
+  local function search_in_collection(objects)
+    -- First pass: try to match with schema preference
+    for _, obj in ipairs(objects) do
+      local obj_name = obj.name or obj.table_name or obj.view_name or obj.synonym_name
+      local obj_schema = obj.schema or obj.schema_name
 
-  for _, group_type in ipairs(groups_to_search) do
-    -- Find the group in database children
-    local group = nil
-    for _, child in ipairs(database.children) do
-      if child.object_type == group_type then
-        group = child
-        break
-      end
-    end
-
-    if group then
-      -- Search in this group
-      for _, obj in ipairs(group.children) do
-        local obj_name = obj.name or obj.table_name or obj.view_name or obj.synonym_name
-        local obj_schema = obj.schema or obj.schema_name
-
-        -- Match table name
-        if obj_name:lower() == table_name:lower() then
-          -- If schema specified, must match
-          if schema then
-            if obj_schema and obj_schema:lower() == schema:lower() then
-              -- If synonym, resolve to base object
-              if obj.object_type == 'synonym' then
-                return Resolver._resolve_synonym(obj, 10) -- Max depth 10
-              end
-              return obj
+      -- Match table name (case-insensitive)
+      if obj_name and obj_name:lower() == table_name:lower() then
+        -- If schema specified, must match
+        if schema then
+          if obj_schema and obj_schema:lower() == schema:lower() then
+            -- If synonym, resolve to base object
+            if obj.object_type == 'synonym' then
+              return Resolver._resolve_synonym(obj, 10) -- Max depth 10
             end
-          else
-            -- No schema specified - match any schema, prefer default
-            if default_schema and obj_schema and obj_schema:lower() == default_schema:lower() then
-              -- Prefer default schema match
-              if obj.object_type == 'synonym' then
-                return Resolver._resolve_synonym(obj, 10)
-              end
-              return obj
-            elseif not default_schema then
-              -- No default schema, accept first match
-              if obj.object_type == 'synonym' then
-                return Resolver._resolve_synonym(obj, 10)
-              end
-              return obj
-            end
+            return obj
           end
-        end
-      end
-
-      -- If no default schema match found and no schema specified, accept any match
-      if not schema then
-        for _, obj in ipairs(group.children) do
-          local obj_name = obj.name or obj.table_name or obj.view_name or obj.synonym_name
-          if obj_name:lower() == table_name:lower() then
+        else
+          -- No schema specified - match any schema, prefer default
+          if default_schema and obj_schema and obj_schema:lower() == default_schema:lower() then
+            -- Prefer default schema match
+            if obj.object_type == 'synonym' then
+              return Resolver._resolve_synonym(obj, 10)
+            end
+            return obj
+          elseif not default_schema then
+            -- No default schema, accept first match
             if obj.object_type == 'synonym' then
               return Resolver._resolve_synonym(obj, 10)
             end
@@ -147,7 +121,37 @@ function Resolver.resolve_table(reference, connection, context)
         end
       end
     end
+
+    -- Second pass: if no default schema match found and no schema specified, accept any match
+    if not schema then
+      for _, obj in ipairs(objects) do
+        local obj_name = obj.name or obj.table_name or obj.view_name or obj.synonym_name
+        if obj_name and obj_name:lower() == table_name:lower() then
+          if obj.object_type == 'synonym' then
+            return Resolver._resolve_synonym(obj, 10)
+          end
+          return obj
+        end
+      end
+    end
+
+    return nil
   end
+
+  -- Search in tables using database accessor (handles schema-based vs non-schema servers)
+  local tables = database:get_tables(schema)
+  local result = search_in_collection(tables)
+  if result then return result end
+
+  -- Search in views
+  local views = database:get_views(schema)
+  result = search_in_collection(views)
+  if result then return result end
+
+  -- Search in synonyms
+  local synonyms = database:get_synonyms(schema)
+  result = search_in_collection(synonyms)
+  if result then return result end
 
   return nil
 end
@@ -671,85 +675,52 @@ function Resolver.resolve_tvf_columns(function_name, schema_name, connection)
   schema_name = schema_name or "dbo"
   local database = connection.database
 
-  -- Ensure database is loaded
-  if not database.is_loaded then
-    local success = pcall(function()
-      database:load()
-    end)
-    if not success then
-      return {}
-    end
-  end
-
-  -- Find the functions group in database children
-  local functions_group = nil
-  for _, child in ipairs(database.children) do
-    if child.object_type == "functions_group" then
-      functions_group = child
-      break
-    end
-  end
-
-  if not functions_group then
-    debug_log(string.format("[RESOLVER] resolve_tvf_columns: No functions_group found for '%s'", function_name))
-    return {}
-  end
-
-  -- Ensure functions group is loaded
-  if not functions_group.is_loaded then
-    local success = pcall(function()
-      functions_group:load()
-    end)
-    if not success then
-      return {}
-    end
-  end
+  -- Use database accessor method (handles schema-based vs non-schema servers)
+  local functions = database:get_functions(schema_name)
 
   -- Search for the function (case-insensitive)
   local function_name_lower = function_name:lower()
   local schema_name_lower = schema_name:lower()
 
-  for _, func in ipairs(functions_group.children or {}) do
-    if func.object_type == "function" then
-      local func_name = func.function_name or func.name
-      local func_schema = func.schema_name or "dbo"
+  for _, func in ipairs(functions) do
+    local func_name = func.function_name or func.name
+    local func_schema = func.schema_name or func.schema or "dbo"
 
-      if func_name and func_name:lower() == function_name_lower and
-         func_schema:lower() == schema_name_lower then
-        -- Found the function - check if it's table-valued
-        if func.is_table_valued and func:is_table_valued() then
-          -- Get TVF columns - these are stored in the function's metadata
-          -- For TVFs, we need to query the database for result columns
-          -- The adapter has a method to get TVF columns
-          local adapter = connection.server and connection.server:get_adapter()
-          if adapter and adapter.get_tvf_columns_query then
-            local query = adapter:get_tvf_columns_query(
-              database.db_name,
-              schema_name,
-              function_name
-            )
-            if query then
-              local results = adapter:execute(connection.server.connection, query)
-              if results and results.success and results.resultSets and #results.resultSets > 0 then
-                local columns = {}
-                local rows = results.resultSets[1].rows or {}
-                for _, row in ipairs(rows) do
-                  table.insert(columns, {
-                    name = row.column_name or row.name,
-                    data_type = row.data_type or row.type,
-                    ordinal_position = row.ordinal_position or row.column_id,
-                  })
-                end
-                debug_log(string.format("[RESOLVER] resolve_tvf_columns: Found %d columns for '%s.%s'",
-                  #columns, schema_name, function_name))
-                return columns
+    if func_name and func_name:lower() == function_name_lower and
+       func_schema:lower() == schema_name_lower then
+      -- Found the function - check if it's table-valued
+      if func.is_table_valued and func:is_table_valued() then
+        -- Get TVF columns - these are stored in the function's metadata
+        -- For TVFs, we need to query the database for result columns
+        -- The adapter has a method to get TVF columns
+        local adapter = connection.server and connection.server:get_adapter()
+        if adapter and adapter.get_tvf_columns_query then
+          local query = adapter:get_tvf_columns_query(
+            database.db_name,
+            schema_name,
+            function_name
+          )
+          if query then
+            local results = adapter:execute(connection.server.connection, query)
+            if results and results.success and results.resultSets and #results.resultSets > 0 then
+              local columns = {}
+              local rows = results.resultSets[1].rows or {}
+              for _, row in ipairs(rows) do
+                table.insert(columns, {
+                  name = row.column_name or row.name,
+                  data_type = row.data_type or row.type,
+                  ordinal_position = row.ordinal_position or row.column_id,
+                })
               end
+              debug_log(string.format("[RESOLVER] resolve_tvf_columns: Found %d columns for '%s.%s'",
+                #columns, schema_name, function_name))
+              return columns
             end
           end
-          debug_log(string.format("[RESOLVER] resolve_tvf_columns: No columns found for TVF '%s.%s'",
-            schema_name, function_name))
-          return {}
         end
+        debug_log(string.format("[RESOLVER] resolve_tvf_columns: No columns found for TVF '%s.%s'",
+          schema_name, function_name))
+        return {}
       end
     end
   end
