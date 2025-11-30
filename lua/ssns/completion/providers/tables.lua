@@ -215,6 +215,34 @@ function TablesProvider._get_completions_impl(ctx)
     end
   end
 
+  -- Collect temp tables from the current buffer context
+  -- Temp tables should be available as table sources in FROM/JOIN clauses
+  -- But NOT when completing schema-qualified names (e.g., dbo.█) since temp tables don't belong to schemas
+  if sql_context.temp_tables and not filter_schema then
+    for temp_name, temp_info in pairs(sql_context.temp_tables) do
+      local temp_type = temp_info.is_global and "Global Temp Table" or "Temp Table"
+      local icon = temp_info.is_global and "##" or "#"
+      table.insert(items, {
+        label = temp_name,
+        kind = Utils.CompletionItemKind.Struct,  -- Use Struct kind for temp tables
+        detail = temp_type,
+        documentation = {
+          kind = "markdown",
+          value = string.format("**%s**\n\nDefined in the current buffer.\n\nColumns: %d", temp_type, #(temp_info.columns or {})),
+        },
+        insertText = temp_name,
+        filterText = temp_name,
+        sortText = "00002_" .. temp_name,  -- Sort temp tables after CTEs but before regular tables
+        data = {
+          type = "temp_table",
+          name = temp_name,
+          is_temp_table = true,
+          is_global = temp_info.is_global,
+        },
+      })
+    end
+  end
+
   -- Inject usage weights into sortText for all items
   for idx, item in ipairs(items) do
     local item_data = item.data
