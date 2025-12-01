@@ -46,9 +46,6 @@ function SchemaClass:load()
   self:load_functions()
   self:load_synonyms()
 
-  -- NOTE: Removed create_object_groups() call
-  -- UI groups are now created on-demand during tree render()
-
   self.is_loaded = true
   return true
 end
@@ -218,104 +215,6 @@ function SchemaClass:load_synonyms()
   end
 
   return true
-end
-
----Create object groups for UI display (TABLES, VIEWS, PROCEDURES, etc.)
-function SchemaClass:create_object_groups()
-  -- Clear existing children and rebuild with groups
-  self:clear_children()
-
-  local adapter = self:get_adapter()
-
-  -- Create group objects that can be expanded/collapsed in UI
-  -- These are special container objects
-
-  -- TABLES group
-  if self.tables and #self.tables > 0 then
-    local tables_group = BaseDbObject.new({
-      name = string.format("TABLES (%d)", #self.tables),
-      parent = self,
-    })
-    tables_group.object_type = "table_group"
-
-    -- Add actual tables as children of the group
-    -- IMPORTANT: Don't change table_obj.parent - keep it as schema for hierarchy
-    for _, table_obj in ipairs(self.tables) do
-      -- Store reference to schema for navigation
-      table_obj.schema = self
-      table.insert(tables_group.children, table_obj)
-    end
-
-    tables_group.is_loaded = true
-  end
-
-  -- VIEWS group
-  if self.views and #self.views > 0 then
-    local views_group = BaseDbObject.new({
-      name = string.format("VIEWS (%d)", #self.views),
-      parent = self,
-    })
-    views_group.object_type = "view_group"
-
-    -- IMPORTANT: Don't change view_obj.parent - keep it as schema for hierarchy
-    for _, view_obj in ipairs(self.views) do
-      view_obj.schema = self
-      table.insert(views_group.children, view_obj)
-    end
-
-    views_group.is_loaded = true
-  end
-
-  -- PROCEDURES group
-  if adapter.features.procedures and self.procedures and #self.procedures > 0 then
-    local procs_group = BaseDbObject.new({
-      name = string.format("PROCEDURES (%d)", #self.procedures),
-      parent = self,
-    })
-    procs_group.object_type = "procedure_group"
-
-    -- IMPORTANT: Don't change proc_obj.parent - keep it as schema for hierarchy
-    for _, proc_obj in ipairs(self.procedures) do
-      proc_obj.schema = self
-      table.insert(procs_group.children, proc_obj)
-    end
-
-    procs_group.is_loaded = true
-  end
-
-  -- FUNCTIONS group
-  if adapter.features.functions and self.functions and #self.functions > 0 then
-    local funcs_group = BaseDbObject.new({
-      name = string.format("FUNCTIONS (%d)", #self.functions),
-      parent = self,
-    })
-    funcs_group.object_type = "function_group"
-
-    -- IMPORTANT: Don't change func_obj.parent - keep it as schema for hierarchy
-    for _, func_obj in ipairs(self.functions) do
-      func_obj.schema = self
-      table.insert(funcs_group.children, func_obj)
-    end
-
-    funcs_group.is_loaded = true
-  end
-
-  -- SYNONYMS group
-  if adapter.features.synonyms and self.synonyms and #self.synonyms > 0 then
-    local synonyms_group = BaseDbObject.new({
-      name = string.format("SYNONYMS (%d)", #self.synonyms),
-      parent = self,
-    })
-    synonyms_group.object_type = "synonym_group"
-
-    -- IMPORTANT: Don't change syn_obj.parent - keep it as schema for hierarchy
-    for _, syn_obj in ipairs(self.synonyms) do
-      syn_obj.schema = self
-      table.insert(synonyms_group.children, syn_obj)
-    end
-
-    synonyms_group.is_loaded = true
-  end
 end
 
 ---Reload all objects in this schema

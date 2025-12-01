@@ -74,6 +74,7 @@ function TableClass:create_action_nodes()
   select_action.object_type = "action"
   select_action.action_type = "select"
   select_action.is_loaded = true
+  table.insert(self.children, select_action)
 
   -- Add Columns group (lazy loaded when expanded)
   local columns_group = BaseDbObject.new({
@@ -96,6 +97,7 @@ function TableClass:create_action_nodes()
     group.is_loaded = true
     return true
   end
+  table.insert(self.children, columns_group)
 
   -- Add Indexes group (lazy loaded when expanded)
   local indexes_group = BaseDbObject.new({
@@ -118,6 +120,7 @@ function TableClass:create_action_nodes()
     group.is_loaded = true
     return true
   end
+  table.insert(self.children, indexes_group)
 
   -- Add Keys/Constraints group (lazy loaded when expanded)
   local keys_group = BaseDbObject.new({
@@ -140,6 +143,7 @@ function TableClass:create_action_nodes()
     group.is_loaded = true
     return true
   end
+  table.insert(self.children, keys_group)
 
   -- Add ALTER action
   local alter_action = BaseDbObject.new({
@@ -149,6 +153,7 @@ function TableClass:create_action_nodes()
   alter_action.object_type = "action"
   alter_action.action_type = "alter"
   alter_action.is_loaded = true
+  table.insert(self.children, alter_action)
 
   -- Add DROP action
   local drop_action = BaseDbObject.new({
@@ -158,6 +163,7 @@ function TableClass:create_action_nodes()
   drop_action.object_type = "action"
   drop_action.action_type = "drop"
   drop_action.is_loaded = true
+  table.insert(self.children, drop_action)
 
   -- Add DEPENDENCIES action
   local dependencies_action = BaseDbObject.new({
@@ -167,6 +173,7 @@ function TableClass:create_action_nodes()
   dependencies_action.object_type = "action"
   dependencies_action.action_type = "dependencies"
   dependencies_action.is_loaded = true
+  table.insert(self.children, dependencies_action)
 
   -- Add Actions group (table helpers)
   local actions_group = BaseDbObject.new({
@@ -184,6 +191,7 @@ function TableClass:create_action_nodes()
   count_action.object_type = "action"
   count_action.action_type = "count"
   count_action.is_loaded = true
+  table.insert(actions_group.children, count_action)
 
   local describe_action = BaseDbObject.new({
     name = "DESCRIBE",
@@ -192,6 +200,7 @@ function TableClass:create_action_nodes()
   describe_action.object_type = "action"
   describe_action.action_type = "describe"
   describe_action.is_loaded = true
+  table.insert(actions_group.children, describe_action)
 
   local insert_action = BaseDbObject.new({
     name = "INSERT",
@@ -200,6 +209,7 @@ function TableClass:create_action_nodes()
   insert_action.object_type = "action"
   insert_action.action_type = "insert"
   insert_action.is_loaded = true
+  table.insert(actions_group.children, insert_action)
 
   local update_action = BaseDbObject.new({
     name = "UPDATE",
@@ -208,6 +218,7 @@ function TableClass:create_action_nodes()
   update_action.object_type = "action"
   update_action.action_type = "update"
   update_action.is_loaded = true
+  table.insert(actions_group.children, update_action)
 
   local delete_action = BaseDbObject.new({
     name = "DELETE",
@@ -216,6 +227,9 @@ function TableClass:create_action_nodes()
   delete_action.object_type = "action"
   delete_action.action_type = "delete"
   delete_action.is_loaded = true
+  table.insert(actions_group.children, delete_action)
+
+  table.insert(self.children, actions_group)
 end
 
 ---Load columns for this table (lazy loading)

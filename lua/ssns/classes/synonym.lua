@@ -306,7 +306,7 @@ function SynonymClass:create_action_nodes()
     })
     error_node.object_type = "error"
     error_node.is_loaded = true
-    -- Don't call add_child - BaseDbObject.new already added it
+    table.insert(self.children, error_node)
     return
   end
 
@@ -317,7 +317,7 @@ function SynonymClass:create_action_nodes()
     })
     not_found_node.object_type = "error"
     not_found_node.is_loaded = true
-    -- Don't call add_child - BaseDbObject.new already added it
+    table.insert(self.children, not_found_node)
     return
   end
 
@@ -338,7 +338,7 @@ function SynonymClass:create_action_nodes()
   })
   info_node.object_type = "info"
   info_node.is_loaded = true
-  -- Don't call add_child - BaseDbObject.new already added it
+  table.insert(self.children, info_node)
 
   -- Add GO-TO action (navigate to base object in tree)
   if base_object and not is_external then
@@ -349,7 +349,7 @@ function SynonymClass:create_action_nodes()
     goto_action.object_type = "action"
     goto_action.action_type = "goto"
     goto_action.is_loaded = true
-    -- Don't call add_child - BaseDbObject.new already added it
+    table.insert(self.children, goto_action)
   end
 
   -- If base object is a table or view, show columns group
@@ -362,7 +362,7 @@ function SynonymClass:create_action_nodes()
     select_action.object_type = "action"
     select_action.action_type = "select"
     select_action.is_loaded = true
-    -- Don't call add_child - BaseDbObject.new already added it
+    table.insert(self.children, select_action)
 
     -- Add Columns group (lazy loaded from base object)
     local columns_group = BaseDbObject.new({
@@ -396,14 +396,14 @@ function SynonymClass:create_action_nodes()
           col_copy.is_foreign_key = col.is_foreign_key
           col_copy.ordinal_position = col.ordinal_position
           col_copy.is_loaded = true
-          -- Don't call add_child - BaseDbObject.new already added it
+          table.insert(group.children, col_copy)
         end
       end
 
       group.is_loaded = true
       return true
     end
-    -- Don't call add_child - BaseDbObject.new already added it
+    table.insert(self.children, columns_group)
 
     -- Add Indexes group (lazy loaded from base object)
     if base_object.object_type == "table" then
@@ -433,14 +433,14 @@ function SynonymClass:create_action_nodes()
             idx_copy.is_primary_key = idx.is_primary_key
             idx_copy.index_type = idx.index_type
             idx_copy.is_loaded = true
-            -- Don't call add_child - BaseDbObject.new already added it
+            table.insert(group.children, idx_copy)
           end
         end
 
         group.is_loaded = true
         return true
       end
-      -- Don't call add_child - BaseDbObject.new already added it
+      table.insert(self.children, indexes_group)
     end
   elseif base_object.object_type == "procedure" or base_object.object_type == "function" then
     -- For procedures/functions, show parameters
@@ -451,7 +451,7 @@ function SynonymClass:create_action_nodes()
     execute_action.object_type = "action"
     execute_action.action_type = base_object.object_type == "procedure" and "exec" or "select"
     execute_action.is_loaded = true
-    -- Don't call add_child - BaseDbObject.new already added it
+    table.insert(self.children, execute_action)
 
     -- Add Parameters group (lazy loaded from base object)
     local params_group = BaseDbObject.new({
@@ -480,14 +480,14 @@ function SynonymClass:create_action_nodes()
           param_copy.is_output = param.is_output
           param_copy.ordinal_position = param.ordinal_position
           param_copy.is_loaded = true
-          -- Don't call add_child - BaseDbObject.new already added it
+          table.insert(group.children, param_copy)
         end
       end
 
       group.is_loaded = true
       return true
     end
-    -- Don't call add_child - BaseDbObject.new already added it
+    table.insert(self.children, params_group)
   end
 end
 

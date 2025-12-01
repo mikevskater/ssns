@@ -38,8 +38,8 @@ function DbClass.new(opts)
   return self
 end
 
----Load objects from database (server-type aware)
----For schema-based servers (SQL Server, PostgreSQL): loads schemas, objects live in schemas
+---Load database structure (lazy - doesn't load all objects)
+---For schema-based servers (SQL Server, PostgreSQL): loads schema names only
 ---For non-schema servers (MySQL): loads objects directly on database
 ---@return boolean success
 function DbClass:load()
@@ -51,13 +51,9 @@ function DbClass:load()
 
   -- Check if this is a schema-based server
   if adapter.features.schemas then
-    -- SQL Server/PostgreSQL: Load schemas, objects live inside schemas
+    -- SQL Server/PostgreSQL: Load schema names only (lazy loading of objects)
     self.schemas = self:_load_schemas()
-
-    -- Load each schema's objects
-    for _, schema in ipairs(self.schemas) do
-      schema:load()
-    end
+    -- NOTE: Don't call schema:load() here - objects are loaded lazily when requested
   else
     -- MySQL/SQLite: Load objects directly on database
     self.tables = self:_load_tables()
@@ -225,10 +221,28 @@ end
 ---Get all schemas
 ---@return SchemaClass[]
 function DbClass:get_schemas()
-  if not self.is_loaded then
-    self:load()
+  -- For schema completion, only load schema names (not all objects)
+  if not self.schemas then
+    self:_ensure_schemas_loaded()
   end
   return self.schemas or {}
+end
+
+---Ensure schemas are loaded (without loading all objects in each schema)
+---This is a lightweight load for schema completion
+function DbClass:_ensure_schemas_loaded()
+  if self.schemas then
+    return  -- Already loaded
+  end
+
+  local adapter = self:get_adapter()
+  if not adapter.features.schemas then
+    self.schemas = {}
+    return
+  end
+
+  -- Only load schema names, not objects
+  self.schemas = self:_load_schemas()
 end
 
 ---Get all tables (server-type aware - aggregates from schemas if needed)

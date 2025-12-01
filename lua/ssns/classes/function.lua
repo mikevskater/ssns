@@ -70,6 +70,7 @@ function FunctionClass:create_action_nodes()
   select_action.object_type = "action"
   select_action.action_type = "select"
   select_action.is_loaded = true
+  table.insert(self.children, select_action)
 
   -- Add Parameters group (lazy loaded when expanded)
   local params_group = BaseDbObject.new({
@@ -92,6 +93,7 @@ function FunctionClass:create_action_nodes()
     group.is_loaded = true
     return true
   end
+  table.insert(self.children, params_group)
 
   -- Add Function Definition action (ALTER shows definition)
   local definition_action = BaseDbObject.new({
@@ -101,6 +103,7 @@ function FunctionClass:create_action_nodes()
   definition_action.object_type = "action"
   definition_action.action_type = "alter"
   definition_action.is_loaded = true
+  table.insert(self.children, definition_action)
 
   -- Add DROP action
   local drop_action = BaseDbObject.new({
@@ -110,6 +113,7 @@ function FunctionClass:create_action_nodes()
   drop_action.object_type = "action"
   drop_action.action_type = "drop"
   drop_action.is_loaded = true
+  table.insert(self.children, drop_action)
 
   -- Add DEPENDENCIES action
   local dependencies_action = BaseDbObject.new({
@@ -119,6 +123,7 @@ function FunctionClass:create_action_nodes()
   dependencies_action.object_type = "action"
   dependencies_action.action_type = "dependencies"
   dependencies_action.is_loaded = true
+  table.insert(self.children, dependencies_action)
 end
 
 ---Load parameters for this function (lazy loading)

@@ -68,6 +68,7 @@ function ViewClass:create_action_nodes()
   select_action.object_type = "action"
   select_action.action_type = "select"
   select_action.is_loaded = true
+  table.insert(self.children, select_action)
 
   -- Add Columns group (lazy loaded when expanded)
   local columns_group = BaseDbObject.new({
@@ -90,6 +91,7 @@ function ViewClass:create_action_nodes()
     group.is_loaded = true
     return true
   end
+  table.insert(self.children, columns_group)
 
   -- Add View Definition action (ALTER shows definition)
   local definition_action = BaseDbObject.new({
@@ -99,6 +101,7 @@ function ViewClass:create_action_nodes()
   definition_action.object_type = "action"
   definition_action.action_type = "alter"
   definition_action.is_loaded = true
+  table.insert(self.children, definition_action)
 
   -- Add DROP action
   local drop_action = BaseDbObject.new({
@@ -108,6 +111,7 @@ function ViewClass:create_action_nodes()
   drop_action.object_type = "action"
   drop_action.action_type = "drop"
   drop_action.is_loaded = true
+  table.insert(self.children, drop_action)
 
   -- Add DEPENDENCIES action
   local dependencies_action = BaseDbObject.new({
@@ -117,6 +121,7 @@ function ViewClass:create_action_nodes()
   dependencies_action.object_type = "action"
   dependencies_action.action_type = "dependencies"
   dependencies_action.is_loaded = true
+  table.insert(self.children, dependencies_action)
 end
 
 ---Load columns for this view (lazy loading)
@@ -128,8 +133,8 @@ function ViewClass:load_columns()
 
   local adapter = self:get_adapter()
 
-  -- Navigate up: View -> Database (no schemas in new structure)
-  local db = self.parent
+  -- Navigate up: View -> Schema -> Database
+  local db = self.parent.parent
 
   -- Views use the same columns query as tables
   local query = adapter:get_columns_query(db.db_name, self.schema_name, self.view_name)
@@ -185,8 +190,8 @@ function ViewClass:load_definition()
 
   local adapter = self:get_adapter()
 
-  -- Navigate up: View -> Database (no schemas in new structure)
-  local db = self.parent
+  -- Navigate up: View -> Schema -> Database
+  local db = self.parent.parent
 
   -- Get definition query from adapter
   local query = adapter:get_definition_query(db.db_name, self.schema_name, self.view_name, "VIEW")
