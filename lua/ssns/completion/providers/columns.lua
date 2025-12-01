@@ -88,20 +88,18 @@ function ColumnsProvider.get_completions(ctx, callback)
     return ColumnsProvider._get_completions_impl(ctx)
   end)
 
-  -- Schedule callback with results or empty array on error
-  vim.schedule(function()
-    if success then
-      callback(result or {})
-    else
-      if vim.g.ssns_debug then
-        vim.notify(
-          string.format("[SSNS] Column provider error: %s", tostring(result)),
-          vim.log.levels.ERROR
-        )
-      end
-      callback({})
+  -- Call callback directly (no vim.schedule needed - work is synchronous)
+  if success then
+    callback(result or {})
+  else
+    if vim.g.ssns_debug then
+      vim.notify(
+        string.format("[SSNS] Column provider error: %s", tostring(result)),
+        vim.log.levels.ERROR
+      )
     end
-  end)
+    callback({})
+  end
 end
 
 ---Internal implementation of column completion

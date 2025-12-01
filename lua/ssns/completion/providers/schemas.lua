@@ -40,20 +40,19 @@ function SchemasProvider.get_completions(ctx, callback)
     return SchemasProvider._get_completions_impl(ctx)
   end)
 
-  -- Schedule callback with results or empty array on error
-  vim.schedule(function()
-    if success then
-      callback(result or {})
-    else
-      if vim.g.ssns_debug then
-        vim.notify(
-          string.format("[SSNS Completion] Schemas provider error: %s", tostring(result)),
-          vim.log.levels.ERROR
-        )
-      end
-      callback({})
+  -- Call callback directly (no vim.schedule needed - work is synchronous)
+  -- The caller (wrapped_callback in source.lua) handles async scheduling
+  if success then
+    callback(result or {})
+  else
+    if vim.g.ssns_debug then
+      vim.notify(
+        string.format("[SSNS Completion] Schemas provider error: %s", tostring(result)),
+        vim.log.levels.ERROR
+      )
     end
-  end)
+    callback({})
+  end
 end
 
 ---Internal implementation of schema completion
@@ -61,19 +60,30 @@ end
 ---@return table[] items Array of CompletionItems
 function SchemasProvider._get_completions_impl(ctx)
   local Utils = require('ssns.completion.utils')
+  local Debug = require('ssns.debug')
   local connection = ctx.connection
 
+  Debug.log("[SchemasProvider] _get_completions_impl called")
+
   if not connection or not connection.database then
+    Debug.log("[SchemasProvider] No connection or database, returning empty")
     return {}
   end
 
   local server = connection.server
   local database = connection.database
 
+  Debug.log(string.format("[SchemasProvider] connection.database=%s, server=%s",
+    database and (database.db_name or database.name) or "nil",
+    server and server.name or "nil"))
+
   -- Check if we need to get schemas from a different database (cross-db)
   local sql_context = ctx.sql_context or {}
   local filter_database = sql_context.filter_database
   local potential_database = sql_context.potential_database
+
+  Debug.log(string.format("[SchemasProvider] filter_database=%s, potential_database=%s",
+    filter_database or "nil", potential_database or "nil"))
 
   -- Resolve target database
   -- For "TEST.█" pattern, potential_database contains the database name
@@ -81,23 +91,28 @@ function SchemasProvider._get_completions_impl(ctx)
   local target_db_name = filter_database or potential_database
   if target_db_name and server then
     local check_db = server:get_database(target_db_name)
+    Debug.log(string.format("[SchemasProvider] Looked up database '%s', found=%s",
+      target_db_name, check_db and "yes" or "no"))
     if check_db then
       target_db = check_db
-      if not target_db.is_loaded then
-        target_db:load()
-      end
+      -- NOTE: Don't call target_db:load() here - it loads all objects which is slow
+      -- get_schemas() will only load schema names (lightweight)
     end
   end
 
   -- Verify we have a valid database
   if not target_db then
+    Debug.log("[SchemasProvider] No target_db, returning empty")
     return {}
   end
 
   local items = {}
 
   -- Get all schemas from target database
+  Debug.log(string.format("[SchemasProvider] Getting schemas from '%s'",
+    target_db.db_name or target_db.name or "unknown"))
   local schemas = target_db:get_schemas()
+  Debug.log(string.format("[SchemasProvider] Got %d schemas", schemas and #schemas or 0))
 
   if not schemas then
     return {}
@@ -143,6 +158,7 @@ function SchemasProvider._get_completions_impl(ctx)
     table.insert(items, item)
   end
 
+  Debug.log(string.format("[SchemasProvider] Returning %d items", #items))
   return items
 end
 
