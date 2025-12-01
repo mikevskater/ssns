@@ -63,11 +63,16 @@ function UiFilterInput.show_input(group, current_filters, callback)
 
   -- Add "Hide System Schemas" checkbox for supported groups (before Case Sensitive)
   if supports_sys_schema_filter then
+    -- Note: can't use `x ~= nil and x or default` because it fails when x is false
+    local hide_sys_value = current_filters.hide_system_schemas
+    if hide_sys_value == nil then
+      hide_sys_value = default_hide_system
+    end
     table.insert(fields, {
       name = "hide_system_schemas",
       label = "Hide System Schemas",
       type = "checkbox",
-      value = current_filters.hide_system_schemas ~= nil and current_filters.hide_system_schemas or default_hide_system,
+      value = hide_sys_value,
     })
   end
 
@@ -227,17 +232,18 @@ function UiFilterInput._render()
     end
   end
 
+  -- Check if we have object type checkboxes (not just Case Sensitive)
+  -- This affects both rendering and cursor positioning
+  local has_object_types = false
+  for i = text_fields_end + 1, #state.fields do
+    if state.fields[i].object_type_key then
+      has_object_types = true
+      break
+    end
+  end
+
   -- Render checkboxes
   if text_fields_end < #state.fields then
-    -- Check if we have object type checkboxes (not just Case Sensitive)
-    local has_object_types = false
-    for i = text_fields_end + 1, #state.fields do
-      if state.fields[i].object_type_key then
-        has_object_types = true
-        break
-      end
-    end
-
     -- Only show "Options:" header if we have multiple checkboxes
     if has_object_types then
       table.insert(lines, "")
@@ -268,8 +274,11 @@ function UiFilterInput._render()
   vim.api.nvim_buf_add_highlight(state.main_buf, ns_id, "Comment", 0, 0, -1)
   vim.api.nvim_buf_add_highlight(state.main_buf, ns_id, "Comment", 1, 0, -1)
 
-  -- Find and highlight selected field
+  -- Find and highlight selected field, and track cursor position
   local line_idx = 3
+  local cursor_line = nil
+  local cursor_col = nil
+
   for i, field in ipairs(state.fields) do
     local is_selected = i == state.selected_field_idx
 
@@ -277,6 +286,10 @@ function UiFilterInput._render()
       if is_selected then
         vim.api.nvim_buf_add_highlight(state.main_buf, ns_id, "Title", line_idx, 0, -1)
         vim.api.nvim_buf_add_highlight(state.main_buf, ns_id, "String", line_idx + 1, 0, -1)
+        -- Cursor on "Pattern:" line, after the value
+        -- "  Pattern: " is 11 chars (2 spaces + "Pattern: "), so cursor at 11 + len(value)
+        cursor_line = line_idx + 1 + 1  -- +1 for 0-indexed to 1-indexed
+        cursor_col = 11 + #(field.value or "")
       end
       line_idx = line_idx + 2
       if i < text_fields_end then
@@ -284,13 +297,23 @@ function UiFilterInput._render()
       end
     else
       if i == text_fields_end + 1 then
-        line_idx = line_idx + 3  -- Skip blank line and "Options:" header
+        -- Skip lines before first checkbox: 3 if has "Options:" header, 1 if just blank line
+        line_idx = line_idx + (has_object_types and 3 or 1)
       end
       if is_selected then
         vim.api.nvim_buf_add_highlight(state.main_buf, ns_id, "Title", line_idx, 0, -1)
+        -- Cursor between the [ ] brackets
+        -- "▶ [x]" - ▶ is 3 bytes, space is 1, [ is 1, so the x/space is at byte 5
+        cursor_line = line_idx + 1  -- +1 for 0-indexed to 1-indexed
+        cursor_col = 5  -- Position at the x or space inside [x] or [ ]
       end
       line_idx = line_idx + 1
     end
+  end
+
+  -- Position cursor at the selected field
+  if cursor_line and cursor_col and state.main_win and vim.api.nvim_win_is_valid(state.main_win) then
+    vim.api.nvim_win_set_cursor(state.main_win, {cursor_line, cursor_col})
   end
 end
 
