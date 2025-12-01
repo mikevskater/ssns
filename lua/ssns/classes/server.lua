@@ -305,7 +305,8 @@ function ServerClass:get_database(database_name)
   -- Search databases array directly (case-insensitive)
   local lower_name = database_name:lower()
   for _, db in ipairs(self.databases or {}) do
-    if db.name:lower() == lower_name then
+    local db_name = db.db_name or db.name
+    if db_name and db_name:lower() == lower_name then
       return db
     end
   end
