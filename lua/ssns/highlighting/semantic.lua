@@ -96,6 +96,13 @@ function SemanticHighlighter.disable_buffer(bufnr)
   SemanticHighlighter.clear(bufnr)
 end
 
+---Check if semantic highlighting is attached to a buffer
+---@param bufnr number Buffer number
+---@return boolean is_attached True if semantic highlighting is enabled for this buffer
+function SemanticHighlighter.is_attached(bufnr)
+  return enabled_buffers[bufnr] == true
+end
+
 ---Update semantic highlights for a buffer
 ---@param bufnr number Buffer number
 ---@param cache BufferStatementCache? Cached statement chunks (optional, will fetch if not provided)
