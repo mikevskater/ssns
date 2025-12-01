@@ -58,6 +58,27 @@ local function create_ui_group(parent, name, object_type, items)
   return group
 end
 
+---Get all objects from a schema combined into a single sorted list
+---@param schema SchemaClass The schema to get objects from
+---@return BaseDbObject[] all_objects Combined and sorted list of all objects
+local function get_schema_all_objects(schema)
+  local all_objects = {}
+
+  -- Collect from all typed arrays
+  for _, t in ipairs(schema:get_tables() or {}) do table.insert(all_objects, t) end
+  for _, v in ipairs(schema:get_views() or {}) do table.insert(all_objects, v) end
+  for _, p in ipairs(schema:get_procedures() or {}) do table.insert(all_objects, p) end
+  for _, f in ipairs(schema:get_functions() or {}) do table.insert(all_objects, f) end
+  for _, s in ipairs(schema:get_synonyms() or {}) do table.insert(all_objects, s) end
+
+  -- Sort alphabetically by name (case-insensitive)
+  table.sort(all_objects, function(a, b)
+    return (a.name or ""):lower() < (b.name or ""):lower()
+  end)
+
+  return all_objects
+end
+
 ---Get icon for object type
 ---@param object_type string
 ---@param icons table
@@ -244,13 +265,6 @@ function UiTree.render_database(db, lines, indent_level)
       -- This works for both schema-based (SQL Server, PostgreSQL) and non-schema (MySQL) servers
       local adapter = db:get_adapter()
 
-      -- SCHEMAS group (for schema-based servers like SQL Server, PostgreSQL)
-      if adapter.features and adapter.features.schemas then
-        local schemas = db:get_schemas()
-        local schemas_group = create_ui_group(db, "SCHEMAS", "schemas_group", schemas)
-        UiTree.render_object(schemas_group, lines, indent_level + 1)
-      end
-
       -- TABLES group - uses db:get_tables() which aggregates from schemas
       -- Always show even if empty (with count of 0)
       local tables = db:get_tables()
@@ -284,6 +298,14 @@ function UiTree.render_database(db, lines, indent_level)
         local synonyms_group = create_ui_group(db, "SYNONYMS", "synonyms_group", synonyms)
         UiTree.render_object(synonyms_group, lines, indent_level + 1)
       end
+
+      -- SCHEMAS group (for schema-based servers like SQL Server, PostgreSQL)
+      -- Shown last as an alternative view of objects organized by schema
+      if adapter.features and adapter.features.schemas then
+        local schemas = db:get_schemas()
+        local schemas_group = create_ui_group(db, "SCHEMAS", "schemas_group", schemas)
+        UiTree.render_object(schemas_group, lines, indent_level + 1)
+      end
     else
       local loading_icon = icons.connecting or "⋯"
       table.insert(lines, indent .. "    " .. loading_icon .. " Loading...")
@@ -291,62 +313,51 @@ function UiTree.render_database(db, lines, indent_level)
   end
 end
 
----Render a schema and its children
+---Render a schema and its children (flat list sorted by name)
 ---@param schema SchemaClass
 ---@param lines string[]
 ---@param indent_level number
 function UiTree.render_schema(schema, lines, indent_level)
   local Config = require('ssns.config')
+  local UiFilters = require('ssns.ui.filters')
   local icons = Config.get_ui().icons
 
   local indent = string.rep("  ", indent_level)
   local expand_icon = schema.ui_state.expanded and (icons.expanded or "▾") or (icons.collapsed or "▸")
   local schema_icon = icons.schema or ""
 
-  -- Schema line with icon
-  local line = string.format("%s%s %s %s", indent, expand_icon, schema_icon, schema.name)
+  -- Get all objects combined and sorted for count display
+  local all_objects = {}
+  local count_display = ""
+  if schema.is_loaded then
+    all_objects = get_schema_all_objects(schema)
+
+    -- Apply filters to get filtered list and effective total
+    local filters = UiFilters.get(schema)
+    local filtered_objects, effective_total = UiFilters.apply(all_objects, filters)
+    local filtered_count = #filtered_objects
+
+    -- Get count display (shows "x/y" if filtered, or just "x" if not)
+    count_display = " " .. UiFilters.get_count_display(schema, filtered_count, effective_total)
+
+    -- Store filtered objects for rendering children
+    all_objects = filtered_objects
+  end
+
+  -- Schema line with icon and count
+  local line = string.format("%s%s %s %s%s", indent, expand_icon, schema_icon, schema.name, count_display)
   table.insert(lines, line)
 
   -- Map line to object
   UiTree.line_map[#lines] = schema
   UiTree.object_map[schema] = #lines
 
-  -- If expanded, render object groups from typed arrays
+  -- If expanded, render all objects as flat sorted list
   if schema.ui_state.expanded then
     if schema.is_loaded then
-      local adapter = schema:get_adapter()
-
-      -- TABLES group - always show even if empty
-      local tables = schema:get_tables()
-      local tables_group = create_ui_group(schema, "TABLES", "tables_group", tables)
-      UiTree.render_object_group(tables_group, lines, indent_level + 1)
-
-      -- VIEWS group - always show if feature supported
-      if adapter.features and adapter.features.views then
-        local views = schema:get_views()
-        local views_group = create_ui_group(schema, "VIEWS", "views_group", views)
-        UiTree.render_object_group(views_group, lines, indent_level + 1)
-      end
-
-      -- PROCEDURES group - always show if feature supported
-      if adapter.features and adapter.features.procedures then
-        local procedures = schema:get_procedures()
-        local procedures_group = create_ui_group(schema, "PROCEDURES", "procedures_group", procedures)
-        UiTree.render_object_group(procedures_group, lines, indent_level + 1)
-      end
-
-      -- FUNCTIONS group - always show if feature supported
-      if adapter.features and adapter.features.functions then
-        local functions = schema:get_functions()
-        local functions_group = create_ui_group(schema, "FUNCTIONS", "functions_group", functions)
-        UiTree.render_object_group(functions_group, lines, indent_level + 1)
-      end
-
-      -- SYNONYMS group - always show if feature supported
-      if adapter.features and adapter.features.synonyms then
-        local synonyms = schema:get_synonyms()
-        local synonyms_group = create_ui_group(schema, "SYNONYMS", "synonyms_group", synonyms)
-        UiTree.render_object_group(synonyms_group, lines, indent_level + 1)
+      -- Render each object directly (no intermediate groups)
+      for _, obj in ipairs(all_objects) do
+        UiTree.render_object(obj, lines, indent_level + 1)
       end
     else
       local loading_icon = icons.connecting or "⋯"

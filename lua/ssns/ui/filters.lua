@@ -161,10 +161,11 @@ function UiFilters.get(group)
 
     -- Only apply system schema filter to groups that support it
     -- AND are NOT in a system database (master, msdb, tempdb, etc.)
+    -- AND are NOT inside a system schema (sys, INFORMATION_SCHEMA, etc.)
     local hide_system = false
     if supports_system_schema_filter(group) and default_hide then
-      -- Don't hide system schemas in system databases
-      if not is_group_in_system_database(group) then
+      -- Don't hide system schemas in system databases or inside system schemas
+      if not should_disable_system_filter(group) then
         hide_system = true
       end
     end
@@ -204,10 +205,11 @@ function UiFilters.clear(group)
 
   -- Only apply system schema filter to groups that support it
   -- AND are NOT in a system database (master, msdb, tempdb, etc.)
+  -- AND are NOT inside a system schema (sys, INFORMATION_SCHEMA, etc.)
   local hide_system = false
   if supports_system_schema_filter(group) and default_hide then
-    -- Don't hide system schemas in system databases
-    if not is_group_in_system_database(group) then
+    -- Don't hide system schemas in system databases or inside system schemas
+    if not should_disable_system_filter(group) then
       hide_system = true
     end
   end
