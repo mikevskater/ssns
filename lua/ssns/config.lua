@@ -130,6 +130,7 @@
 ---@field highlight_tables boolean Highlight table names (default: true)
 ---@field highlight_schemas boolean Highlight schema names (default: true)
 ---@field highlight_databases boolean Highlight database names (default: true)
+---@field highlight_parameters boolean Highlight @parameters and @@system_variables (default: true)
 ---@field highlight_unresolved boolean Highlight unresolved identifiers (default: true)
 
 ---Default configuration
@@ -413,6 +414,7 @@ local default_config = {
     highlight_tables = true,     -- Highlight table names
     highlight_schemas = true,    -- Highlight schema names
     highlight_databases = true,  -- Highlight database names
+    highlight_parameters = true, -- Highlight @parameters and @@system_variables
     highlight_unresolved = true, -- Highlight unresolved identifiers in gray
   },
 }

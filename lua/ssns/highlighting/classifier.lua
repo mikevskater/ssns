@@ -44,6 +44,7 @@ local HIGHLIGHT_MAP = {
   operator = "SsnsOperator",
   string = "SsnsString",
   number = "SsnsNumber",
+  parameter = "SsnsParameter", -- @parameters and @@system_variables
   unresolved = "SsnsUnresolved",
 }
 
@@ -379,6 +380,8 @@ end
 ---@return boolean uses_schemas True if the database type uses schemas
 function Classifier._db_uses_schemas(db)
   if not db then return false end
+  -- Check if db has get_adapter method (may not if it's not a proper DbClass)
+  if not db.get_adapter then return false end
   local adapter = db:get_adapter()
   return adapter and adapter.features and adapter.features.schemas
 end
@@ -398,6 +401,9 @@ function Classifier.classify(tokens, chunks, connection, config)
   -- Track the last keyword for context (only for USE database detection)
   local last_keyword = nil
 
+  -- Track previous token for parameter detection (identifier following @)
+  local prev_token = nil
+
   -- Gather multi-part identifiers (sequences of IDENTIFIER/BRACKET_ID separated by DOT)
   local i = 1
   while i <= #tokens do
@@ -416,6 +422,7 @@ function Classifier.classify(tokens, chunks, connection, config)
           highlight_group = HIGHLIGHT_MAP.keyword,
         }
       end
+      prev_token = token
       i = i + 1
 
     elseif token.type == TOKEN_TYPES.STRING then
@@ -425,6 +432,7 @@ function Classifier.classify(tokens, chunks, connection, config)
         semantic_type = "string",
         highlight_group = HIGHLIGHT_MAP.string,
       }
+      prev_token = token
       i = i + 1
 
     elseif token.type == TOKEN_TYPES.NUMBER then
@@ -434,6 +442,7 @@ function Classifier.classify(tokens, chunks, connection, config)
         semantic_type = "number",
         highlight_group = HIGHLIGHT_MAP.number,
       }
+      prev_token = token
       i = i + 1
 
     elseif token.type == TOKEN_TYPES.OPERATOR then
@@ -443,30 +452,46 @@ function Classifier.classify(tokens, chunks, connection, config)
         semantic_type = "operator",
         highlight_group = HIGHLIGHT_MAP.operator,
       }
+      prev_token = token
       i = i + 1
 
     elseif token.type == TOKEN_TYPES.IDENTIFIER or token.type == TOKEN_TYPES.BRACKET_ID then
-      -- Identifier - check if part of multi-part identifier
-      local parts, consumed = Classifier._gather_multipart(tokens, i)
-      local chunk = Classifier._find_chunk_at_position(chunk_index, token.line, token.col)
+      -- Check if this identifier follows @ (parameter name)
+      if prev_token and prev_token.type == TOKEN_TYPES.AT then
+        -- This is a parameter/variable name
+        if config.highlight_parameters then
+          result = {
+            token = token,
+            semantic_type = "parameter",
+            highlight_group = HIGHLIGHT_MAP.parameter,
+          }
+        end
+        prev_token = token
+        i = i + 1
+      else
+        -- Identifier - check if part of multi-part identifier
+        local parts, consumed = Classifier._gather_multipart(tokens, i)
+        local chunk = Classifier._find_chunk_at_position(chunk_index, token.line, token.col)
 
-      -- Build keyword context (only for USE database detection)
-      local keyword_context = {
-        is_database_context = last_keyword and DATABASE_CONTEXT_KEYWORDS[last_keyword],
-      }
+        -- Build keyword context (only for USE database detection)
+        local keyword_context = {
+          is_database_context = last_keyword and DATABASE_CONTEXT_KEYWORDS[last_keyword],
+        }
 
-      -- Classify each part by resolving against cache
-      local part_results = Classifier._classify_multipart(parts, chunk, connection, config, keyword_context)
-      for _, part_result in ipairs(part_results) do
-        table.insert(classified, part_result)
+        -- Classify each part by resolving against cache
+        local part_results = Classifier._classify_multipart(parts, chunk, connection, config, keyword_context)
+        for _, part_result in ipairs(part_results) do
+          table.insert(classified, part_result)
+        end
+
+        -- Reset last_keyword after consuming identifier
+        last_keyword = nil
+
+        prev_token = token
+        i = i + consumed
+        -- Skip adding result since we added directly
+        result = nil
       end
-
-      -- Reset last_keyword after consuming identifier
-      last_keyword = nil
-
-      i = i + consumed
-      -- Skip adding result since we added directly
-      result = nil
 
     elseif token.type == TOKEN_TYPES.HASH then
       -- Hash token (start of temp table name)
@@ -482,19 +507,37 @@ function Classifier.classify(tokens, chunks, connection, config)
           }
         end
       end
+      prev_token = token
       i = i + 1
 
     elseif token.type == TOKEN_TYPES.AT then
-      -- Variable/parameter - skip for now (could add SsnsVariable highlight)
+      -- @ symbol starts a parameter/variable (@UserId, @@ROWCOUNT)
+      -- Look ahead for identifier to highlight the @ as parameter
+      if i + 1 <= #tokens then
+        local next_token = tokens[i + 1]
+        if next_token.type == TOKEN_TYPES.IDENTIFIER or next_token.type == TOKEN_TYPES.AT then
+          -- Valid parameter/variable start
+          if config.highlight_parameters then
+            result = {
+              token = token,
+              semantic_type = "parameter",
+              highlight_group = HIGHLIGHT_MAP.parameter,
+            }
+          end
+        end
+      end
+      prev_token = token
       i = i + 1
 
     elseif token.type == TOKEN_TYPES.SEMICOLON then
       -- Semicolon resets keyword context (new statement)
       last_keyword = nil
+      prev_token = token
       i = i + 1
 
     else
       -- Other tokens (DOT, COMMA, PAREN, STAR) - skip
+      prev_token = token
       i = i + 1
     end
 

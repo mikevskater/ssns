@@ -43,6 +43,7 @@ function UiHighlights.setup()
   vim.api.nvim_set_hl(0, "SsnsIconColumn", vim.tbl_extend("force", hl.column, { default = true }))
   vim.api.nvim_set_hl(0, "SsnsIconIndex", vim.tbl_extend("force", hl.index, { default = true }))
   vim.api.nvim_set_hl(0, "SsnsIconKey", vim.tbl_extend("force", hl.key, { default = true }))
+  vim.api.nvim_set_hl(0, "SsnsIconParameter", vim.tbl_extend("force", hl.parameter, { default = true }))
   vim.api.nvim_set_hl(0, "SsnsIconSequence", vim.tbl_extend("force", hl.sequence, { default = true }))
   vim.api.nvim_set_hl(0, "SsnsIconSynonym", vim.tbl_extend("force", hl.synonym, { default = true }))
 
