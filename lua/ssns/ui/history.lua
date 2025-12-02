@@ -4,6 +4,7 @@ local UiHistory = {}
 
 local QueryHistory = require('ssns.query_history')
 local UiQuery = require('ssns.ui.query')
+local Cache = require('ssns.cache')
 
 ---@class HistoryState
 ---@field buffers_buf number Buffer list buffer
@@ -737,19 +738,37 @@ function UiHistory._load_query()
     return
   end
 
+  -- Look up actual ServerClass and DbClass objects from cache
+  local server = Cache.find_server(buffer_history.server_name)
+  local database = nil
+
+  if server and buffer_history.database then
+    database = Cache.find_database(buffer_history.server_name, buffer_history.database)
+  end
+
   -- Close history window
   UiHistory._close()
 
-  -- Create new query buffer with this query
-  UiQuery.create_query_buffer(buffer_history.server_name, buffer_history.database)
+  -- Create new query buffer with proper objects (or strings as fallback)
+  -- If server/database not found, pass strings - buffer will work for viewing but not execution
+  UiQuery.create_query_buffer(server or buffer_history.server_name, database or buffer_history.database)
 
   -- Populate with query
   vim.schedule(function()
     local query_buf = vim.api.nvim_get_current_buf()
     vim.api.nvim_buf_set_option(query_buf, "modifiable", true)
     vim.api.nvim_buf_set_lines(query_buf, 0, -1, false, vim.split(entry.query, "\n"))
+
+    -- Notify with connection status
+    local connection_status = ""
+    if not server then
+      connection_status = " (server not connected)"
+    elseif not database then
+      connection_status = " (database not found)"
+    end
+
     vim.notify(
-      string.format("Loaded query from %s (%s)", buffer_history.buffer_name, entry.timestamp),
+      string.format("Loaded query from %s (%s)%s", buffer_history.buffer_name, entry.timestamp, connection_status),
       vim.log.levels.INFO
     )
   end)
