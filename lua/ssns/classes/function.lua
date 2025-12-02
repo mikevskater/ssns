@@ -7,6 +7,8 @@ local BaseDbObject = require('ssns.classes.base')
 ---@field parent SchemaClass The parent schema object
 ---@field parameters ParameterClass[]? Array of parameter objects
 ---@field parameters_loaded boolean Whether parameters have been loaded
+---@field columns ColumnClass[]? Array of column objects (for table-valued functions)
+---@field columns_loaded boolean Whether columns have been loaded
 ---@field definition string? The function definition SQL
 ---@field definition_loaded boolean Whether definition has been loaded
 local FunctionClass = setmetatable({}, { __index = BaseDbObject })
@@ -27,6 +29,8 @@ function FunctionClass.new(opts)
   self.function_type = opts.function_type
   self.parameters = nil
   self.parameters_loaded = false
+  self.columns = nil
+  self.columns_loaded = false
   self.definition = nil
   self.definition_loaded = false
 
@@ -94,6 +98,31 @@ function FunctionClass:create_action_nodes()
     return true
   end
   table.insert(self.children, params_group)
+
+  -- Add Columns group for table-valued functions (lazy loaded when expanded)
+  if self:is_table_valued() then
+    local columns_group = BaseDbObject.new({
+      name = "Columns",
+      parent = self,
+    })
+    columns_group.object_type = "column_group"
+
+    -- Override load for columns group
+    columns_group.load = function(group)
+      if group.is_loaded then
+        return true
+      end
+      self:load_columns()
+      group:clear_children()
+      for _, col in ipairs(self.columns) do
+        -- Don't set parent - just add to children manually to avoid auto-add
+        table.insert(group.children, col)
+      end
+      group.is_loaded = true
+      return true
+    end
+    table.insert(self.children, columns_group)
+  end
 
   -- Add Function Definition action (ALTER shows definition)
   local definition_action = BaseDbObject.new({
@@ -176,6 +205,83 @@ function FunctionClass:get_parameters()
     self:load_parameters()
   end
   return self.parameters
+end
+
+---Load columns for this table-valued function (lazy loading)
+---@return ColumnClass[]
+function FunctionClass:load_columns()
+  if self.columns_loaded then
+    return self.columns
+  end
+
+  -- Only table-valued functions have columns
+  if not self:is_table_valued() then
+    self.columns = {}
+    self.columns_loaded = true
+    return self.columns
+  end
+
+  local adapter = self:get_adapter()
+
+  -- Get database using get_database() method (handles both schema and non-schema databases)
+  local db = self:get_database()
+
+  -- Validate we have a database
+  if not db then
+    vim.notify(string.format("SSNS: Function %s has no parent database", self.function_name), vim.log.levels.ERROR)
+    self.columns = {}
+    self.columns_loaded = true
+    return self.columns
+  end
+
+  if not db.db_name then
+    vim.notify(string.format("SSNS: Function %s parent '%s' is not a database (type: %s)",
+      self.function_name,
+      db.name or "unknown",
+      db.object_type or "unknown"), vim.log.levels.ERROR)
+    self.columns = {}
+    self.columns_loaded = true
+    return self.columns
+  end
+
+  -- Get TVF columns query from adapter (if available)
+  local query
+  if adapter.get_tvf_columns_query then
+    query = adapter:get_tvf_columns_query(db.db_name, self.schema_name, self.function_name)
+  else
+    -- Fallback: use standard columns query (may not work for all databases)
+    query = adapter:get_columns_query(db.db_name, self.schema_name, self.function_name)
+  end
+
+  -- Execute query
+  local results = adapter:execute(self:get_server().connection, query)
+
+  -- Check for errors
+  if results.error then
+    vim.notify(string.format("SSNS: Error loading columns: %s", results.error.message or vim.inspect(results.error)), vim.log.levels.ERROR)
+  end
+
+  -- Parse results (same format as table columns)
+  local columns = adapter:parse_columns(results)
+
+  -- Create column objects (don't set parent to avoid adding to function's children)
+  self.columns = {}
+  for _, col_data in ipairs(columns) do
+    local col_obj = adapter:create_column(nil, col_data)
+    table.insert(self.columns, col_obj)
+  end
+
+  self.columns_loaded = true
+  return self.columns
+end
+
+---Get columns (load if not already loaded)
+---@return ColumnClass[]
+function FunctionClass:get_columns()
+  if not self.columns_loaded then
+    self:load_columns()
+  end
+  return self.columns
 end
 
 ---Load the function definition SQL

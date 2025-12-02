@@ -160,6 +160,8 @@ function UiHighlights.get_highlight_group(obj)
     views_group = "SsnsGroup",
     procedures_group = "SsnsGroup",
     functions_group = "SsnsGroup",
+    scalar_functions_group = "SsnsGroup",
+    table_functions_group = "SsnsGroup",
     sequences_group = "SsnsGroup",
     synonyms_group = "SsnsGroup",
     schemas_group = "SsnsGroup",

@@ -43,6 +43,8 @@ function UiFilterInput.show_input(group, current_filters, callback)
     or group.object_type == "views_group"
     or group.object_type == "procedures_group"
     or group.object_type == "functions_group"
+    or group.object_type == "scalar_functions_group"
+    or group.object_type == "table_functions_group"
     or group.object_type == "synonyms_group"
     or group.object_type == "schemas_group"
     or group.object_type == "schema"

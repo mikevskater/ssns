@@ -51,6 +51,8 @@ local function supports_system_schema_filter(group)
     or obj_type == "views_group"
     or obj_type == "procedures_group"
     or obj_type == "functions_group"
+    or obj_type == "scalar_functions_group"
+    or obj_type == "table_functions_group"
     or obj_type == "synonyms_group"
     or obj_type == "schemas_group"
     or obj_type == "schema"

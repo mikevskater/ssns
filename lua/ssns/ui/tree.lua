@@ -111,6 +111,8 @@ function UiTree.get_object_icon(object_type, icons, obj)
     views_group = icons.schema or "",
     procedures_group = icons.schema or "",
     functions_group = icons.schema or "",
+    scalar_functions_group = icons.schema or "",
+    table_functions_group = icons.schema or "",
     sequences_group = icons.schema or "",
     synonyms_group = icons.schema or "",
     schemas_group = icons.schema or "",
@@ -286,9 +288,29 @@ function UiTree.render_database(db, lines, indent_level)
       end
 
       -- FUNCTIONS group - always show if feature supported
+      -- Split into SCALAR and TABLE sub-groups
       if adapter.features and adapter.features.functions then
-        local functions = db:get_functions()
-        local functions_group = create_ui_group(db, "FUNCTIONS", "functions_group", functions)
+        local all_functions = db:get_functions()
+
+        -- Split functions by type
+        local scalar_functions = {}
+        local table_functions = {}
+        for _, func in ipairs(all_functions) do
+          if func:is_table_valued() then
+            table.insert(table_functions, func)
+          else
+            table.insert(scalar_functions, func)
+          end
+        end
+
+        -- Create sub-groups
+        local scalar_group = create_ui_group(db, "SCALAR", "scalar_functions_group", scalar_functions)
+        local table_group = create_ui_group(db, "TABLE", "table_functions_group", table_functions)
+
+        -- Create parent FUNCTIONS group with sub-groups as children
+        local functions_group = create_ui_group(db, "FUNCTIONS", "functions_group", { scalar_group, table_group })
+        -- Store total function count for display (not sub-group count)
+        functions_group._total_items = #all_functions
         UiTree.render_object(functions_group, lines, indent_level + 1)
       end
 
@@ -443,6 +465,8 @@ function UiTree.render_object(obj, lines, indent_level)
     or obj.object_type == "views_group"
     or obj.object_type == "procedures_group"
     or obj.object_type == "functions_group"
+    or obj.object_type == "scalar_functions_group"
+    or obj.object_type == "table_functions_group"
     or obj.object_type == "synonyms_group"
     or obj.object_type == "schemas_group"
     or obj.object_type == "schema_view"
@@ -474,6 +498,8 @@ function UiTree.render_object(obj, lines, indent_level)
                           obj.object_type == "views_group" or
                           obj.object_type == "procedures_group" or
                           obj.object_type == "functions_group" or
+                          obj.object_type == "scalar_functions_group" or
+                          obj.object_type == "table_functions_group" or
                           obj.object_type == "synonyms_group" or
                           obj.object_type == "sequences_group"
 
@@ -484,12 +510,15 @@ function UiTree.render_object(obj, lines, indent_level)
     -- Strip any existing count from name (in case it's already there)
     local base_name = obj.name:gsub("%s*%([%d/]+%)$", "")
     display_name = base_name
-    if obj:has_children() then
+    if obj:has_children() or obj._total_items then
       local UiFilters = require('ssns.ui.filters')
       local filters = UiFilters.get(obj)
       local all_children = obj:get_children()
       local filtered_children = UiFilters.apply(all_children, filters)
-      local count_display = UiFilters.get_count_display(obj, #filtered_children, #all_children)
+      -- Use _total_items for parent groups with nested sub-groups (e.g., FUNCTIONS)
+      local total_count = obj._total_items or #all_children
+      local filtered_count = obj._total_items or #filtered_children
+      local count_display = UiFilters.get_count_display(obj, filtered_count, total_count)
       display_name = display_name .. " " .. count_display
     end
   else
@@ -533,6 +562,8 @@ function UiTree.render_object(obj, lines, indent_level)
                                 obj.object_type == "views_group" or
                                 obj.object_type == "procedures_group" or
                                 obj.object_type == "functions_group" or
+                                obj.object_type == "scalar_functions_group" or
+                                obj.object_type == "table_functions_group" or
                                 obj.object_type == "synonyms_group" or
                                 obj.object_type == "sequences_group"
 
@@ -1169,6 +1200,8 @@ function UiTree.navigate_to_object(target_object)
       or parent.object_type == "views_group"
       or parent.object_type == "procedures_group"
       or parent.object_type == "functions_group"
+      or parent.object_type == "scalar_functions_group"
+      or parent.object_type == "table_functions_group"
       or parent.object_type == "synonyms_group"
       or parent.object_type == "schemas_group"
 
@@ -1177,20 +1210,37 @@ function UiTree.navigate_to_object(target_object)
     end
   end
 
-  -- Find the database that contains the target object
+  -- Find the server and database that contain the target object
+  local server = target_object:get_server()
   local database = target_object:get_database()
+
+  if not server then
+    vim.notify("Target server not found", vim.log.levels.WARN)
+    return
+  end
+
   if not database then
     vim.notify("Target database not found", vim.log.levels.WARN)
     return
   end
 
+  -- Ensure server is loaded and expanded
+  if not server.is_loaded and server.load then
+    server:load()
+  end
+  server.ui_state.expanded = true
+  -- Expand the databases group inside the server
+  server["_ui_databases_group_expanded"] = true
+
   -- Load the database if not loaded
   if not database.is_loaded and database.load then
     database:load()
   end
+  database.ui_state.expanded = true
 
   -- Verify object exists in cached data using typed arrays
   local group_type = nil
+  local sub_group_type = nil  -- For nested groups like SCALAR/TABLE functions
   local object_exists = false
 
   -- Helper to check if object exists in a collection
@@ -1213,8 +1263,15 @@ function UiTree.navigate_to_object(target_object)
     group_type = "procedures_group"
     object_exists = find_in_collection(database:get_procedures())
   elseif target_object.object_type == "function" then
+    -- Functions have nested sub-groups (SCALAR/TABLE)
     group_type = "functions_group"
     object_exists = find_in_collection(database:get_functions())
+    -- Determine which sub-group based on function type
+    if object_exists and target_object.is_table_valued and target_object:is_table_valued() then
+      sub_group_type = "table_functions_group"
+    else
+      sub_group_type = "scalar_functions_group"
+    end
   elseif target_object.object_type == "synonym" then
     group_type = "synonyms_group"
     object_exists = find_in_collection(database:get_synonyms())
@@ -1226,18 +1283,15 @@ function UiTree.navigate_to_object(target_object)
     return
   end
 
-  -- Object exists - store expansion state for the ephemeral group
-  -- (The ephemeral group will read this when created during render)
+  -- Object exists - store expansion state for the ephemeral groups
+  -- Groups are always created at database level in render_database(), so store on database
+  -- (The ephemeral groups will read this when created during render)
   if group_type then
-    -- Get the schema if object has one (for schema-based servers)
-    local schema = target_object.parent
-    if schema and schema.object_type == "schema" then
-      -- Expand the schema and its group
-      schema.ui_state.expanded = true
-      schema["_ui_" .. group_type .. "_expanded"] = true
-    else
-      -- Non-schema server: expand database's group
-      database["_ui_" .. group_type .. "_expanded"] = true
+    -- Expand the object's group at database level
+    database["_ui_" .. group_type .. "_expanded"] = true
+    -- For functions, also expand the sub-group (SCALAR or TABLE)
+    if sub_group_type then
+      database["_ui_" .. sub_group_type .. "_expanded"] = true
     end
   end
 
@@ -1463,6 +1517,7 @@ function UiTree.open_filter()
   -- Check if this is a filterable object (group or schema node)
   local filterable_types = {
     "databases_group", "tables_group", "views_group", "procedures_group", "functions_group",
+    "scalar_functions_group", "table_functions_group",
     "synonyms_group", "sequences_group", "schema", "schema_view"  -- Individual schema nodes, not schemas_group
   }
 
@@ -1510,6 +1565,7 @@ function UiTree.clear_filter()
   -- Check if this is a filterable object (group or schema node)
   local filterable_types = {
     "databases_group", "tables_group", "views_group", "procedures_group", "functions_group",
+    "scalar_functions_group", "table_functions_group",
     "synonyms_group", "sequences_group", "schema", "schema_view"  -- Individual schema nodes, not schemas_group
   }
 
