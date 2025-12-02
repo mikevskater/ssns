@@ -1239,47 +1239,62 @@ function UiTree.navigate_to_object(target_object)
   database.ui_state.expanded = true
 
   -- Verify object exists in cached data using typed arrays
+  -- Compare by identity (schema + name) not reference, since synonym resolution may cache old refs
   local group_type = nil
   local sub_group_type = nil  -- For nested groups like SCALAR/TABLE functions
-  local object_exists = false
+  local found_object = nil  -- The actual object from the database's collection
 
-  -- Helper to check if object exists in a collection
-  local function find_in_collection(collection)
+  -- Helper to find object in a collection by schema and name
+  local function find_in_collection(collection, schema_name, object_name)
     for _, obj in ipairs(collection or {}) do
-      if obj == target_object then
-        return true
+      local obj_schema = obj.schema_name
+      local obj_name = obj.table_name or obj.view_name or obj.procedure_name
+                       or obj.function_name or obj.synonym_name or obj.name
+      if obj_schema == schema_name and obj_name == object_name then
+        return obj
       end
     end
-    return false
+    return nil
   end
+
+  -- Get target's schema and name for comparison
+  local target_schema = target_object.schema_name
+  local target_name = target_object.table_name or target_object.view_name
+                      or target_object.procedure_name or target_object.function_name
+                      or target_object.synonym_name or target_object.name
 
   if target_object.object_type == "table" then
     group_type = "tables_group"
-    object_exists = find_in_collection(database:get_tables())
+    found_object = find_in_collection(database:get_tables(), target_schema, target_name)
   elseif target_object.object_type == "view" then
     group_type = "views_group"
-    object_exists = find_in_collection(database:get_views())
+    found_object = find_in_collection(database:get_views(), target_schema, target_name)
   elseif target_object.object_type == "procedure" then
     group_type = "procedures_group"
-    object_exists = find_in_collection(database:get_procedures())
+    found_object = find_in_collection(database:get_procedures(), target_schema, target_name)
   elseif target_object.object_type == "function" then
     -- Functions have nested sub-groups (SCALAR/TABLE)
     group_type = "functions_group"
-    object_exists = find_in_collection(database:get_functions())
+    found_object = find_in_collection(database:get_functions(), target_schema, target_name)
     -- Determine which sub-group based on function type
-    if object_exists and target_object.is_table_valued and target_object:is_table_valued() then
+    if found_object and found_object.is_table_valued and found_object:is_table_valued() then
       sub_group_type = "table_functions_group"
     else
       sub_group_type = "scalar_functions_group"
     end
   elseif target_object.object_type == "synonym" then
     group_type = "synonyms_group"
-    object_exists = find_in_collection(database:get_synonyms())
+    found_object = find_in_collection(database:get_synonyms(), target_schema, target_name)
+  end
+
+  -- Use the found object (from current cache) instead of potentially stale target_object
+  if found_object then
+    target_object = found_object
   end
 
   -- Object doesn't exist in cached data - don't expand
-  if not object_exists then
-    vim.notify(string.format("Object '%s' not found in database (may have been dropped)", target_object.name), vim.log.levels.WARN)
+  if not found_object then
+    vim.notify(string.format("Object '%s.%s' not found in database (may have been dropped)", target_schema, target_name), vim.log.levels.WARN)
     return
   end
 
