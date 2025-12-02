@@ -103,6 +103,79 @@ function SemanticHighlighter.is_attached(bufnr)
   return enabled_buffers[bufnr] == true
 end
 
+---Apply comment highlighting to buffer lines
+---Detects -- line comments and /* block comments */ and highlights them
+---@param bufnr number Buffer number
+---@param lines string[] Buffer lines
+local function apply_comment_highlights(bufnr, lines)
+  local in_block_comment = false
+  local block_comment_depth = 0
+
+  for line_idx, line_text in ipairs(lines) do
+    local line_0 = line_idx - 1  -- Convert to 0-indexed for nvim API
+    local col = 1
+    local in_string = false
+
+    while col <= #line_text do
+      local char = line_text:sub(col, col)
+      local next_char = line_text:sub(col + 1, col + 1)
+
+      -- Handle block comment state
+      if in_block_comment then
+        -- Check for nested block comment start
+        if char == '/' and next_char == '*' then
+          block_comment_depth = block_comment_depth + 1
+          col = col + 2
+        -- Check for block comment end
+        elseif char == '*' and next_char == '/' then
+          block_comment_depth = block_comment_depth - 1
+          if block_comment_depth == 0 then
+            -- Highlight from start of line to end of comment
+            vim.api.nvim_buf_add_highlight(bufnr, ns_id, "SsnsComment", line_0, 0, col + 1)
+            in_block_comment = false
+          end
+          col = col + 2
+        else
+          col = col + 1
+        end
+      else
+        -- Check for string literal (to avoid highlighting comments inside strings)
+        if char == "'" and not in_string then
+          in_string = true
+          col = col + 1
+        elseif char == "'" and in_string then
+          -- Check for escaped quote ''
+          if next_char == "'" then
+            col = col + 2
+          else
+            in_string = false
+            col = col + 1
+          end
+        -- Check for block comment start (not in string)
+        elseif char == '/' and next_char == '*' and not in_string then
+          in_block_comment = true
+          block_comment_depth = 1
+          -- Highlight from comment start to end of line
+          vim.api.nvim_buf_add_highlight(bufnr, ns_id, "SsnsComment", line_0, col - 1, #line_text)
+          break  -- Rest of line is comment
+        -- Check for line comment start (not in string)
+        elseif char == '-' and next_char == '-' and not in_string then
+          -- Highlight from comment start to end of line
+          vim.api.nvim_buf_add_highlight(bufnr, ns_id, "SsnsComment", line_0, col - 1, #line_text)
+          break  -- Rest of line is comment
+        else
+          col = col + 1
+        end
+      end
+    end
+
+    -- If still in block comment at end of line, highlight entire line
+    if in_block_comment then
+      vim.api.nvim_buf_add_highlight(bufnr, ns_id, "SsnsComment", line_0, 0, #line_text)
+    end
+  end
+end
+
 ---Update semantic highlights for a buffer
 ---@param bufnr number Buffer number
 ---@param cache BufferStatementCache? Cached statement chunks (optional, will fetch if not provided)
@@ -139,38 +212,39 @@ function SemanticHighlighter.update(bufnr, cache)
   local Tokenizer = require('ssns.completion.tokenizer')
   local tokens = Tokenizer.tokenize(text)
 
-  if #tokens == 0 then
-    SemanticHighlighter.clear(bufnr)
-    return
-  end
-
-  -- Get connection context for this buffer
-  local connection = SemanticHighlighter._get_connection(bufnr)
-
-  -- Classify tokens
-  local Classifier = require('ssns.highlighting.classifier')
-  local classified = Classifier.classify(tokens, cache.chunks, connection, config)
-
   -- Clear existing highlights
   vim.api.nvim_buf_clear_namespace(bufnr, ns_id, 0, -1)
 
-  -- Apply highlights
-  for _, item in ipairs(classified) do
-    if item.highlight_group then
-      -- Convert 1-indexed (tokenizer) to 0-indexed (nvim API)
-      local line = item.token.line - 1
-      local col_start = item.token.col - 1
-      local col_end = col_start + #item.token.text
+  if #tokens > 0 then
+    -- Get connection context for this buffer
+    local connection = SemanticHighlighter._get_connection(bufnr)
 
-      -- Ensure we don't go past buffer bounds
-      if line >= 0 and line < #lines then
-        local line_len = #lines[line + 1]
-        if col_start >= 0 and col_end <= line_len then
-          vim.api.nvim_buf_add_highlight(bufnr, ns_id, item.highlight_group, line, col_start, col_end)
+    -- Classify tokens
+    local Classifier = require('ssns.highlighting.classifier')
+    local classified = Classifier.classify(tokens, cache.chunks, connection, config)
+
+    -- Apply token highlights first
+    for _, item in ipairs(classified) do
+      if item.highlight_group then
+        -- Convert 1-indexed (tokenizer) to 0-indexed (nvim API)
+        local line = item.token.line - 1
+        local col_start = item.token.col - 1
+        local col_end = col_start + #item.token.text
+
+        -- Ensure we don't go past buffer bounds
+        if line >= 0 and line < #lines then
+          local line_len = #lines[line + 1]
+          if col_start >= 0 and col_end <= line_len then
+            vim.api.nvim_buf_add_highlight(bufnr, ns_id, item.highlight_group, line, col_start, col_end)
+          end
         end
       end
     end
   end
+
+  -- Apply comment highlights last (so they override any token highlights)
+  -- Comments are skipped by the tokenizer, so we need to detect and highlight them separately
+  apply_comment_highlights(bufnr, lines)
 end
 
 ---Clear semantic highlights for a buffer
