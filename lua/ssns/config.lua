@@ -187,6 +187,12 @@ local default_config = {
         "db_denydatareader",
         "db_denydatawriter",
       },
+      system_databases = {         -- Databases considered as "system" (case-insensitive matching)
+        "master",
+        "model",
+        "msdb",
+        "tempdb",
+      },
     },
 
     icons = {

@@ -165,6 +165,8 @@ function UiHighlights.get_highlight_group(obj)
     sequences_group = "SsnsGroup",
     synonyms_group = "SsnsGroup",
     schemas_group = "SsnsGroup",
+    system_databases_group = "SsnsGroup",
+    system_schemas_group = "SsnsGroup",
     column_group = "SsnsGroup",
     index_group = "SsnsGroup",
     key_group = "SsnsGroup",

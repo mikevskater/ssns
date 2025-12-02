@@ -47,6 +47,8 @@ function UiFilterInput.show_input(group, current_filters, callback)
     or group.object_type == "table_functions_group"
     or group.object_type == "synonyms_group"
     or group.object_type == "schemas_group"
+    or group.object_type == "system_databases_group"
+    or group.object_type == "system_schemas_group"
     or group.object_type == "schema"
     or group.object_type == "schema_view"
 

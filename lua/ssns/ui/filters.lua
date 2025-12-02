@@ -55,6 +55,8 @@ local function supports_system_schema_filter(group)
     or obj_type == "table_functions_group"
     or obj_type == "synonyms_group"
     or obj_type == "schemas_group"
+    or obj_type == "system_databases_group"
+    or obj_type == "system_schemas_group"
     or obj_type == "schema"
     or obj_type == "schema_view"
 end
@@ -136,6 +138,11 @@ end
 ---@param group BaseDbObject The group object
 ---@return boolean should_disable True if system filtering should be disabled
 local function should_disable_system_filter(group)
+  -- Disable system filtering for SYSTEM sub-groups (they exist to SHOW system objects)
+  if group.object_type == "system_databases_group" or group.object_type == "system_schemas_group" then
+    return true
+  end
+
   -- Disable system filtering in system databases (master, msdb, tempdb)
   if is_group_in_system_database(group) then
     return true

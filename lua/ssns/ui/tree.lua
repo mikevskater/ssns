@@ -116,6 +116,8 @@ function UiTree.get_object_icon(object_type, icons, obj)
     sequences_group = icons.schema or "",
     synonyms_group = icons.schema or "",
     schemas_group = icons.schema or "",
+    system_databases_group = icons.schema or "",
+    system_schemas_group = icons.schema or "",
     column_group = icons.schema or "",
     index_group = icons.schema or "",
     key_group = icons.schema or "",
@@ -217,10 +219,44 @@ function UiTree.render_server(server, lines, line_number, indent_level)
       table.insert(lines, indent .. "    " .. loading_icon .. " Loading...")
     elseif server.is_loaded then
       -- Get databases using typed array accessor
-      local databases = server:get_databases()
-      if #databases > 0 then
-        -- Create ephemeral databases group for UI
-        local databases_group = create_ui_group(server, "Databases", "databases_group", databases)
+      local all_databases = server:get_databases()
+      if #all_databases > 0 then
+        -- Get system database names from config
+        local Config = require('ssns.config')
+        local filter_config = Config.get_filters()
+        local system_db_names = filter_config and filter_config.system_databases or {}
+
+        -- Split into system and user databases
+        local system_databases = {}
+        local user_databases = {}
+        for _, db in ipairs(all_databases) do
+          local is_system = false
+          for _, sys_name in ipairs(system_db_names) do
+            if db.db_name:lower() == sys_name:lower() then
+              is_system = true
+              break
+            end
+          end
+          if is_system then
+            table.insert(system_databases, db)
+          else
+            table.insert(user_databases, db)
+          end
+        end
+
+        -- Build children: SYSTEM sub-group first (if any), then user databases
+        local children = {}
+        if #system_databases > 0 then
+          local system_group = create_ui_group(server, "SYSTEM", "system_databases_group", system_databases)
+          table.insert(children, system_group)
+        end
+        for _, db in ipairs(user_databases) do
+          table.insert(children, db)
+        end
+
+        -- Create parent Databases group with SYSTEM sub-group + user databases as children
+        local databases_group = create_ui_group(server, "Databases", "databases_group", children)
+        databases_group._total_items = #all_databases
         UiTree.render_object(databases_group, lines, indent_level + 1)
       end
     elseif server:is_connected() and not server.is_loaded then
@@ -324,8 +360,44 @@ function UiTree.render_database(db, lines, indent_level)
       -- SCHEMAS group (for schema-based servers like SQL Server, PostgreSQL)
       -- Shown last as an alternative view of objects organized by schema
       if adapter.features and adapter.features.schemas then
-        local schemas = db:get_schemas()
-        local schemas_group = create_ui_group(db, "SCHEMAS", "schemas_group", schemas)
+        local all_schemas = db:get_schemas()
+
+        -- Get system schema names from config
+        local Config = require('ssns.config')
+        local filter_config = Config.get_filters()
+        local system_schema_names = filter_config and filter_config.system_schemas or {}
+
+        -- Split into system and user schemas
+        local system_schemas = {}
+        local user_schemas = {}
+        for _, schema in ipairs(all_schemas) do
+          local is_system = false
+          for _, sys_name in ipairs(system_schema_names) do
+            if schema.name:lower() == sys_name:lower() then
+              is_system = true
+              break
+            end
+          end
+          if is_system then
+            table.insert(system_schemas, schema)
+          else
+            table.insert(user_schemas, schema)
+          end
+        end
+
+        -- Build children: SYSTEM sub-group first (if any), then user schemas
+        local children = {}
+        if #system_schemas > 0 then
+          local system_group = create_ui_group(db, "SYSTEM", "system_schemas_group", system_schemas)
+          table.insert(children, system_group)
+        end
+        for _, schema in ipairs(user_schemas) do
+          table.insert(children, schema)
+        end
+
+        -- Create parent SCHEMAS group with SYSTEM sub-group + user schemas as children
+        local schemas_group = create_ui_group(db, "SCHEMAS", "schemas_group", children)
+        schemas_group._total_items = #all_schemas
         UiTree.render_object(schemas_group, lines, indent_level + 1)
       end
     else
@@ -469,6 +541,8 @@ function UiTree.render_object(obj, lines, indent_level)
     or obj.object_type == "table_functions_group"
     or obj.object_type == "synonyms_group"
     or obj.object_type == "schemas_group"
+    or obj.object_type == "system_databases_group"
+    or obj.object_type == "system_schemas_group"
     or obj.object_type == "schema_view"
     or obj.object_type == "column_group"
     or obj.object_type == "index_group"
@@ -501,7 +575,9 @@ function UiTree.render_object(obj, lines, indent_level)
                           obj.object_type == "scalar_functions_group" or
                           obj.object_type == "table_functions_group" or
                           obj.object_type == "synonyms_group" or
-                          obj.object_type == "sequences_group"
+                          obj.object_type == "sequences_group" or
+                          obj.object_type == "system_databases_group" or
+                          obj.object_type == "system_schemas_group"
 
   -- For groups and schemas, use name directly and add count
   -- For other objects, use get_display_name if available
@@ -565,7 +641,9 @@ function UiTree.render_object(obj, lines, indent_level)
                                 obj.object_type == "scalar_functions_group" or
                                 obj.object_type == "table_functions_group" or
                                 obj.object_type == "synonyms_group" or
-                                obj.object_type == "sequences_group"
+                                obj.object_type == "sequences_group" or
+                                obj.object_type == "system_databases_group" or
+                                obj.object_type == "system_schemas_group"
 
         if is_schema_node or is_object_group then
           local UiFilters = require('ssns.ui.filters')
@@ -1204,6 +1282,8 @@ function UiTree.navigate_to_object(target_object)
       or parent.object_type == "table_functions_group"
       or parent.object_type == "synonyms_group"
       or parent.object_type == "schemas_group"
+      or parent.object_type == "system_databases_group"
+      or parent.object_type == "system_schemas_group"
 
     if not parent.ui_state.expanded and can_have_children then
       parent.ui_state.expanded = true
@@ -1533,7 +1613,8 @@ function UiTree.open_filter()
   local filterable_types = {
     "databases_group", "tables_group", "views_group", "procedures_group", "functions_group",
     "scalar_functions_group", "table_functions_group",
-    "synonyms_group", "sequences_group", "schema", "schema_view"  -- Individual schema nodes, not schemas_group
+    "synonyms_group", "sequences_group", "schema", "schema_view",  -- Individual schema nodes, not schemas_group
+    "system_databases_group", "system_schemas_group"
   }
 
   local is_filterable = false
@@ -1581,7 +1662,8 @@ function UiTree.clear_filter()
   local filterable_types = {
     "databases_group", "tables_group", "views_group", "procedures_group", "functions_group",
     "scalar_functions_group", "table_functions_group",
-    "synonyms_group", "sequences_group", "schema", "schema_view"  -- Individual schema nodes, not schemas_group
+    "synonyms_group", "sequences_group", "schema", "schema_view",  -- Individual schema nodes, not schemas_group
+    "system_databases_group", "system_schemas_group"
   }
 
   local is_filterable = false
