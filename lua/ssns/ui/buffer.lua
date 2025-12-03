@@ -250,8 +250,16 @@ function UiBuffer.open(mode_override)
       vim.cmd("topleft vsplit")
     end
 
+    -- Calculate width (support percentage-based sizing if <= 1)
+    local split_width = width
+    if split_width <= 1 then
+      split_width = math.floor(vim.o.columns * split_width)
+    end
+    -- Ensure minimum width
+    split_width = math.max(split_width, 20)
+
     -- Set window width
-    vim.cmd(string.format("vertical resize %d", width))
+    vim.cmd(string.format("vertical resize %d", split_width))
 
     -- Set buffer in window
     vim.api.nvim_win_set_buf(0, UiBuffer.bufnr)

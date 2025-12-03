@@ -555,32 +555,53 @@ end
 ---@return boolean valid
 ---@return string? error_message
 function Config.validate(config)
-  -- Check required fields
-  if not config.ui then
-    return false, "Missing 'ui' configuration"
+  -- Validation only checks fields that are PROVIDED by the user
+  -- Missing fields will use defaults after merge, so they're not required here
+
+  -- Validate UI configuration (if provided)
+  if config.ui then
+    -- Validate position (if provided)
+    if config.ui.position then
+      local valid_positions = { left = true, right = true, float = true }
+      if not valid_positions[config.ui.position] then
+        return false, string.format("Invalid ui.position: %s (must be 'left', 'right', or 'float')", config.ui.position)
+      end
+    end
+
+    -- Validate width (if provided) - allow percentages (0-1) or columns (>= 10)
+    if config.ui.width then
+      if type(config.ui.width) ~= "number" then
+        return false, "ui.width must be a number"
+      end
+      -- Valid: 0 < width <= 1 (percentage) OR width >= 10 (columns)
+      local is_percentage = config.ui.width > 0 and config.ui.width <= 1
+      local is_columns = config.ui.width >= 10
+      if not is_percentage and not is_columns then
+        return false, "ui.width must be a percentage (0-1) or at least 10 columns"
+      end
+    end
+
+    -- Validate height (if provided) - allow percentages (0-1) or rows (>= 5)
+    if config.ui.height then
+      if type(config.ui.height) ~= "number" then
+        return false, "ui.height must be a number"
+      end
+      local is_percentage = config.ui.height > 0 and config.ui.height <= 1
+      local is_rows = config.ui.height >= 5
+      if not is_percentage and not is_rows then
+        return false, "ui.height must be a percentage (0-1) or at least 5 rows"
+      end
+    end
   end
 
-  if not config.ui.position then
-    return false, "Missing 'ui.position' configuration"
+  -- Validate cache configuration (if provided)
+  if config.cache and config.cache.ttl then
+    if config.cache.ttl < 0 then
+      return false, "cache.ttl must be a positive number"
+    end
   end
 
-  -- Validate position
-  local valid_positions = { left = true, right = true, float = true }
-  if not valid_positions[config.ui.position] then
-    return false, string.format("Invalid ui.position: %s (must be 'left', 'right', or 'float')", config.ui.position)
-  end
-
-  -- Validate width
-  if not config.ui.width or config.ui.width < 10 then
-    return false, "ui.width must be at least 10"
-  end
-
-  -- Validate cache configuration
-  if not config.cache or not config.cache.ttl or config.cache.ttl < 0 then
-    return false, "cache.ttl must be a positive number"
-  end
-
-  -- Validate query configuration
+  -- Validate query configuration (if provided)
   if config.query then
     if config.query.default_limit and config.query.default_limit < 0 then
       return false, "query.default_limit must be non-negative"
@@ -590,7 +611,7 @@ function Config.validate(config)
     end
   end
 
-  -- Validate performance configuration
+  -- Validate performance configuration (if provided)
   if config.performance then
     if config.performance.page_size and config.performance.page_size < 0 then
       return false, "performance.page_size must be non-negative"
