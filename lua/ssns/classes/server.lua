@@ -130,8 +130,12 @@ function ServerClass:connect()
         end
       end
 
-      -- For each database, trigger load() to populate objects
-      if load_success and self.databases then
+      -- Eagerly load database schemas if configured
+      -- This will load schema names for all databases immediately after connecting
+      -- Disabled by default to avoid 100s of queries on large servers
+      local Config = require('ssns.config')
+      local config = Config.get()
+      if config.completion and config.completion.eager_load and load_success and self.databases then
         for _, db in ipairs(self.databases) do
           vim.schedule(function()
             local db_load_success = db:load()
@@ -263,10 +267,11 @@ function ServerClass:reload()
   local load_success = self:load()
 
   -- Eagerly load metadata for completion if enabled
+  -- WARNING: On servers with many databases, this will trigger many queries
+  -- Set completion.eager_load = false (default) for lazy loading
   local Config = require('ssns.config')
   local config = Config.get()
   if config.completion and config.completion.eager_load and load_success and self.databases then
-    -- For each database, trigger load() to populate objects
     for _, db in ipairs(self.databases) do
       vim.schedule(function()
         local db_load_success = db:load()

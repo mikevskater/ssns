@@ -245,37 +245,263 @@ function DbClass:get_schemas()
   return self.schemas or {}
 end
 
----Ensure schemas are loaded (without loading all objects in each schema)
----This is a lightweight load for schema completion
+---Ensure schemas are loaded (for schema-based servers)
+---This is a lightweight loader that ONLY loads schema names, not objects
+---@return boolean success
 function DbClass:_ensure_schemas_loaded()
   if self.schemas then
-    return  -- Already loaded
+    return true  -- Already loaded
   end
 
   local adapter = self:get_adapter()
+  
   if not adapter.features.schemas then
     self.schemas = {}
-    return
+    return false  -- Not a schema-based server
   end
 
-  -- Only load schema names, not objects
+  -- Load schema names only
   self.schemas = self:_load_schemas()
+  return true
+end
+
+---Load all tables for all schemas in a single bulk query
+---Distributes results to appropriate schema objects
+---Only works for schema-based servers
+---@return boolean success
+function DbClass:load_all_tables_bulk()
+  if not self.schemas then
+    return false  -- Only for schema-based servers
+  end
+
+  local adapter = self:get_adapter()
+  
+  -- Execute single bulk query (adapter already updated to return all tables)
+  local query = adapter:get_tables_query(self.db_name, nil)
+  local results = adapter:execute(self:_get_db_connection_string(), query)
+  local table_data_list = adapter:parse_tables(results)
+
+  -- Group tables by schema
+  local tables_by_schema = {}
+  for _, table_data in ipairs(table_data_list) do
+    local schema_name = table_data.schema
+    if not tables_by_schema[schema_name] then
+      tables_by_schema[schema_name] = {}
+    end
+    table.insert(tables_by_schema[schema_name], table_data)
+  end
+
+  -- Distribute to schemas
+  for _, schema in ipairs(self.schemas) do
+    local schema_tables = tables_by_schema[schema.name] or {}
+    schema:set_tables(schema_tables)
+  end
+
+  return true
+end
+
+---Load all views for all schemas in a single bulk query
+---Distributes results to appropriate schema objects
+---Only works for schema-based servers
+---@return boolean success
+function DbClass:load_all_views_bulk()
+  if not self.schemas then
+    return false  -- Only for schema-based servers
+  end
+
+  local adapter = self:get_adapter()
+  
+  if not adapter.features.views then
+    -- Set empty arrays for all schemas
+    for _, schema in ipairs(self.schemas) do
+      schema:set_views({})
+    end
+    return true
+  end
+
+  -- Execute single bulk query
+  local query = adapter:get_views_query(self.db_name, nil)
+  local results = adapter:execute(self:_get_db_connection_string(), query)
+  local view_data_list = adapter:parse_views(results)
+
+  -- Group views by schema
+  local views_by_schema = {}
+  for _, view_data in ipairs(view_data_list) do
+    local schema_name = view_data.schema
+    if not views_by_schema[schema_name] then
+      views_by_schema[schema_name] = {}
+    end
+    table.insert(views_by_schema[schema_name], view_data)
+  end
+
+  -- Distribute to schemas
+  for _, schema in ipairs(self.schemas) do
+    local schema_views = views_by_schema[schema.name] or {}
+    schema:set_views(schema_views)
+  end
+
+  return true
+end
+
+---Load all procedures for all schemas in a single bulk query
+---Distributes results to appropriate schema objects
+---Only works for schema-based servers
+---@return boolean success
+function DbClass:load_all_procedures_bulk()
+  if not self.schemas then
+    return false  -- Only for schema-based servers
+  end
+
+  local adapter = self:get_adapter()
+  
+  if not adapter.features.procedures then
+    -- Set empty arrays for all schemas
+    for _, schema in ipairs(self.schemas) do
+      schema:set_procedures({})
+    end
+    return true
+  end
+
+  -- Execute single bulk query
+  local query = adapter:get_procedures_query(self.db_name, nil)
+  local results = adapter:execute(self:_get_db_connection_string(), query)
+  local proc_data_list = adapter:parse_procedures(results)
+
+  -- Group procedures by schema
+  local procs_by_schema = {}
+  for _, proc_data in ipairs(proc_data_list) do
+    local schema_name = proc_data.schema
+    if not procs_by_schema[schema_name] then
+      procs_by_schema[schema_name] = {}
+    end
+    table.insert(procs_by_schema[schema_name], proc_data)
+  end
+
+  -- Distribute to schemas
+  for _, schema in ipairs(self.schemas) do
+    local schema_procs = procs_by_schema[schema.name] or {}
+    schema:set_procedures(schema_procs)
+  end
+
+  return true
+end
+
+---Load all functions for all schemas in a single bulk query
+---Distributes results to appropriate schema objects
+---Only works for schema-based servers
+---@return boolean success
+function DbClass:load_all_functions_bulk()
+  if not self.schemas then
+    return false  -- Only for schema-based servers
+  end
+
+  local adapter = self:get_adapter()
+  
+  if not adapter.features.functions then
+    -- Set empty arrays for all schemas
+    for _, schema in ipairs(self.schemas) do
+      schema:set_functions({})
+    end
+    return true
+  end
+
+  -- Execute single bulk query
+  local query = adapter:get_functions_query(self.db_name, nil)
+  local results = adapter:execute(self:_get_db_connection_string(), query)
+  local func_data_list = adapter:parse_functions(results)
+
+  -- Group functions by schema
+  local funcs_by_schema = {}
+  for _, func_data in ipairs(func_data_list) do
+    local schema_name = func_data.schema
+    if not funcs_by_schema[schema_name] then
+      funcs_by_schema[schema_name] = {}
+    end
+    table.insert(funcs_by_schema[schema_name], func_data)
+  end
+
+  -- Distribute to schemas
+  for _, schema in ipairs(self.schemas) do
+    local schema_funcs = funcs_by_schema[schema.name] or {}
+    schema:set_functions(schema_funcs)
+  end
+
+  return true
+end
+
+---Load all synonyms for all schemas in a single bulk query
+---Distributes results to appropriate schema objects
+---Only works for schema-based servers
+---@return boolean success
+function DbClass:load_all_synonyms_bulk()
+  if not self.schemas then
+    return false  -- Only for schema-based servers
+  end
+
+  local adapter = self:get_adapter()
+  
+  if not adapter.features.synonyms then
+    -- Set empty arrays for all schemas
+    for _, schema in ipairs(self.schemas) do
+      schema:set_synonyms({})
+    end
+    return true
+  end
+
+  -- Execute single bulk query
+  local query = adapter:get_synonyms_query(self.db_name, nil)
+  local results = adapter:execute(self:_get_db_connection_string(), query)
+  local syn_data_list = adapter:parse_synonyms(results)
+
+  -- Group synonyms by schema
+  local syns_by_schema = {}
+  for _, syn_data in ipairs(syn_data_list) do
+    local schema_name = syn_data.schema
+    if not syns_by_schema[schema_name] then
+      syns_by_schema[schema_name] = {}
+    end
+    table.insert(syns_by_schema[schema_name], syn_data)
+  end
+
+  -- Distribute to schemas
+  for _, schema in ipairs(self.schemas) do
+    local schema_syns = syns_by_schema[schema.name] or {}
+    schema:set_synonyms(schema_syns)
+  end
+
+  return true
 end
 
 ---Get all tables (server-type aware - aggregates from schemas if needed)
+---Uses bulk loading when tables haven't been loaded yet
 ---@param schema_filter string? Optional schema name to filter by
 ---@param opts table? Options { skip_load: boolean? } - skip_load prevents triggering load
 ---@return TableClass[]
 function DbClass:get_tables(schema_filter, opts)
   opts = opts or {}
   
-  -- Only load if not already loaded and skip_load is not set
-  if not self.is_loaded and not opts.skip_load then
-    self:load()
+  -- Ensure schemas are loaded (but not objects)
+  if not opts.skip_load then
+    self:_ensure_schemas_loaded()
   end
 
   -- Schema-based servers: aggregate from schemas
   if self.schemas then
+    -- Check if ANY schema has tables loaded
+    local any_loaded = false
+    for _, schema in ipairs(self.schemas) do
+      if schema.tables ~= nil then
+        any_loaded = true
+        break
+      end
+    end
+
+    -- If no schemas have tables loaded yet and not skipping load, use bulk loading
+    if not any_loaded and not opts.skip_load then
+      self:load_all_tables_bulk()
+    end
+
+    -- Aggregate from schemas
     local all_tables = {}
     for _, schema in ipairs(self.schemas) do
       if not schema_filter or schema.name:lower() == schema_filter:lower() then
@@ -292,19 +518,35 @@ function DbClass:get_tables(schema_filter, opts)
 end
 
 ---Get all views (server-type aware - aggregates from schemas if needed)
+---Uses bulk loading when views haven't been loaded yet
 ---@param schema_filter string? Optional schema name to filter by
 ---@param opts table? Options { skip_load: boolean? } - skip_load prevents triggering load
 ---@return ViewClass[]
 function DbClass:get_views(schema_filter, opts)
   opts = opts or {}
   
-  -- Only load if not already loaded and skip_load is not set
-  if not self.is_loaded and not opts.skip_load then
-    self:load()
+  -- Ensure schemas are loaded (but not objects)
+  if not opts.skip_load then
+    self:_ensure_schemas_loaded()
   end
 
   -- Schema-based servers: aggregate from schemas
   if self.schemas then
+    -- Check if ANY schema has views loaded
+    local any_loaded = false
+    for _, schema in ipairs(self.schemas) do
+      if schema.views ~= nil then
+        any_loaded = true
+        break
+      end
+    end
+
+    -- If no schemas have views loaded yet and not skipping load, use bulk loading
+    if not any_loaded and not opts.skip_load then
+      self:load_all_views_bulk()
+    end
+
+    -- Aggregate from schemas
     local all_views = {}
     for _, schema in ipairs(self.schemas) do
       if not schema_filter or schema.name:lower() == schema_filter:lower() then
@@ -321,19 +563,35 @@ function DbClass:get_views(schema_filter, opts)
 end
 
 ---Get all procedures (server-type aware - aggregates from schemas if needed)
+---Uses bulk loading when procedures haven't been loaded yet
 ---@param schema_filter string? Optional schema name to filter by
 ---@param opts table? Options { skip_load: boolean? } - skip_load prevents triggering load
 ---@return ProcedureClass[]
 function DbClass:get_procedures(schema_filter, opts)
   opts = opts or {}
   
-  -- Only load if not already loaded and skip_load is not set
-  if not self.is_loaded and not opts.skip_load then
-    self:load()
+  -- Ensure schemas are loaded (but not objects)
+  if not opts.skip_load then
+    self:_ensure_schemas_loaded()
   end
 
   -- Schema-based servers: aggregate from schemas
   if self.schemas then
+    -- Check if ANY schema has procedures loaded
+    local any_loaded = false
+    for _, schema in ipairs(self.schemas) do
+      if schema.procedures ~= nil then
+        any_loaded = true
+        break
+      end
+    end
+
+    -- If no schemas have procedures loaded yet and not skipping load, use bulk loading
+    if not any_loaded and not opts.skip_load then
+      self:load_all_procedures_bulk()
+    end
+
+    -- Aggregate from schemas
     local all_procedures = {}
     for _, schema in ipairs(self.schemas) do
       if not schema_filter or schema.name:lower() == schema_filter:lower() then
@@ -350,19 +608,35 @@ function DbClass:get_procedures(schema_filter, opts)
 end
 
 ---Get all functions (server-type aware - aggregates from schemas if needed)
+---Uses bulk loading when functions haven't been loaded yet
 ---@param schema_filter string? Optional schema name to filter by
 ---@param opts table? Options { skip_load: boolean? } - skip_load prevents triggering load
 ---@return FunctionClass[]
 function DbClass:get_functions(schema_filter, opts)
   opts = opts or {}
   
-  -- Only load if not already loaded and skip_load is not set
-  if not self.is_loaded and not opts.skip_load then
-    self:load()
+  -- Ensure schemas are loaded (but not objects)
+  if not opts.skip_load then
+    self:_ensure_schemas_loaded()
   end
 
   -- Schema-based servers: aggregate from schemas
   if self.schemas then
+    -- Check if ANY schema has functions loaded
+    local any_loaded = false
+    for _, schema in ipairs(self.schemas) do
+      if schema.functions ~= nil then
+        any_loaded = true
+        break
+      end
+    end
+
+    -- If no schemas have functions loaded yet and not skipping load, use bulk loading
+    if not any_loaded and not opts.skip_load then
+      self:load_all_functions_bulk()
+    end
+
+    -- Aggregate from schemas
     local all_functions = {}
     for _, schema in ipairs(self.schemas) do
       if not schema_filter or schema.name:lower() == schema_filter:lower() then
@@ -379,19 +653,35 @@ function DbClass:get_functions(schema_filter, opts)
 end
 
 ---Get all synonyms (server-type aware - aggregates from schemas if needed)
+---Uses bulk loading when synonyms haven't been loaded yet
 ---@param schema_filter string? Optional schema name to filter by
 ---@param opts table? Options { skip_load: boolean? } - skip_load prevents triggering load
 ---@return SynonymClass[]
 function DbClass:get_synonyms(schema_filter, opts)
   opts = opts or {}
   
-  -- Only load if not already loaded and skip_load is not set
-  if not self.is_loaded and not opts.skip_load then
-    self:load()
+  -- Ensure schemas are loaded (but not objects)
+  if not opts.skip_load then
+    self:_ensure_schemas_loaded()
   end
 
   -- Schema-based servers: aggregate from schemas
   if self.schemas then
+    -- Check if ANY schema has synonyms loaded
+    local any_loaded = false
+    for _, schema in ipairs(self.schemas) do
+      if schema.synonyms ~= nil then
+        any_loaded = true
+        break
+      end
+    end
+
+    -- If no schemas have synonyms loaded yet and not skipping load, use bulk loading
+    if not any_loaded and not opts.skip_load then
+      self:load_all_synonyms_bulk()
+    end
+
+    -- Aggregate from schemas
     local all_synonyms = {}
     for _, schema in ipairs(self.schemas) do
       if not schema_filter or schema.name:lower() == schema_filter:lower() then

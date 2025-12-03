@@ -303,22 +303,22 @@ function UiTree.render_database(db, lines, indent_level)
       -- This works for both schema-based (SQL Server, PostgreSQL) and non-schema (MySQL) servers
       local adapter = db:get_adapter()
 
-      -- TABLES group - uses db:get_tables() which aggregates from schemas
+      -- TABLES group - lazy load objects only when group is expanded
       -- Always show even if empty (with count of 0)
-      local tables = db:get_tables()
+      local tables = db:get_tables(nil, { skip_load = true })
       local tables_group = create_ui_group(db, "TABLES", "tables_group", tables)
       UiTree.render_object(tables_group, lines, indent_level + 1)
 
       -- VIEWS group - always show if feature supported
       if adapter.features and adapter.features.views then
-        local views = db:get_views()
+        local views = db:get_views(nil, { skip_load = true })
         local views_group = create_ui_group(db, "VIEWS", "views_group", views)
         UiTree.render_object(views_group, lines, indent_level + 1)
       end
 
       -- PROCEDURES group - always show if feature supported
       if adapter.features and adapter.features.procedures then
-        local procedures = db:get_procedures()
+        local procedures = db:get_procedures(nil, { skip_load = true })
         local procedures_group = create_ui_group(db, "PROCEDURES", "procedures_group", procedures)
         UiTree.render_object(procedures_group, lines, indent_level + 1)
       end
@@ -326,7 +326,7 @@ function UiTree.render_database(db, lines, indent_level)
       -- FUNCTIONS group - always show if feature supported
       -- Split into SCALAR and TABLE sub-groups
       if adapter.features and adapter.features.functions then
-        local all_functions = db:get_functions()
+        local all_functions = db:get_functions(nil, { skip_load = true })
 
         -- Split functions by type
         local scalar_functions = {}
@@ -352,13 +352,14 @@ function UiTree.render_database(db, lines, indent_level)
 
       -- SYNONYMS group (typically SQL Server only) - always show if feature supported
       if adapter.features and adapter.features.synonyms then
-        local synonyms = db:get_synonyms()
+        local synonyms = db:get_synonyms(nil, { skip_load = true })
         local synonyms_group = create_ui_group(db, "SYNONYMS", "synonyms_group", synonyms)
         UiTree.render_object(synonyms_group, lines, indent_level + 1)
       end
 
       -- SCHEMAS group (for schema-based servers like SQL Server, PostgreSQL)
       -- Shown last as an alternative view of objects organized by schema
+      -- Only load schema names when SCHEMAS group itself is expanded
       if adapter.features and adapter.features.schemas then
         local all_schemas = db:get_schemas()
 
@@ -468,6 +469,44 @@ function UiTree.render_object_group(group, lines, indent_level)
   local UiFilters = require('ssns.ui.filters')
   local indent = string.rep("  ", indent_level)
   local icon = group.ui_state.expanded and "▾ " or "▸ "
+
+  -- Get children - they should already be loaded by toggle_node if expanded
+  -- Re-fetch from parent to get latest data with skip_load to avoid re-querying
+  if group.ui_state.expanded and group.parent and group.parent.object_type == "database" then
+    local db = group.parent
+    local adapter = db:get_adapter()
+    
+    -- Update group children with latest data from database (skip_load prevents re-querying)
+    if group.object_type == "tables_group" then
+      group.children = db:get_tables(nil, { skip_load = true })
+    elseif group.object_type == "views_group" and adapter.features.views then
+      group.children = db:get_views(nil, { skip_load = true })
+    elseif group.object_type == "procedures_group" and adapter.features.procedures then
+      group.children = db:get_procedures(nil, { skip_load = true })
+    elseif group.object_type == "functions_group" and adapter.features.functions then
+      -- Special handling for FUNCTIONS group with sub-groups
+      local all_functions = db:get_functions(nil, { skip_load = true })
+      local scalar_functions = {}
+      local table_functions = {}
+      for _, func in ipairs(all_functions) do
+        if func:is_table_valued() then
+          table.insert(table_functions, func)
+        else
+          table.insert(scalar_functions, func)
+        end
+      end
+      -- Update sub-groups
+      for _, child in ipairs(group.children) do
+        if child.object_type == "scalar_functions_group" then
+          child.children = scalar_functions
+        elseif child.object_type == "table_functions_group" then
+          child.children = table_functions
+        end
+      end
+    elseif group.object_type == "synonyms_group" and adapter.features.synonyms then
+      group.children = db:get_synonyms(nil, { skip_load = true })
+    end
+  end
 
   -- Get all children
   local all_children = group:has_children() and group:get_children() or {}
@@ -852,8 +891,30 @@ function UiTree.toggle_node()
   -- Toggle expansion
   obj:toggle_expand()
 
-  -- If expanding and not loaded, load asynchronously
-  if obj.ui_state.expanded and not obj.is_loaded and obj.load then
+  -- Special handling for object groups: Load data when expanding
+  if obj.ui_state.expanded and obj._is_ephemeral and obj.parent and obj.parent.object_type == "database" then
+    local db = obj.parent
+    local adapter = db:get_adapter()
+    
+    -- Load the appropriate object type - each get_* method handles schema loading internally
+    if obj.object_type == "tables_group" then
+      db:get_tables()  -- Triggers bulk load (and schema load if needed)
+    elseif obj.object_type == "views_group" and adapter.features.views then
+      db:get_views()  -- Triggers bulk load (and schema load if needed)
+    elseif obj.object_type == "procedures_group" and adapter.features.procedures then
+      db:get_procedures()  -- Triggers bulk load (and schema load if needed)
+    elseif obj.object_type == "functions_group" and adapter.features.functions then
+      db:get_functions()  -- Triggers bulk load (and schema load if needed)
+    elseif obj.object_type == "synonyms_group" and adapter.features.synonyms then
+      db:get_synonyms()  -- Triggers bulk load (and schema load if needed)
+    elseif obj.object_type == "schemas_group" and adapter.features.schemas then
+      db:get_schemas()  -- Load schema names only
+    end
+  end
+
+  -- Don't auto-load databases on expansion - groups will trigger loading when needed
+  local should_load = obj.ui_state.expanded and not obj.is_loaded and obj.load and obj.object_type ~= "database"
+  if should_load then
     UiTree.load_node_async(obj, line_number)
   else
     -- Re-render tree immediately

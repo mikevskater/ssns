@@ -418,7 +418,7 @@ local default_config = {
     cache_ttl = 300,             -- Cache TTL in seconds (5 minutes)
     max_items = 0,               -- Maximum completion items to return (0 = unlimited)
     show_documentation = true,   -- Show documentation in completion popup
-    eager_load = true,           -- Eagerly load tables/views/procedures on connection
+    eager_load = false,           -- Eagerly load tables/views/procedures on connection
     min_keyword_length = 2,      -- Minimum keyword length for completion
     debug = false,               -- Enable debug logging for completion
     track_usage = true,          -- Track usage from executed queries (default: true)

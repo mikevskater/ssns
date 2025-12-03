@@ -44,7 +44,7 @@ local STATEMENT_KEYWORDS = {
   CREATE = true, ALTER = true, DROP = true, TRUNCATE = true,
   -- Control flow
   IF = true, ELSE = true, WHILE = true, BEGIN = true, END = true,
-  RETURN = true, BREAK = true, CONTINUE = true, GOTO = true,
+  RETURN = true, BREAK = true, CONTINUE = true, GOTO = true, RETURNS = true,
   TRY = true, CATCH = true, THROW = true, LOOP = true,
   -- Transaction
   COMMIT = true, ROLLBACK = true, TRANSACTION = true, TRAN = true, SAVEPOINT = true,
@@ -146,6 +146,10 @@ local DATATYPE_KEYWORDS = {
   DATE = true, TIME = true, DATETIME = true, DATETIME2 = true,
   SMALLDATETIME = true, DATETIMEOFFSET = true, TIMESTAMP = true, INTERVAL = true,
   TIMEZONE_HOUR = true, TIMEZONE_MINUTE = true,
+  -- DatePart
+  YEAR = true, MONTH = true, WEEK = true, DAY = true, HOUR = true, MINUTE = true, 
+  SECOND = true, MILLISECOND = true, DAYOFYEAR = true, ISO_WEEK = true, 
+  MICROSECOND = true, NANOSECOND = true, QUARTER = true, TZOFFSET = true,  WEEKDAY = true,
   -- Other types
   UNIQUEIDENTIFIER = true, XML = true, JSON = true, SQL_VARIANT = true, ROWVERSION = true,
   GEOGRAPHY = true, GEOMETRY = true, HIERARCHYID = true,
@@ -533,21 +537,39 @@ function Tokenizer.tokenize(text)
       end
 
     elseif state == STATE.IN_STRING then
-      current_token = current_token .. char
-      col = col + 1
-
       -- Check for escaped quote ''
       if char == "'" and next_char == "'" then
-        current_token = current_token .. "'"
-        col = col + 1
+        current_token = current_token .. "''"
+        col = col + 2
         i = i + 2
       elseif char == "'" then
         -- End of string
+        current_token = current_token .. char
         emit_token(TOKEN_TYPE.STRING)
         state = STATE.NORMAL
+        col = col + 1
         i = i + 1
       else
-        i = i + 1
+        -- Handle newlines within strings
+        current_token = current_token .. char
+        if char == '\n' then
+          line = line + 1
+          col = 1
+          i = i + 1
+        elseif char == '\r' then
+          -- Handle \r\n or \r alone
+          if next_char == '\n' then
+            current_token = current_token .. '\n'
+            i = i + 2
+          else
+            i = i + 1
+          end
+          line = line + 1
+          col = 1
+        else
+          col = col + 1
+          i = i + 1
+        end
       end
 
     elseif state == STATE.IN_BRACKET_ID then

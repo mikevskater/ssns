@@ -435,7 +435,7 @@ function UiQuery.display_error(error, sql, query_bufnr)
   -- Highlight error line in query buffer if lineNumber is available
   if error.lineNumber and error.lineNumber ~= vim.NIL and query_bufnr and vim.api.nvim_buf_is_valid(query_bufnr) then
     local line_num = error.lineNumber - 1  -- Convert to 0-based
-
+    line_num = math.min(math.max(0, line_num), vim.api.nvim_buf_line_count(query_bufnr) - 1)  -- Ensure within buffer range
     -- Create namespace for error highlighting
     local ns_id = vim.api.nvim_create_namespace('ssns_sql_error')
 
@@ -454,7 +454,7 @@ function UiQuery.display_error(error, sql, query_bufnr)
     -- Move cursor to error line
     local win = vim.fn.bufwinid(query_bufnr)
     if win ~= -1 then
-      vim.api.nvim_win_set_cursor(win, {error.lineNumber, 0})
+      vim.api.nvim_win_set_cursor(win, {line_num, 0})
     end
   end
 

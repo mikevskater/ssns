@@ -122,9 +122,7 @@ SET NOCOUNT ON;
 
 SELECT name
 FROM sys.databases
-WHERE state_desc = 'ONLINE'
-  AND HAS_DBACCESS(name) = 1  -- User has access
-ORDER BY name;
+WHERE HAS_DBACCESS(name) = 1  -- User has access;
 ]]
 end
 
@@ -137,22 +135,16 @@ USE [%s];
 SET NOCOUNT ON;
 
 SELECT s.name
-FROM sys.schemas s
-WHERE s.principal_id IS NOT NULL
-ORDER BY s.name;
+FROM sys.schemas s;
 ]], database_name)
 end
 
----Get query to list all tables in a schema
+---Get query to list all tables in a database
 ---@param database_name string
----@param schema_name string?
+---@param schema_name string? Optional schema name to filter by
 ---@return string query
 function SqlServerAdapter:get_tables_query(database_name, schema_name)
-  local where_clause = ""
-  if schema_name then
-    where_clause = string.format("  AND s.name = '%s'\n", schema_name)
-  end
-
+  local schema_filter = schema_name and string.format("WHERE s.name = '%s'", schema_name) or ""
   return string.format([[
 USE [%s];
 SET NOCOUNT ON;
@@ -163,23 +155,18 @@ SELECT
   t.type_desc AS table_type
 FROM sys.tables t
 INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
-WHERE 1=1
-%sORDER BY s.name, t.name;
-]], database_name, where_clause)
+%s;
+]], database_name, schema_filter)
 end
 
----Get query to list all views in a schema
+---Get query to list all views in a database
 ---@param database_name string
----@param schema_name string?
+---@param schema_name string? Optional schema name to filter by
 ---@return string query
 function SqlServerAdapter:get_views_query(database_name, schema_name)
-  local where_clause = ""
-  if schema_name then
-    where_clause = string.format("  AND s.name = '%s'\n", schema_name)
-  end
-
   -- Always use sys.all_views to include system catalog views (sys.objects, sys.columns, etc.)
   -- This allows completion to work with sys.█ queries
+  local schema_filter = schema_name and string.format("WHERE s.name = '%s'", schema_name) or ""
   return string.format([[
 USE [%s];
 SET NOCOUNT ON;
@@ -189,21 +176,16 @@ SELECT
   v.name AS view_name
 FROM sys.all_views v
 INNER JOIN sys.schemas s ON v.schema_id = s.schema_id
-WHERE 1=1
-%sORDER BY s.name, v.name;
-]], database_name, where_clause)
+%s;
+]], database_name, schema_filter)
 end
 
----Get query to list all stored procedures in a schema
+---Get query to list all stored procedures in a database
 ---@param database_name string
----@param schema_name string?
+---@param schema_name string? Optional schema name to filter by
 ---@return string query
 function SqlServerAdapter:get_procedures_query(database_name, schema_name)
-  local where_clause = ""
-  if schema_name then
-    where_clause = string.format("  AND s.name = '%s'\n", schema_name)
-  end
-
+  local schema_filter = schema_name and string.format("WHERE s.name = '%s'", schema_name) or ""
   return string.format([[
 USE [%s];
 SET NOCOUNT ON;
@@ -213,21 +195,16 @@ SELECT
   p.name AS procedure_name
 FROM sys.procedures p
 INNER JOIN sys.schemas s ON p.schema_id = s.schema_id
-WHERE 1=1
-%sORDER BY s.name, p.name;
-]], database_name, where_clause)
+%s;
+]], database_name, schema_filter)
 end
 
----Get query to list all functions in a schema
+---Get query to list all functions in a database
 ---@param database_name string
----@param schema_name string?
+---@param schema_name string? Optional schema name to filter by
 ---@return string query
 function SqlServerAdapter:get_functions_query(database_name, schema_name)
-  local where_clause = ""
-  if schema_name then
-    where_clause = string.format("  AND s.name = '%s'\n", schema_name)
-  end
-
+  local schema_filter = schema_name and string.format("AND s.name = '%s'", schema_name) or ""
   return string.format([[
 USE [%s];
 SET NOCOUNT ON;
@@ -239,20 +216,16 @@ SELECT
 FROM sys.objects o
 INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
 WHERE o.type IN ('FN', 'IF', 'TF')  -- Scalar, Inline Table-Valued, Table-Valued
-%sORDER BY s.name, o.name;
-]], database_name, where_clause)
+%s;
+]], database_name, schema_filter)
 end
 
----Get query to list all synonyms in a schema
+---Get query to list all synonyms in a database
 ---@param database_name string
----@param schema_name string?
+---@param schema_name string? Optional schema name to filter by
 ---@return string query
 function SqlServerAdapter:get_synonyms_query(database_name, schema_name)
-  local where_clause = ""
-  if schema_name then
-    where_clause = string.format("  AND s.name = '%s'\n", schema_name)
-  end
-
+  local schema_filter = schema_name and string.format("WHERE s.name = '%s'", schema_name) or ""
   return string.format([[
 USE [%s];
 SET NOCOUNT ON;
@@ -263,21 +236,14 @@ SELECT
   syn.base_object_name
 FROM sys.synonyms syn
 INNER JOIN sys.schemas s ON syn.schema_id = s.schema_id
-WHERE 1=1
-%sORDER BY s.name, syn.name;
-]], database_name, where_clause)
+%s;
+]], database_name, schema_filter)
 end
 
----Get query to list all sequences in a schema
+---Get query to list all sequences in a database
 ---@param database_name string
----@param schema_name string?
 ---@return string query
-function SqlServerAdapter:get_sequences_query(database_name, schema_name)
-  local where_clause = ""
-  if schema_name then
-    where_clause = string.format("  AND s.name = '%s'\n", schema_name)
-  end
-
+function SqlServerAdapter:get_sequences_query(database_name)
   return string.format([[
 USE [%s];
 SET NOCOUNT ON;
@@ -289,10 +255,8 @@ SELECT
   seq.increment,
   seq.current_value
 FROM sys.sequences seq
-INNER JOIN sys.schemas s ON seq.schema_id = s.schema_id
-WHERE 1=1
-%sORDER BY s.name, seq.name;
-]], database_name, where_clause)
+INNER JOIN sys.schemas s ON seq.schema_id = s.schema_id;
+]], database_name)
 end
 
 ---Get query to list all columns in a table or view
@@ -324,8 +288,7 @@ INNER JOIN sys.objects o ON c.object_id = o.object_id
 INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
 WHERE o.name = '%s'
   AND o.type IN ('U', 'V')  -- U = User Table, V = View
-  %s
-ORDER BY c.column_id;
+  %s;
 ]], database_name, table_name, schema_filter)
 end
 
@@ -355,8 +318,7 @@ INNER JOIN sys.objects o ON c.object_id = o.object_id
 INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
 WHERE o.name = '%s'
   AND o.type IN ('IF', 'TF')  -- IF = Inline Table-Valued, TF = Multi-Statement Table-Valued
-  %s
-ORDER BY c.column_id;
+  %s;
 ]], database_name, function_name, schema_filter)
 end
 
@@ -387,8 +349,7 @@ INNER JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.colu
 WHERE t.name = '%s'
   %s
   AND i.type > 0  -- Exclude heap (type 0)
-GROUP BY i.name, i.type_desc, i.is_unique, i.is_primary_key, i.is_unique_constraint
-ORDER BY i.is_primary_key DESC, i.name;
+GROUP BY i.name, i.type_desc, i.is_unique, i.is_primary_key, i.is_unique_constraint;
 ]], database_name, table_name, schema_filter)
 end
 
@@ -422,8 +383,7 @@ LEFT JOIN sys.columns fk_col ON fkc.referenced_object_id = fk_col.object_id AND 
 WHERE con.type IN ('PK', 'F', 'UQ', 'C', 'D')  -- Primary Key, Foreign Key, Unique, Check, Default
   AND t.name = '%s'
   %s
-GROUP BY con.name, con.type_desc, fk_schema.name, fk_table.name
-ORDER BY con.type_desc, con.name;
+GROUP BY con.name, con.type_desc, fk_schema.name, fk_table.name;
 ]], database_name, table_name, schema_filter)
 end
 
@@ -461,8 +421,7 @@ INNER JOIN sys.types t ON p.user_type_id = t.user_type_id
 INNER JOIN sys.objects o ON p.object_id = o.object_id
 INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
 WHERE o.name = '%s'
-  %s
-ORDER BY is_return_value, p.parameter_id;
+  %s;
 ]], database_name, routine_name, schema_filter)
 end
 
@@ -620,7 +579,13 @@ function SqlServerAdapter:parse_definition(result)
   if result and result.success and result.resultSets and #result.resultSets > 0 then
     local rows = result.resultSets[1].rows or {}
     if #rows > 0 then
-      return rows[1].definition
+      local definition = rows[1].definition
+      -- Remove Windows-style carriage returns (\r) to normalize line endings
+      -- OBJECT_DEFINITION() returns \r\n, but we want just \n for consistency
+      if definition then
+        definition = definition:gsub('\r', '')
+      end
+      return definition
     end
   end
   return nil

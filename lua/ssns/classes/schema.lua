@@ -40,6 +40,9 @@ function SchemaClass:load()
   end
 
   -- Load all object types into typed arrays
+  -- Note: These will each make individual queries, but for schema-based servers,
+  -- it's better to use the database-level bulk loading (db:get_tables(), etc.)
+  -- which loads all schemas at once
   self:load_tables()
   self:load_views()
   self:load_procedures()
@@ -48,6 +51,18 @@ function SchemaClass:load()
 
   self.is_loaded = true
   return true
+end
+
+---Set tables from pre-loaded bulk data
+---@param table_data_list table[] Array of parsed table data from adapter
+function SchemaClass:set_tables(table_data_list)
+  local adapter = self:get_adapter()
+  
+  self.tables = {}
+  for _, table_data in ipairs(table_data_list) do
+    local table_obj = adapter:create_table(self, table_data)
+    table.insert(self.tables, table_obj)
+  end
 end
 
 ---Load tables in this schema
@@ -65,14 +80,22 @@ function SchemaClass:load_tables()
   -- Parse results
   local tables = adapter:parse_tables(results)
 
-  -- Create table objects
-  self.tables = {}
-  for _, table_data in ipairs(tables) do
-    local table_obj = adapter:create_table(self, table_data)
-    table.insert(self.tables, table_obj)
-  end
+  -- Use set method to create objects
+  self:set_tables(tables)
 
   return true
+end
+
+---Set views from pre-loaded bulk data
+---@param view_data_list table[] Array of parsed view data from adapter
+function SchemaClass:set_views(view_data_list)
+  local adapter = self:get_adapter()
+  
+  self.views = {}
+  for _, view_data in ipairs(view_data_list) do
+    local view_obj = adapter:create_view(self, view_data)
+    table.insert(self.views, view_obj)
+  end
 end
 
 ---Load views in this schema
@@ -95,14 +118,26 @@ function SchemaClass:load_views()
   -- Parse results
   local views = adapter:parse_views(results)
 
-  -- Create view objects
-  self.views = {}
-  for _, view_data in ipairs(views) do
-    local view_obj = adapter:create_view(self, view_data)
-    table.insert(self.views, view_obj)
-  end
+  -- Use set method to create objects
+  self:set_views(views)
 
   return true
+end
+
+---Set procedures from pre-loaded bulk data
+---@param proc_data_list table[] Array of parsed procedure data from adapter
+function SchemaClass:set_procedures(proc_data_list)
+  local ProcedureClass = require('ssns.classes.procedure')
+  
+  self.procedures = {}
+  for _, proc_data in ipairs(proc_data_list) do
+    local proc_obj = ProcedureClass.new({
+      name = proc_data.name,
+      schema_name = proc_data.schema,
+      parent = self,
+    })
+    table.insert(self.procedures, proc_obj)
+  end
 end
 
 ---Load stored procedures in this schema
@@ -126,19 +161,27 @@ function SchemaClass:load_procedures()
   -- Parse results
   local procedures = adapter:parse_procedures(results)
 
-  -- Create procedure objects
-  self.procedures = {}
-  for _, proc_data in ipairs(procedures) do
-    local ProcedureClass = require('ssns.classes.procedure')
-    local proc_obj = ProcedureClass.new({
-      name = proc_data.name,
-      schema_name = proc_data.schema,
-      parent = self,
-    })
-    table.insert(self.procedures, proc_obj)
-  end
+  -- Use set method to create objects
+  self:set_procedures(procedures)
 
   return true
+end
+
+---Set functions from pre-loaded bulk data
+---@param func_data_list table[] Array of parsed function data from adapter
+function SchemaClass:set_functions(func_data_list)
+  local FunctionClass = require('ssns.classes.function')
+  
+  self.functions = {}
+  for _, func_data in ipairs(func_data_list) do
+    local func_obj = FunctionClass.new({
+      name = func_data.name,
+      schema_name = func_data.schema,
+      function_type = func_data.type,
+      parent = self,
+    })
+    table.insert(self.functions, func_obj)
+  end
 end
 
 ---Load functions in this schema
@@ -162,20 +205,28 @@ function SchemaClass:load_functions()
   -- Parse results
   local functions = adapter:parse_functions(results)
 
-  -- Create function objects
-  self.functions = {}
-  for _, func_data in ipairs(functions) do
-    local FunctionClass = require('ssns.classes.function')
-    local func_obj = FunctionClass.new({
-      name = func_data.name,
-      schema_name = func_data.schema,
-      function_type = func_data.type,
-      parent = self,
-    })
-    table.insert(self.functions, func_obj)
-  end
+  -- Use set method to create objects
+  self:set_functions(functions)
 
   return true
+end
+
+---Set synonyms from pre-loaded bulk data
+---@param syn_data_list table[] Array of parsed synonym data from adapter
+function SchemaClass:set_synonyms(syn_data_list)
+  local SynonymClass = require('ssns.classes.synonym')
+  
+  self.synonyms = {}
+  for _, syn_data in ipairs(syn_data_list) do
+    local syn_obj = SynonymClass.new({
+      name = syn_data.name,
+      schema_name = syn_data.schema,
+      base_object_name = syn_data.base_object_name,
+      base_object_type = syn_data.base_object_type,
+      parent = self,
+    })
+    table.insert(self.synonyms, syn_obj)
+  end
 end
 
 ---Load synonyms in this schema
@@ -198,19 +249,8 @@ function SchemaClass:load_synonyms()
   -- Parse results
   local synonyms = adapter:parse_synonyms(results)
 
-  -- Create synonym objects
-  self.synonyms = {}
-  for _, syn_data in ipairs(synonyms) do
-    local SynonymClass = require('ssns.classes.synonym')
-    local syn_obj = SynonymClass.new({
-      name = syn_data.name,
-      schema_name = syn_data.schema,
-      base_object_name = syn_data.base_object_name,
-      base_object_type = syn_data.base_object_type,
-      parent = self,
-    })
-    table.insert(self.synonyms, syn_obj)
-  end
+  -- Use set method to create objects
+  self:set_synonyms(synonyms)
 
   return true
 end
