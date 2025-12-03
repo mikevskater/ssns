@@ -118,6 +118,20 @@ function Ssns._register_commands()
     desc = "Close SSNS database tree",
   })
 
+  -- :SSNSFloat - Open tree UI in floating window mode
+  vim.api.nvim_create_user_command("SSNSFloat", function()
+    Ssns.open_float()
+  end, {
+    desc = "Open SSNS database tree in floating window",
+  })
+
+  -- :SSNSDocked - Open tree UI in docked/split mode
+  vim.api.nvim_create_user_command("SSNSDocked", function()
+    Ssns.open_docked()
+  end, {
+    desc = "Open SSNS database tree in docked split",
+  })
+
   -- :SSNSRefresh - Refresh all servers
   vim.api.nvim_create_user_command("SSNSRefresh", function()
     Ssns.refresh_all()
@@ -361,12 +375,23 @@ function Ssns.toggle()
 end
 
 ---Open the tree UI
-function Ssns.open()
+---@param mode_override string? Optional mode override: "float" or "docked"
+function Ssns.open(mode_override)
   local Buffer = require('ssns.ui.buffer')
   local Tree = require('ssns.ui.tree')
 
-  Buffer.open()
+  Buffer.open(mode_override)
   Tree.render()
+end
+
+---Open the tree UI in floating window mode (regardless of config)
+function Ssns.open_float()
+  Ssns.open("float")
+end
+
+---Open the tree UI in docked/split mode (regardless of config)
+function Ssns.open_docked()
+  Ssns.open("docked")
 end
 
 ---Close the tree UI

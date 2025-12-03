@@ -10,6 +10,14 @@ UiBuffer.bufnr = nil
 ---@type number?
 UiBuffer.winid = nil
 
+---Is current window a floating window?
+---@type boolean
+UiBuffer._is_float = false
+
+---Float resize augroup ID
+---@type number?
+UiBuffer._float_augroup = nil
+
 ---Buffer name
 UiBuffer.name = "SSNS"
 
@@ -45,9 +53,130 @@ function UiBuffer.create()
   return bufnr
 end
 
+---Create a floating window for the tree UI
+---@param bufnr number The buffer to display
+---@param ui_config UiConfig The UI configuration
+---@return number winid The created window ID
+local function create_float_window(bufnr, ui_config)
+  local float_width = ui_config.width or 50
+  local float_height = ui_config.height or 30
+
+  -- Support percentage-based sizing (if width/height <= 1, treat as percentage)
+  if float_width <= 1 then
+    float_width = math.floor(vim.o.columns * float_width)
+  end
+  if float_height <= 1 then
+    float_height = math.floor((vim.o.lines - 2) * float_height)  -- -2 for cmdline/statusline
+  end
+
+  -- Ensure minimum size
+  float_width = math.max(float_width, 30)
+  float_height = math.max(float_height, 10)
+
+  -- Ensure doesn't exceed screen
+  float_width = math.min(float_width, vim.o.columns - 4)
+  float_height = math.min(float_height, vim.o.lines - 4)
+
+  -- Center the window
+  local row = math.floor((vim.o.lines - float_height) / 2) - 1
+  local col = math.floor((vim.o.columns - float_width) / 2)
+
+  local float_config = {
+    relative = "editor",
+    width = float_width,
+    height = float_height,
+    row = row,
+    col = col,
+    style = "minimal",
+    border = ui_config.float_border or "rounded",
+    focusable = true,
+    zindex = ui_config.float_zindex or 50,
+  }
+
+  -- Add title if configured
+  if ui_config.float_title ~= false then
+    float_config.title = ui_config.float_title_text or " SSNS "
+    float_config.title_pos = "center"
+  end
+
+  local winid = vim.api.nvim_open_win(bufnr, true, float_config)
+
+  -- Set window options
+  local win_opts = {
+    cursorline = true,
+    number = false,
+    relativenumber = false,
+    signcolumn = "no",
+    foldcolumn = "0",
+    wrap = false,
+    spell = false,
+    list = false,
+  }
+
+  for opt, val in pairs(win_opts) do
+    vim.api.nvim_set_option_value(opt, val, { win = winid })
+  end
+
+  return winid
+end
+
+---Setup autocmd to reposition float window on terminal resize
+local function setup_float_resize_handler()
+  -- Clean up existing augroup if any
+  if UiBuffer._float_augroup then
+    pcall(vim.api.nvim_del_augroup_by_id, UiBuffer._float_augroup)
+  end
+
+  UiBuffer._float_augroup = vim.api.nvim_create_augroup("SsnsFloatResize", { clear = true })
+
+  vim.api.nvim_create_autocmd("VimResized", {
+    group = UiBuffer._float_augroup,
+    callback = function()
+      if UiBuffer._is_float and UiBuffer.is_open() then
+        local Config = require('ssns.config')
+        local ui_config = Config.get_ui()
+
+        -- Recalculate dimensions
+        local float_width = ui_config.width or 50
+        local float_height = ui_config.height or 30
+
+        if float_width <= 1 then
+          float_width = math.floor(vim.o.columns * float_width)
+        end
+        if float_height <= 1 then
+          float_height = math.floor((vim.o.lines - 2) * float_height)
+        end
+
+        float_width = math.max(30, math.min(float_width, vim.o.columns - 4))
+        float_height = math.max(10, math.min(float_height, vim.o.lines - 4))
+
+        local row = math.floor((vim.o.lines - float_height) / 2) - 1
+        local col = math.floor((vim.o.columns - float_width) / 2)
+
+        pcall(vim.api.nvim_win_set_config, UiBuffer.winid, {
+          relative = "editor",
+          width = float_width,
+          height = float_height,
+          row = row,
+          col = col,
+        })
+      end
+    end,
+  })
+end
+
+---Clean up float resize handler
+local function cleanup_float_resize_handler()
+  if UiBuffer._float_augroup then
+    pcall(vim.api.nvim_del_augroup_by_id, UiBuffer._float_augroup)
+    UiBuffer._float_augroup = nil
+  end
+end
+
 ---Open the SSNS window
+---@param mode_override string? Optional mode override: "float" or "docked" (uses config's left/right for docked)
 ---@return number winid The window ID
-function UiBuffer.open()
+function UiBuffer.open(mode_override)
   local Config = require('ssns.config')
   local ui_config = Config.get_ui()
 
@@ -62,36 +191,54 @@ function UiBuffer.open()
     return UiBuffer.winid
   end
 
-  -- Determine window position
-  local position = ui_config.position or "left"
+  -- Determine window position (mode_override takes precedence)
+  local position
+  if mode_override == "float" then
+    position = "float"
+  elseif mode_override == "docked" then
+    -- Use config's position for docked, but ensure it's not float
+    local config_pos = ui_config.position or "left"
+    position = (config_pos == "float") and "left" or config_pos
+  else
+    -- Use config position
+    position = ui_config.position or "left"
+  end
   local width = ui_config.width or 40
 
-  -- Create split based on position
-  if position == "left" then
-    vim.cmd("topleft vsplit")
-  elseif position == "right" then
-    vim.cmd("botright vsplit")
-  elseif position == "float" then
-    -- TODO: Implement floating window
-    vim.cmd("topleft vsplit")
+  -- Create window based on position
+  if position == "float" then
+    -- Create floating window
+    UiBuffer.winid = create_float_window(UiBuffer.bufnr, ui_config)
+    UiBuffer._is_float = true
+
+    -- Setup resize handler for float mode
+    setup_float_resize_handler()
   else
-    vim.cmd("topleft vsplit")
+    -- Create split window
+    if position == "left" then
+      vim.cmd("topleft vsplit")
+    elseif position == "right" then
+      vim.cmd("botright vsplit")
+    else
+      vim.cmd("topleft vsplit")
+    end
+
+    -- Set window width
+    vim.cmd(string.format("vertical resize %d", width))
+
+    -- Set buffer in window
+    vim.api.nvim_win_set_buf(0, UiBuffer.bufnr)
+    UiBuffer.winid = vim.api.nvim_get_current_win()
+    UiBuffer._is_float = false
+
+    -- Set window options for split mode
+    vim.api.nvim_win_set_option(UiBuffer.winid, "number", false)
+    vim.api.nvim_win_set_option(UiBuffer.winid, "relativenumber", false)
+    vim.api.nvim_win_set_option(UiBuffer.winid, "signcolumn", "no")
+    vim.api.nvim_win_set_option(UiBuffer.winid, "foldcolumn", "0")
+    vim.api.nvim_win_set_option(UiBuffer.winid, "wrap", false)
+    vim.api.nvim_win_set_option(UiBuffer.winid, "cursorline", true)
   end
-
-  -- Set window width
-  vim.cmd(string.format("vertical resize %d", width))
-
-  -- Set buffer in window
-  vim.api.nvim_win_set_buf(0, UiBuffer.bufnr)
-  UiBuffer.winid = vim.api.nvim_get_current_win()
-
-  -- Set window options
-  vim.api.nvim_win_set_option(UiBuffer.winid, "number", false)
-  vim.api.nvim_win_set_option(UiBuffer.winid, "relativenumber", false)
-  vim.api.nvim_win_set_option(UiBuffer.winid, "signcolumn", "no")
-  vim.api.nvim_win_set_option(UiBuffer.winid, "foldcolumn", "0")
-  vim.api.nvim_win_set_option(UiBuffer.winid, "wrap", false)
-  vim.api.nvim_win_set_option(UiBuffer.winid, "cursorline", true)
 
   -- Setup keymaps
   UiBuffer.setup_keymaps()
@@ -146,18 +293,27 @@ end
 ---@param force boolean? If true, quit Neovim if this is the last window
 function UiBuffer.close(force)
   if UiBuffer.is_open() then
-    -- Check if this is the last window
-    local windows = vim.api.nvim_list_wins()
-    if #windows == 1 then
-      if force then
-        -- Quit Neovim if forced and this is the last window
-        vim.cmd('quit')
+    -- Check if this is the last window (only applies to split mode)
+    -- Float windows don't count as "windows" for the last-window check
+    if not UiBuffer._is_float then
+      local windows = vim.api.nvim_list_wins()
+      if #windows == 1 then
+        if force then
+          -- Quit Neovim if forced and this is the last window
+          vim.cmd('quit')
+        end
+        -- Don't close if this is the last window (would cause E444)
+        return
       end
-      -- Don't close if this is the last window (would cause E444)
-      return
     end
     vim.api.nvim_win_close(UiBuffer.winid, true)
     UiBuffer.winid = nil
+
+    -- Clean up float state
+    if UiBuffer._is_float then
+      UiBuffer._is_float = false
+      cleanup_float_resize_handler()
+    end
   end
 end
 
@@ -168,6 +324,23 @@ function UiBuffer.toggle()
   else
     UiBuffer.open()
   end
+end
+
+---Check if the tree is currently in float mode
+---@return boolean
+function UiBuffer.is_float()
+  return UiBuffer._is_float
+end
+
+---Close the tree only if it's in floating mode
+---Used for auto-closing float when actions create new buffers
+---@return boolean closed True if the float was closed
+function UiBuffer.close_if_float()
+  if UiBuffer._is_float and UiBuffer.is_open() then
+    UiBuffer.close()
+    return true
+  end
+  return false
 end
 
 ---Setup buffer keymaps
@@ -186,6 +359,15 @@ function UiBuffer.setup_keymaps()
     silent = true,
     desc = "Close SSNS",
   })
+
+  -- Close with Escape (only in float mode to not interfere with normal navigation)
+  if UiBuffer._is_float then
+    vim.api.nvim_buf_set_keymap(bufnr, "n", "<Esc>", "<Cmd>lua require('ssns.ui.buffer').close()<CR>", {
+      noremap = true,
+      silent = true,
+      desc = "Close SSNS float",
+    })
+  end
 
   -- Expand/collapse node
   vim.api.nvim_buf_set_keymap(bufnr, "n", keymaps.toggle or "<CR>", "<Cmd>lua require('ssns.ui.tree').toggle_node()<CR>", {

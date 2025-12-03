@@ -983,7 +983,9 @@ end
 ---@param action BaseDbObject
 function UiTree.execute_action(action)
   local Query = require('ssns.ui.query')
+  local UiBuffer = require('ssns.ui.buffer')
   local parent = action.parent
+
 
   -- Navigate up past groups to find actual parent object
   while parent and (parent.object_type == "column_group" or parent.object_type == "index_group" or parent.object_type == "key_group" or parent.object_type == "actions_group") do
@@ -993,6 +995,12 @@ function UiTree.execute_action(action)
   if not parent then
     vim.notify("SSNS: Cannot find parent object for action", vim.log.levels.WARN)
     return
+  end
+  
+  -- Close floating tree for actions that create new buffers/windows
+  -- (except "goto" which navigates within the tree)
+  if action.action_type ~= "goto" then
+    UiBuffer.close_if_float()
   end
 
   -- If parent is an object_reference, it already proxies all methods to the referenced object
@@ -1906,6 +1914,9 @@ function UiTree.new_query_from_context()
     end
   end
 
+  -- Close floating tree before creating new buffer
+  Buffer.close_if_float()
+
   -- Create buffer (USE statement is handled inside create_query_buffer)
   Query.create_query_buffer(server, database, "", "Query")
 end
@@ -1917,6 +1928,9 @@ function UiTree.show_history_from_context()
 
   local line_number = Buffer.get_current_line()
   local obj = UiTree.line_map[line_number]
+
+  -- Close floating tree before opening history panel
+  Buffer.close_if_float()
 
   if not obj then
     -- No object under cursor, show all history
