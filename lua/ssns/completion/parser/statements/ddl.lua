@@ -11,6 +11,7 @@ local BaseStatement = require('ssns.completion.parser.statements.base')
 local ColumnDefsParser = require('ssns.completion.parser.clauses.column_defs')
 local QualifiedName = require('ssns.completion.parser.utils.qualified_name')
 local Helpers = require('ssns.completion.parser.utils.helpers')
+local Keywords = require('ssns.completion.parser.utils.keywords')
 
 local DdlStatement = {}
 
@@ -231,8 +232,7 @@ function DdlStatement._parse_alter_add_columns(state, temp_table)
     end
     if token.type == "keyword" then
       local kw = token.text:upper()
-      if kw == "GO" or kw == "SELECT" or kw == "INSERT" or kw == "UPDATE" or
-         kw == "DELETE" or kw == "CREATE" or kw == "DROP" or kw == "ALTER" then
+      if kw == "GO" or Keywords.is_statement_starter(kw) then
         break
       end
     end
@@ -298,9 +298,7 @@ function DdlStatement._skip_until_comma_or_end(state)
     local t = state:current()
     if t.type == "semicolon" or t.type == "go" then break end
     if t.type == "keyword" then
-      local kw = t.text:upper()
-      if kw == "SELECT" or kw == "INSERT" or kw == "UPDATE" or
-         kw == "DELETE" or kw == "CREATE" or kw == "DROP" or kw == "ALTER" then
+      if Keywords.is_statement_starter(t.text) then
         break
       end
     end

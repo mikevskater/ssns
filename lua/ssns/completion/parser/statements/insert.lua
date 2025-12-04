@@ -101,11 +101,7 @@ function InsertStatement._parse_column_list(state, chunk)
     local tok = state:current()
     if tok.type == "identifier" or tok.type == "bracket_id" then
       -- Extract column name (strip brackets if needed)
-      local col_name = tok.text
-      if tok.type == "bracket_id" then
-        col_name = col_name:match("^%[(.-)%]$") or col_name
-      end
-      table.insert(insert_columns, col_name)
+      table.insert(insert_columns, Helpers.strip_brackets(tok.text))
     end
     last_token = tok
     state:advance()

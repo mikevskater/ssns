@@ -11,6 +11,7 @@
 
 local Helpers = require('ssns.completion.parser.utils.helpers')
 local ColumnListParser = require('ssns.completion.parser.utils.column_list')
+local Keywords = require('ssns.completion.parser.utils.keywords')
 
 local CteClauseParser = {}
 
@@ -43,9 +44,9 @@ function CteClauseParser.parse(state, scope)
     end
 
     -- Skip actual SQL keywords that wouldn't be valid CTE names
+    -- This includes statement starters and clause keywords
     local upper_text = cte_name_token.text:upper()
-    if upper_text == "SELECT" or upper_text == "INSERT" or upper_text == "UPDATE" or
-       upper_text == "DELETE" or upper_text == "FROM" or upper_text == "WHERE" then
+    if Keywords.is_statement_starter(upper_text) or upper_text == "FROM" or upper_text == "WHERE" then
       break
     end
 
