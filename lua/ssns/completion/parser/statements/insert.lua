@@ -53,10 +53,7 @@ function InsertStatement.parse(state, scope, temp_tables)
     InsertStatement._parse_select(state, chunk, scope)
   end
 
-  -- Copy subqueries from scope to chunk
-  chunk.subqueries = scope.subqueries
-
-  -- Finalize: build aliases, resolve column parents
+  -- Finalize: build aliases, resolve column parents, copy subqueries
   BaseStatement.finalize_chunk(chunk, scope)
 
   return chunk, in_insert

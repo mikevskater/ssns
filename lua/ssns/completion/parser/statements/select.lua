@@ -43,10 +43,7 @@ function SelectStatement.parse(state, scope, temp_tables)
     SelectStatement._parse_from(state, chunk, scope)
   end
 
-  -- Copy subqueries from scope to chunk
-  chunk.subqueries = scope.subqueries
-
-  -- Finalize: build aliases, resolve column parents
+  -- Finalize: build aliases, resolve column parents, copy subqueries
   BaseStatement.finalize_chunk(chunk, scope)
 
   return chunk

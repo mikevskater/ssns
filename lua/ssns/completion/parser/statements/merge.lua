@@ -47,10 +47,7 @@ function MergeStatement.parse(state, scope, temp_tables)
   -- Skip rest of MERGE (ON condition, WHEN clauses with UPDATE/DELETE/INSERT)
   MergeStatement._skip_merge_body(state)
 
-  -- Copy subqueries from scope
-  chunk.subqueries = scope.subqueries
-
-  -- Finalize
+  -- Finalize: build aliases, resolve column parents, copy subqueries
   BaseStatement.finalize_chunk(chunk, scope)
 
   return chunk

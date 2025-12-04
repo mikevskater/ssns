@@ -309,13 +309,13 @@ function FromClauseParser._parse_apply(state, tables, scope, known_ctes)
         end
       end
     else
-      -- Skip parenthesized function call or VALUES
-      local paren_depth_apply = 1
-      while state:current() and paren_depth_apply > 0 do
+      -- Skip parenthesized function call or VALUES (already inside parens)
+      local paren_depth = 1
+      while state:current() and paren_depth > 0 do
         if state:is_type("paren_open") then
-          paren_depth_apply = paren_depth_apply + 1
+          paren_depth = paren_depth + 1
         elseif state:is_type("paren_close") then
-          paren_depth_apply = paren_depth_apply - 1
+          paren_depth = paren_depth - 1
         end
         state:advance()
       end
@@ -327,16 +327,7 @@ function FromClauseParser._parse_apply(state, tables, scope, known_ctes)
     local tvf_qualified = QualifiedName.parse(state)
     -- Skip function arguments if present
     if state:is_type("paren_open") then
-      local paren_depth_apply = 1
-      state:advance()
-      while state:current() and paren_depth_apply > 0 do
-        if state:is_type("paren_open") then
-          paren_depth_apply = paren_depth_apply + 1
-        elseif state:is_type("paren_close") then
-          paren_depth_apply = paren_depth_apply - 1
-        end
-        state:advance()
-      end
+      state:skip_paren_contents()
     end
     -- Parse alias for table-valued function
     local tvf_alias = AliasParser.parse(state)
@@ -362,16 +353,7 @@ function FromClauseParser._skip_table_hint(state)
   state:advance()  -- consume WITH
   if state:is_type("paren_open") then
     -- Skip parenthesized hints like (NOLOCK, INDEX(...))
-    local hint_depth = 1
-    state:advance()  -- consume (
-    while state:current() and hint_depth > 0 do
-      if state:is_type("paren_open") then
-        hint_depth = hint_depth + 1
-      elseif state:is_type("paren_close") then
-        hint_depth = hint_depth - 1
-      end
-      state:advance()
-    end
+    state:skip_paren_contents()
   end
 end
 
