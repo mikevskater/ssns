@@ -478,6 +478,33 @@ function Ssns._register_commands()
     desc = "View completion metadata resolution in floating window",
   })
 
+  -- :SSNSDebugFuzzyMatcher - View fuzzy matcher algorithm details
+  vim.api.nvim_create_user_command("SSNSDebugFuzzyMatcher", function()
+    local ViewFuzzyMatcher = require('ssns.features.view_fuzzy_matcher')
+    ViewFuzzyMatcher.view_matcher()
+  end, {
+    nargs = 0,
+    desc = "View fuzzy matcher algorithm in floating window",
+  })
+
+  -- :SSNSDebugTypeCompatibility - View type compatibility rules
+  vim.api.nvim_create_user_command("SSNSDebugTypeCompatibility", function()
+    local ViewTypeCompatibility = require('ssns.features.view_type_compatibility')
+    ViewTypeCompatibility.view_compatibility()
+  end, {
+    nargs = 0,
+    desc = "View type compatibility rules in floating window",
+  })
+
+  -- :SSNSDebugFKGraph - View FK relationship graph
+  vim.api.nvim_create_user_command("SSNSDebugFKGraph", function()
+    local ViewFKGraph = require('ssns.features.view_fk_graph')
+    ViewFKGraph.view_graph()
+  end, {
+    nargs = 0,
+    desc = "View FK relationship graph in floating window",
+  })
+
   -- :SSNSAddServer - Open add server UI
   vim.api.nvim_create_user_command("SSNSAddServer", function()
     local AddServerUI = require('ssns.ui.add_server')
