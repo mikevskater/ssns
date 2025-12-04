@@ -1,16 +1,39 @@
+---@class ServerConfig
+---@field host string Server hostname or IP address
+---@field instance string? SQL Server instance name (optional)
+---@field port number? Port number (optional)
+---@field database string? Default database name (optional)
+
+---@class AuthConfig
+---@field type string Authentication type: "windows", "sql", "none"
+---@field username string? Username for SQL authentication (optional)
+---@field password string? Password for SQL authentication (optional)
+
+---@class OptionsConfig
+---@field odbc_driver string? Specific ODBC driver name (SQL Server only)
+---@field ssl boolean? Enable SSL connections (optional)
+---@field timeout number? Connection timeout in seconds (optional)
+---@field trust_server_certificate boolean? Bypass certificate validation (optional)
+
 ---@class ConnectionData
 ---@field name string Connection display name
 ---@field type string Database type: "sqlserver"|"mysql"|"postgres"|"sqlite"
----@field connection_string string The connection string
----@field favorite boolean Whether to show in tree on startup (without connecting)
----@field auto_connect boolean Whether to auto-connect on startup (implies favorite)
+---@field server ServerConfig Nested server details
+---@field auth AuthConfig Nested authentication details
+---@field options OptionsConfig? Nested connection options (optional)
+---@field favorite boolean Whether to show in tree on startup
+---@field auto_connect boolean Whether to auto-connect on startup
 
 ---@class ConnectionsFile
+---@field version number File format version
 ---@field connections ConnectionData[] Array of saved connections
 
 ---@class Connections
 ---Manages persistent connection storage in JSON file
 local Connections = {}
+
+-- Current file format version
+local FILE_VERSION = 2
 
 ---Get the path to the connections JSON file
 ---@return string path Full path to connections.json
@@ -63,6 +86,7 @@ function Connections.save(connections)
   local path = Connections.get_file_path()
 
   local data = {
+    version = FILE_VERSION,
     connections = connections,
   }
 
@@ -89,17 +113,68 @@ function Connections.save(connections)
   return true
 end
 
+---Validate a connection data object
+---@param connection ConnectionData Connection data to validate
+---@return boolean valid
+---@return string? error_message
+function Connections.validate(connection)
+  -- Check required fields
+  if not connection.name or connection.name == "" then
+    return false, "Connection name is required"
+  end
+
+  if not connection.type or connection.type == "" then
+    return false, "Database type is required"
+  end
+
+  -- Validate type is one of the supported types
+  local valid_types = { sqlserver = true, mysql = true, postgres = true, sqlite = true }
+  if not valid_types[connection.type] then
+    return false, string.format("Invalid database type: %s", connection.type)
+  end
+
+  -- Check server config
+  if not connection.server then
+    return false, "Server configuration is required"
+  end
+
+  if not connection.server.host or connection.server.host == "" then
+    return false, "Server host is required"
+  end
+
+  -- Check auth config
+  if not connection.auth then
+    return false, "Authentication configuration is required"
+  end
+
+  if not connection.auth.type then
+    return false, "Authentication type is required"
+  end
+
+  -- Validate auth type
+  local valid_auth_types = { windows = true, sql = true, none = true }
+  if not valid_auth_types[connection.auth.type] then
+    return false, string.format("Invalid authentication type: %s", connection.auth.type)
+  end
+
+  -- SQL auth requires username
+  if connection.auth.type == "sql" then
+    if not connection.auth.username or connection.auth.username == "" then
+      return false, "Username is required for SQL authentication"
+    end
+  end
+
+  return true, nil
+end
+
 ---Add a new connection
 ---@param connection ConnectionData Connection data to add
 ---@return boolean success
 function Connections.add(connection)
-  -- Validate required fields
-  if not connection.name or connection.name == "" then
-    vim.notify("SSNS: Connection name is required", vim.log.levels.ERROR)
-    return false
-  end
-  if not connection.connection_string or connection.connection_string == "" then
-    vim.notify("SSNS: Connection string is required", vim.log.levels.ERROR)
+  -- Validate connection
+  local valid, err = Connections.validate(connection)
+  if not valid then
+    vim.notify("SSNS: " .. err, vim.log.levels.ERROR)
     return false
   end
 
@@ -114,7 +189,6 @@ function Connections.add(connection)
   end
 
   -- Add defaults
-  connection.type = connection.type or "sqlserver"
   connection.favorite = connection.favorite or false
   connection.auto_connect = connection.auto_connect or false
 
@@ -150,6 +224,13 @@ end
 ---@param connection ConnectionData New connection data
 ---@return boolean success
 function Connections.update(name, connection)
+  -- Validate connection
+  local valid, err = Connections.validate(connection)
+  if not valid then
+    vim.notify("SSNS: " .. err, vim.log.levels.ERROR)
+    return false
+  end
+
   local connections = Connections.load()
   local found = false
 
@@ -279,43 +360,42 @@ function Connections.count()
   return #connections
 end
 
----Migrate connections from legacy config format
----@param config_connections table<string, string> Map of name -> connection_string
----@return number migrated_count Number of connections migrated
-function Connections.migrate_from_config(config_connections)
-  if not config_connections or vim.tbl_count(config_connections) == 0 then
-    return 0
+---Generate a unique connection key for pooling/caching
+---@param connection ConnectionData
+---@return string key
+function Connections.generate_connection_key(connection)
+  local parts = { connection.type }
+
+  -- Add server info
+  table.insert(parts, connection.server.host)
+  if connection.server.instance then
+    table.insert(parts, connection.server.instance)
+  end
+  if connection.server.port then
+    table.insert(parts, tostring(connection.server.port))
+  end
+  if connection.server.database then
+    table.insert(parts, connection.server.database)
   end
 
-  -- Only migrate if connections file doesn't exist or is empty
-  if Connections.has_connections() then
-    return 0
+  -- Add auth type
+  table.insert(parts, connection.auth.type)
+  if connection.auth.username then
+    table.insert(parts, connection.auth.username)
   end
 
-  local AdapterFactory = require('ssns.adapters.factory')
-  local migrated = 0
+  return table.concat(parts, ":")
+end
 
-  for name, conn_string in pairs(config_connections) do
-    -- Detect database type from connection string
-    local db_type = AdapterFactory.detect_type(conn_string) or "sqlserver"
-
-    local connection = {
-      name = name,
-      type = db_type,
-      connection_string = conn_string,
-      auto_connect = false,  -- Don't auto-connect migrated connections by default
-    }
-
-    if Connections.add(connection) then
-      migrated = migrated + 1
-    end
-  end
-
-  if migrated > 0 then
-    vim.notify(string.format("SSNS: Migrated %d connections from config", migrated), vim.log.levels.INFO)
-  end
-
-  return migrated
+---Create a copy of connection config with a different database
+---@param connection ConnectionData Original connection config
+---@param new_database string New database name
+---@return ConnectionData modified Modified connection config
+function Connections.with_database(connection, new_database)
+  -- Deep copy the connection
+  local modified = vim.deepcopy(connection)
+  modified.server.database = new_database
+  return modified
 end
 
 ---Pretty print JSON with indentation

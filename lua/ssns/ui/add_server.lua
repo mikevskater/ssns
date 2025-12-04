@@ -24,65 +24,141 @@ local DB_TYPES = {
   { id = "sqlite", label = "SQLite", icon = "" },
 }
 
+-- Authentication type options
+local AUTH_TYPES = {
+  sqlserver = {
+    { id = "windows", label = "Windows Authentication" },
+    { id = "sql", label = "SQL Server Authentication" },
+  },
+  mysql = {
+    { id = "sql", label = "Username/Password" },
+    { id = "none", label = "No Authentication" },
+  },
+  postgres = {
+    { id = "sql", label = "Username/Password" },
+    { id = "none", label = "No Authentication" },
+  },
+  sqlite = {
+    { id = "none", label = "No Authentication" },
+  },
+}
+
+-- Default ports
+local DEFAULT_PORTS = {
+  sqlserver = 1433,
+  mysql = 3306,
+  postgres = 5432,
+  sqlite = nil,
+}
+
 -- Placeholder hints for server path by type
 local PATH_HINTS = {
   sqlserver = ".\\SQLEXPRESS  or  localhost\\INSTANCE  or  192.168.1.100",
-  mysql = "localhost:3306  or  user:pass@host:3306",
-  postgres = "localhost:5432  or  user:pass@host:5432",
+  mysql = "localhost  or  192.168.1.100",
+  postgres = "localhost  or  192.168.1.100",
   sqlite = "C:\\path\\to\\database.db  or  /path/to/database.db",
 }
 
----Build a full connection string from type and server path
----@param db_type string Database type (sqlserver, mysql, postgres, sqlite)
----@param server_path string The server path entered by user
----@return string connection_string Full connection string with scheme
-local function build_connection_string(db_type, server_path)
+---Parse a server path string to extract host and instance
+---@param server_path string User-entered string like "SERVER\INSTANCE" or "localhost"
+---@return string host The server hostname
+---@return string? instance The instance name (SQL Server only) or nil
+local function parse_server_path(server_path)
   if not server_path or server_path == "" then
-    return ""
+    return "", nil
   end
 
-  -- If it already has a scheme, return as-is
-  if server_path:match("^%w+://") then
-    return server_path
+  -- Check for backslash (SQL Server instance notation)
+  local host, instance = server_path:match("^([^\\]+)\\(.+)$")
+  if host and instance then
+    return host, instance
   end
 
-  local scheme = db_type
-  if db_type == "postgres" then
-    scheme = "postgresql"
-  end
-
-  -- For sqlite, handle paths
-  if db_type == "sqlite" then
-    -- Windows absolute path (C:\...)
-    if server_path:match("^%a:\\") then
-      return scheme .. ":///" .. server_path
-    end
-    -- Unix absolute path (/...)
-    if server_path:match("^/") then
-      return scheme .. "://" .. server_path
-    end
-    -- Relative path
-    return scheme .. ":///" .. server_path
-  end
-
-  return scheme .. "://" .. server_path
+  return server_path, nil
 end
 
----Extract server path from a full connection string
----@param connection_string string Full connection string
----@return string server_path Just the path portion
-local function extract_server_path(connection_string)
-  if not connection_string or connection_string == "" then
+---Format a connection's server path for display
+---@param connection ConnectionData The connection data
+---@return string server_path Display string for UI
+local function format_server_path(connection)
+  if not connection.server then
     return ""
   end
 
-  -- Remove scheme prefix (sqlserver://, mysql://, etc.)
-  local path = connection_string:gsub("^%w+://", "")
+  local path = connection.server.host or ""
 
-  -- For sqlite with triple slash, remove extra slash
-  path = path:gsub("^/(%a:\\)", "%1")  -- Windows: sqlite:///C:\ -> C:\
+  if connection.server.instance then
+    path = path .. "\\" .. connection.server.instance
+  end
 
   return path
+end
+
+---Build a ConnectionData object from form state
+---@param form_state table Form state from UI inputs
+---@return ConnectionData connection Complete connection data object
+local function build_connection_data(form_state)
+  local host, instance = parse_server_path(form_state.server_path)
+
+  -- For SQLite, host is the file path
+  if form_state.db_type == "sqlite" then
+    host = form_state.server_path
+    instance = nil
+  end
+
+  local connection = {
+    name = form_state.name,
+    type = form_state.db_type,
+    server = {
+      host = host,
+      instance = instance,
+      port = form_state.port,
+      database = form_state.database,
+    },
+    auth = {
+      type = form_state.auth_type,
+      username = form_state.username,
+      password = form_state.password,
+    },
+    options = {},
+    favorite = form_state.favorite,
+    auto_connect = form_state.auto_connect,
+  }
+
+  -- Add ODBC driver for SQL Server Windows auth
+  if form_state.db_type == "sqlserver" and form_state.auth_type == "windows" then
+    local odbc_driver = form_state.odbc_driver
+    if not odbc_driver or odbc_driver == "" then
+      -- Auto-detect best ODBC driver
+      local ConnectionString = require('ssns.connection_string')
+      odbc_driver = ConnectionString.get_best_odbc_driver()
+    end
+    connection.options.odbc_driver = odbc_driver
+    connection.options.trust_server_certificate = true
+  end
+
+  return connection
+end
+
+---Create form state from existing connection data
+---@param connection ConnectionData Existing connection to edit
+---@return table form_state Form state with all fields
+local function form_state_from_connection(connection)
+  local server_path = format_server_path(connection)
+
+  return {
+    name = connection.name or "",
+    server_path = server_path,
+    db_type = connection.type or "sqlserver",
+    database = connection.server and connection.server.database or "",
+    port = connection.server and connection.server.port,
+    auth_type = connection.auth and connection.auth.type or "windows",
+    username = connection.auth and connection.auth.username or "",
+    password = connection.auth and connection.auth.password or "",
+    odbc_driver = connection.options and connection.options.odbc_driver or "",
+    favorite = connection.favorite or false,
+    auto_connect = connection.auto_connect or false,
+  }
 end
 
 ---Get type label and icon for a db_type
@@ -95,6 +171,20 @@ local function get_type_info(db_type)
     end
   end
   return "Unknown", ""
+end
+
+---Get auth type label
+---@param db_type string
+---@param auth_type string
+---@return string label
+local function get_auth_label(db_type, auth_type)
+  local auth_opts = AUTH_TYPES[db_type] or {}
+  for _, a in ipairs(auth_opts) do
+    if a.id == auth_type then
+      return a.label
+    end
+  end
+  return auth_type
 end
 
 ---Apply highlights to a buffer
@@ -415,7 +505,7 @@ function AddServerUI.toggle_favorite_selected()
 end
 
 ---Show the new connection form
----@param edit_connection table? Existing connection to edit
+---@param edit_connection ConnectionData? Existing connection to edit
 function AddServerUI.show_new_connection_form(edit_connection)
   -- Close any existing float first to prevent window stacking
   if current_float then
@@ -426,26 +516,32 @@ function AddServerUI.show_new_connection_form(edit_connection)
   current_screen = "new"
   local is_edit = edit_connection ~= nil
 
-  -- Form state - extract server_path from connection_string for editing
-  local server_path = ""
-  if edit_connection and edit_connection.connection_string then
-    server_path = extract_server_path(edit_connection.connection_string)
+  -- Form state
+  local form_state
+  if edit_connection then
+    form_state = form_state_from_connection(edit_connection)
+  else
+    form_state = {
+      name = "",
+      server_path = "",
+      db_type = "sqlserver",
+      database = "",
+      port = nil,
+      auth_type = "windows",
+      username = "",
+      password = "",
+      odbc_driver = "",
+      favorite = false,
+      auto_connect = false,
+    }
   end
-
-  local form_state = {
-    name = edit_connection and edit_connection.name or "",
-    server_path = server_path,
-    db_type = edit_connection and edit_connection.type or "sqlserver",
-    favorite = edit_connection and edit_connection.favorite or false,
-    auto_connect = edit_connection and edit_connection.auto_connect or false,
-  }
 
   AddServerUI.show_new_connection_form_with_state(form_state, edit_connection)
 end
 
 ---Show form with current state (refreshes content while keeping keymaps functional)
 ---@param form_state table Current form values
----@param edit_connection table? Original connection being edited
+---@param edit_connection ConnectionData? Original connection being edited
 function AddServerUI.show_new_connection_form_with_state(form_state, edit_connection)
   -- Close existing float and recreate to ensure keymaps are fresh
   if current_float then
@@ -459,103 +555,202 @@ function AddServerUI.show_new_connection_form_with_state(form_state, edit_connec
   -- Get type info
   local type_label, type_icon = get_type_info(form_state.db_type)
   local path_hint = PATH_HINTS[form_state.db_type] or ""
+  local auth_label = get_auth_label(form_state.db_type, form_state.auth_type)
+  local is_sqlite = form_state.db_type == "sqlite"
+  local needs_auth_creds = form_state.auth_type == "sql"
 
   -- Build form lines
   local lines = {}
   local highlights = {}
+  local line_num = 0
 
   -- Server Type section
   table.insert(lines, "")
+  line_num = line_num + 1
   table.insert(lines, "  SERVER TYPE")
-  table.insert(highlights, {1, 2, -1, "Title"})
+  table.insert(highlights, {line_num, 2, -1, "Title"})
+  line_num = line_num + 1
 
   table.insert(lines, string.format("  %s %s", type_icon, type_label))
-  table.insert(highlights, {2, 2, 5, "Function"})
-  table.insert(highlights, {2, 5, -1, "String"})
+  table.insert(highlights, {line_num, 2, 5, "Function"})
+  table.insert(highlights, {line_num, 5, -1, "String"})
+  line_num = line_num + 1
 
   table.insert(lines, "  Press t to change")
-  table.insert(highlights, {3, 8, 9, "Special"})
-  table.insert(highlights, {3, 0, -1, "Comment"})
+  table.insert(highlights, {line_num, 8, 9, "Special"})
+  table.insert(highlights, {line_num, 0, -1, "Comment"})
+  line_num = line_num + 1
 
   table.insert(lines, "")
+  line_num = line_num + 1
 
   -- Connection Name section
   table.insert(lines, "  CONNECTION NAME")
-  table.insert(highlights, {5, 2, -1, "Title"})
+  table.insert(highlights, {line_num, 2, -1, "Title"})
+  line_num = line_num + 1
 
   local name_display = form_state.name ~= "" and form_state.name or "(not set)"
   table.insert(lines, "  " .. name_display)
   if form_state.name ~= "" then
-    table.insert(highlights, {6, 2, -1, "String"})
+    table.insert(highlights, {line_num, 2, -1, "String"})
   else
-    table.insert(highlights, {6, 2, -1, "Comment"})
+    table.insert(highlights, {line_num, 2, -1, "Comment"})
   end
+  line_num = line_num + 1
 
   table.insert(lines, "  Press n to set")
-  table.insert(highlights, {7, 8, 9, "Special"})
-  table.insert(highlights, {7, 0, -1, "Comment"})
+  table.insert(highlights, {line_num, 8, 9, "Special"})
+  table.insert(highlights, {line_num, 0, -1, "Comment"})
+  line_num = line_num + 1
 
   table.insert(lines, "")
+  line_num = line_num + 1
 
   -- Server Path section
-  table.insert(lines, "  SERVER PATH")
-  table.insert(highlights, {9, 2, -1, "Title"})
+  local path_title = is_sqlite and "  DATABASE FILE" or "  SERVER"
+  table.insert(lines, path_title)
+  table.insert(highlights, {line_num, 2, -1, "Title"})
+  line_num = line_num + 1
 
   local path_display = form_state.server_path ~= "" and form_state.server_path or "(not set)"
   table.insert(lines, "  " .. path_display)
   if form_state.server_path ~= "" then
-    table.insert(highlights, {10, 2, -1, "String"})
+    table.insert(highlights, {line_num, 2, -1, "String"})
   else
-    table.insert(highlights, {10, 2, -1, "Comment"})
+    table.insert(highlights, {line_num, 2, -1, "Comment"})
   end
+  line_num = line_num + 1
 
   table.insert(lines, "  Press p to set")
-  table.insert(highlights, {11, 8, 9, "Special"})
-  table.insert(highlights, {11, 0, -1, "Comment"})
+  table.insert(highlights, {line_num, 8, 9, "Special"})
+  table.insert(highlights, {line_num, 0, -1, "Comment"})
+  line_num = line_num + 1
 
   table.insert(lines, "  " .. path_hint)
-  table.insert(highlights, {12, 0, -1, "DiagnosticHint"})
+  table.insert(highlights, {line_num, 0, -1, "DiagnosticHint"})
+  line_num = line_num + 1
 
   table.insert(lines, "")
+  line_num = line_num + 1
+
+  -- Database section (not for SQLite)
+  if not is_sqlite then
+    table.insert(lines, "  DATABASE (optional)")
+    table.insert(highlights, {line_num, 2, -1, "Title"})
+    line_num = line_num + 1
+
+    local db_display = form_state.database ~= "" and form_state.database or "(default)"
+    table.insert(lines, "  " .. db_display)
+    if form_state.database ~= "" then
+      table.insert(highlights, {line_num, 2, -1, "String"})
+    else
+      table.insert(highlights, {line_num, 2, -1, "Comment"})
+    end
+    line_num = line_num + 1
+
+    table.insert(lines, "  Press D to set")
+    table.insert(highlights, {line_num, 8, 9, "Special"})
+    table.insert(highlights, {line_num, 0, -1, "Comment"})
+    line_num = line_num + 1
+
+    table.insert(lines, "")
+    line_num = line_num + 1
+  end
+
+  -- Authentication section (not for SQLite)
+  if not is_sqlite then
+    table.insert(lines, "  AUTHENTICATION")
+    table.insert(highlights, {line_num, 2, -1, "Title"})
+    line_num = line_num + 1
+
+    table.insert(lines, "  " .. auth_label)
+    table.insert(highlights, {line_num, 2, -1, "String"})
+    line_num = line_num + 1
+
+    table.insert(lines, "  Press A to change")
+    table.insert(highlights, {line_num, 8, 9, "Special"})
+    table.insert(highlights, {line_num, 0, -1, "Comment"})
+    line_num = line_num + 1
+
+    -- Show username/password fields for SQL auth
+    if needs_auth_creds then
+      table.insert(lines, "")
+      line_num = line_num + 1
+
+      local user_display = form_state.username ~= "" and form_state.username or "(not set)"
+      table.insert(lines, "  Username: " .. user_display)
+      if form_state.username ~= "" then
+        table.insert(highlights, {line_num, 12, -1, "String"})
+      else
+        table.insert(highlights, {line_num, 12, -1, "Comment"})
+      end
+      line_num = line_num + 1
+
+      local pass_display = form_state.password ~= "" and string.rep("*", #form_state.password) or "(not set)"
+      table.insert(lines, "  Password: " .. pass_display)
+      if form_state.password ~= "" then
+        table.insert(highlights, {line_num, 12, -1, "String"})
+      else
+        table.insert(highlights, {line_num, 12, -1, "Comment"})
+      end
+      line_num = line_num + 1
+
+      table.insert(lines, "  Press u/P to set credentials")
+      table.insert(highlights, {line_num, 8, 9, "Special"})
+      table.insert(highlights, {line_num, 10, 11, "Special"})
+      table.insert(highlights, {line_num, 0, -1, "Comment"})
+      line_num = line_num + 1
+    end
+
+    table.insert(lines, "")
+    line_num = line_num + 1
+  end
 
   -- Options section
   table.insert(lines, "  OPTIONS")
-  table.insert(highlights, {14, 2, -1, "Title"})
+  table.insert(highlights, {line_num, 2, -1, "Title"})
+  line_num = line_num + 1
 
   local fav_checkbox = form_state.favorite and "[x]" or "[ ]"
   local auto_checkbox = form_state.auto_connect and "[x]" or "[ ]"
 
   table.insert(lines, string.format("  %s ★ Favorite          Show in tree on startup", fav_checkbox))
-  table.insert(highlights, {15, 2, 5, form_state.favorite and "DiagnosticOk" or "Comment"})
-  table.insert(highlights, {15, 6, 7, "WarningMsg"})
-  table.insert(highlights, {15, 26, -1, "Comment"})
+  table.insert(highlights, {line_num, 2, 5, form_state.favorite and "DiagnosticOk" or "Comment"})
+  table.insert(highlights, {line_num, 6, 7, "WarningMsg"})
+  table.insert(highlights, {line_num, 26, -1, "Comment"})
+  line_num = line_num + 1
 
   table.insert(lines, string.format("  %s ⚡ Auto-connect      Connect automatically", auto_checkbox))
-  table.insert(highlights, {16, 2, 5, form_state.auto_connect and "DiagnosticOk" or "Comment"})
-  table.insert(highlights, {16, 6, 8, "DiagnosticWarn"})
-  table.insert(highlights, {16, 26, -1, "Comment"})
+  table.insert(highlights, {line_num, 2, 5, form_state.auto_connect and "DiagnosticOk" or "Comment"})
+  table.insert(highlights, {line_num, 6, 8, "DiagnosticWarn"})
+  table.insert(highlights, {line_num, 26, -1, "Comment"})
+  line_num = line_num + 1
 
   table.insert(lines, "  Press f or a to toggle")
-  table.insert(highlights, {17, 8, 9, "Special"})
-  table.insert(highlights, {17, 13, 14, "Special"})
-  table.insert(highlights, {17, 0, -1, "Comment"})
+  table.insert(highlights, {line_num, 8, 9, "Special"})
+  table.insert(highlights, {line_num, 13, 14, "Special"})
+  table.insert(highlights, {line_num, 0, -1, "Comment"})
+  line_num = line_num + 1
 
   table.insert(lines, "")
+  line_num = line_num + 1
 
   -- Actions section
   table.insert(lines, "  ───────────────────────────────────────────")
-  table.insert(highlights, {19, 0, -1, "Comment"})
+  table.insert(highlights, {line_num, 0, -1, "Comment"})
+  line_num = line_num + 1
 
   table.insert(lines, "")
+  line_num = line_num + 1
   table.insert(lines, "  s   Save connection       T   Test connection")
+  table.insert(highlights, {line_num, 2, 3, "Special"})
+  table.insert(highlights, {line_num, 28, 29, "Special"})
+  line_num = line_num + 1
   table.insert(lines, "  b   Back to list          q   Close")
+  table.insert(highlights, {line_num, 2, 3, "Special"})
+  table.insert(highlights, {line_num, 28, 29, "Special"})
+  line_num = line_num + 1
   table.insert(lines, "")
-
-  -- Highlight action keys
-  table.insert(highlights, {21, 2, 3, "Special"})
-  table.insert(highlights, {21, 28, 29, "Special"})
-  table.insert(highlights, {22, 2, 3, "Special"})
-  table.insert(highlights, {22, 28, 29, "Special"})
 
   local title = is_edit and " Edit Connection " or " New Connection "
 
@@ -588,6 +783,18 @@ function AddServerUI.show_new_connection_form_with_state(form_state, edit_connec
   end
   keymaps[km.set_path or "p"] = function()
     AddServerUI.prompt_server_path(form_state, edit_connection)
+  end
+  keymaps["D"] = function()
+    AddServerUI.prompt_database(form_state, edit_connection)
+  end
+  keymaps["A"] = function()
+    AddServerUI.prompt_auth_type(form_state, edit_connection)
+  end
+  keymaps["u"] = function()
+    AddServerUI.prompt_username(form_state, edit_connection)
+  end
+  keymaps["P"] = function()
+    AddServerUI.prompt_password(form_state, edit_connection)
   end
   keymaps[km.toggle_favorite or "f"] = function()
     form_state.favorite = not form_state.favorite
@@ -628,7 +835,7 @@ end
 
 ---Prompt for database type selection
 ---@param form_state table Current form values
----@param edit_connection table? Original connection being edited
+---@param edit_connection ConnectionData? Original connection being edited
 function AddServerUI.prompt_db_type(form_state, edit_connection)
   -- Build selection items
   local items = {}
@@ -640,7 +847,15 @@ function AddServerUI.prompt_db_type(form_state, edit_connection)
     prompt = "Select Database Type:",
   }, function(choice, idx)
     if choice and idx then
-      form_state.db_type = DB_TYPES[idx].id
+      local new_type = DB_TYPES[idx].id
+      form_state.db_type = new_type
+
+      -- Reset auth to default for new type
+      local auth_opts = AUTH_TYPES[new_type]
+      if auth_opts and #auth_opts > 0 then
+        form_state.auth_type = auth_opts[1].id
+      end
+
       AddServerUI.show_new_connection_form_with_state(form_state, edit_connection)
     end
   end)
@@ -648,7 +863,7 @@ end
 
 ---Prompt for connection name
 ---@param form_state table Current form values
----@param edit_connection table? Original connection being edited
+---@param edit_connection ConnectionData? Original connection being edited
 function AddServerUI.prompt_name(form_state, edit_connection)
   vim.ui.input({
     prompt = "Connection Name: ",
@@ -663,10 +878,10 @@ end
 
 ---Prompt for server path
 ---@param form_state table Current form values
----@param edit_connection table? Original connection being edited
+---@param edit_connection ConnectionData? Original connection being edited
 function AddServerUI.prompt_server_path(form_state, edit_connection)
   local hint = PATH_HINTS[form_state.db_type] or ""
-  local prompt = "Server Path"
+  local prompt = form_state.db_type == "sqlite" and "Database File" or "Server"
   if hint ~= "" then
     prompt = prompt .. " (e.g. " .. hint:match("^([^%s]+)") .. ")"
   end
@@ -683,9 +898,85 @@ function AddServerUI.prompt_server_path(form_state, edit_connection)
   end)
 end
 
+---Prompt for database name
+---@param form_state table Current form values
+---@param edit_connection ConnectionData? Original connection being edited
+function AddServerUI.prompt_database(form_state, edit_connection)
+  vim.ui.input({
+    prompt = "Database (leave empty for default): ",
+    default = form_state.database,
+  }, function(input)
+    if input ~= nil then
+      form_state.database = input
+      AddServerUI.show_new_connection_form_with_state(form_state, edit_connection)
+    end
+  end)
+end
+
+---Prompt for auth type selection
+---@param form_state table Current form values
+---@param edit_connection ConnectionData? Original connection being edited
+function AddServerUI.prompt_auth_type(form_state, edit_connection)
+  local auth_opts = AUTH_TYPES[form_state.db_type] or {}
+
+  if #auth_opts == 0 then
+    vim.notify("No authentication options for this database type", vim.log.levels.INFO)
+    return
+  end
+
+  local items = {}
+  for _, a in ipairs(auth_opts) do
+    table.insert(items, a.label)
+  end
+
+  vim.ui.select(items, {
+    prompt = "Select Authentication Type:",
+  }, function(choice, idx)
+    if choice and idx then
+      form_state.auth_type = auth_opts[idx].id
+      -- Clear credentials when switching to non-SQL auth
+      if form_state.auth_type ~= "sql" then
+        form_state.username = ""
+        form_state.password = ""
+      end
+      AddServerUI.show_new_connection_form_with_state(form_state, edit_connection)
+    end
+  end)
+end
+
+---Prompt for username
+---@param form_state table Current form values
+---@param edit_connection ConnectionData? Original connection being edited
+function AddServerUI.prompt_username(form_state, edit_connection)
+  vim.ui.input({
+    prompt = "Username: ",
+    default = form_state.username,
+  }, function(input)
+    if input ~= nil then
+      form_state.username = input
+      AddServerUI.show_new_connection_form_with_state(form_state, edit_connection)
+    end
+  end)
+end
+
+---Prompt for password
+---@param form_state table Current form values
+---@param edit_connection ConnectionData? Original connection being edited
+function AddServerUI.prompt_password(form_state, edit_connection)
+  vim.ui.input({
+    prompt = "Password: ",
+    default = form_state.password,
+  }, function(input)
+    if input ~= nil then
+      form_state.password = input
+      AddServerUI.show_new_connection_form_with_state(form_state, edit_connection)
+    end
+  end)
+end
+
 ---Save the connection
 ---@param form_state table Current form values
----@param edit_connection table? Original connection being edited
+---@param edit_connection ConnectionData? Original connection being edited
 function AddServerUI.save_connection(form_state, edit_connection)
   -- Validate
   if form_state.name == "" then
@@ -698,16 +989,8 @@ function AddServerUI.save_connection(form_state, edit_connection)
     return
   end
 
-  -- Build full connection string from type + path
-  local connection_string = build_connection_string(form_state.db_type, form_state.server_path)
-
-  local connection = {
-    name = form_state.name,
-    type = form_state.db_type,
-    connection_string = connection_string,
-    favorite = form_state.favorite,
-    auto_connect = form_state.auto_connect,
-  }
+  -- Build structured connection data
+  local connection = build_connection_data(form_state)
 
   local success
   if edit_connection then
@@ -757,14 +1040,14 @@ function AddServerUI.test_connection(form_state)
 
   vim.notify("Testing connection...", vim.log.levels.INFO)
 
-  -- Build full connection string
-  local connection_string = build_connection_string(form_state.db_type, form_state.server_path)
+  -- Build structured connection data
+  local connection = build_connection_data(form_state)
 
   -- Create a temporary server to test the connection
   local Factory = require('ssns.factory')
   local test_name = "_test_" .. os.time()
 
-  local server, err = Factory.create_server(test_name, connection_string)
+  local server, err = Factory.create_server(test_name, connection)
 
   if not server then
     vim.notify(string.format("Connection failed: %s", err or "Unknown error"), vim.log.levels.ERROR)
