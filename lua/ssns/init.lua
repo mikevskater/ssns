@@ -422,6 +422,15 @@ function Ssns._register_commands()
     desc = "View tokenizer output in floating window (debugging)",
   })
 
+  -- :SSNSContext - View statement context at cursor for debugging IntelliSense
+  vim.api.nvim_create_user_command("SSNSContext", function()
+    local ViewContext = require('ssns.features.view_context')
+    ViewContext.view_context()
+  end, {
+    nargs = 0,
+    desc = "View statement context at cursor in floating window (debugging)",
+  })
+
   -- :SSNSAddServer - Open add server UI
   vim.api.nvim_create_user_command("SSNSAddServer", function()
     local AddServerUI = require('ssns.ui.add_server')
