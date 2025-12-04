@@ -4,11 +4,12 @@ local M = {}
 
 local utils = require("ssns.testing.utils")
 local Cache = require("ssns.cache")
+local Connections = require("ssns.connections")
 
 --- Setup test connection for a specific database
 --- @param test_data table Test data with database field
 --- @param database_type string? Database type from folder structure (sqlserver, postgres, mysql, sqlite)
---- @return table? connection_info { server, database, connection_string } or nil on error
+--- @return table? connection_info { server, database, connection_config } or nil on error
 --- @return string? error_message Error message if setup failed
 local function setup_test_connection(test_data, database_type)
   -- Get testing config
@@ -18,20 +19,20 @@ local function setup_test_connection(test_data, database_type)
   -- Determine database type: use folder structure > test_data.db_type > default
   local db_type = database_type or test_data.db_type or config.default_connection_type
 
-  -- Get base connection string
+  -- Get base connection config
   local base_connection = config.connections[db_type]
   if not base_connection then
-    return nil, string.format("No connection string configured for database type: %s", db_type)
+    return nil, string.format("No connection config configured for database type: %s", db_type)
   end
 
-  -- Build full connection string with database
-  local connection_string = string.format("%s/%s", base_connection, test_data.database)
+  -- Build full connection config with database
+  local connection_config = Connections.with_database(base_connection, test_data.database)
 
   -- Server name for cache
   local server_name = string.format("test_%s", db_type)
 
   -- Get or create server
-  local server, err = Cache.find_or_create_server(server_name, connection_string)
+  local server, err = Cache.find_or_create_server(server_name, connection_config)
   if not server then
     return nil, string.format("Failed to create server: %s", err or "unknown error")
   end
@@ -53,7 +54,7 @@ local function setup_test_connection(test_data, database_type)
   return {
     server = server,
     database = database,
-    connection_string = connection_string,
+    connection_config = connection_config,
   }, nil
 end
 

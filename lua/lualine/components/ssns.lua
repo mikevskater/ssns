@@ -215,38 +215,24 @@ function M.ssns()
   local buffer_info = UiQuery.query_buffers[bufnr]
   local last_database = buffer_info and buffer_info.last_database
 
-  -- Parse connection string
-  local ConnectionString = require('ssns.connection_string')
-  local parsed = ConnectionString.parse(server.connection_string)
+  -- Use connection_config directly
+  local conn_config = server.connection_config
 
   -- Build the status string
   local parts = {}
 
   -- Add server/file display
-  if parsed.scheme == "sqlite" then
+  if conn_config and conn_config.type == "sqlite" then
     -- For SQLite, show the full file path
-    -- Note: The parser incorrectly splits Windows paths, treating drive letter as host
-    -- and the rest as instance. We need to reconstruct the full path.
-    local file_display = ":memory:"
-    if parsed.host then
-      file_display = parsed.host
-      if parsed.instance then
-        -- Reconstruct: host is "C:", instance is "Users/.../master", path is "/master.mdb"
-        file_display = file_display .. "/" .. parsed.instance
-      end
-      if parsed.path then
-        file_display = file_display .. parsed.path
-      end
-    elseif parsed.path then
-      -- Just path (remove leading slash)
-      file_display = parsed.path:match("^/(.*)") or parsed.path
-    end
+    local server_info = conn_config.server or {}
+    local file_display = server_info.database and server_info.database:gsub("\\", "/") or ":memory:"
     table.insert(parts, db_icon .. ' ' .. file_display)
-  elseif parsed.host then
+  elseif conn_config and conn_config.server then
     -- For other databases, show host[\instance]
-    local server_display = parsed.host
-    if parsed.instance then
-      server_display = server_display .. "\\" .. parsed.instance
+    local server_info = conn_config.server
+    local server_display = server_info.host or "unknown"
+    if server_info.instance then
+      server_display = server_display .. "\\" .. server_info.instance
     end
     table.insert(parts, db_icon .. ' ' .. server_display)
   end
@@ -291,50 +277,37 @@ function M.ssns_color()
     return nil
   end
 
-  -- Parse connection string to check if database was specified
-  local ConnectionString = require('ssns.connection_string')
-  local parsed = ConnectionString.parse(server.connection_string)
+  -- Use connection_config directly
+  local conn_config = server.connection_config
 
   -- Determine what to use for color lookup
   local lookup_name = nil
 
   -- SQLite always uses file path for color lookup (not database name)
-  if parsed.scheme == "sqlite" then
-      -- For SQLite, use the full file path for color lookup
-      -- Note: The parser incorrectly splits Windows paths into host/instance/path
-      if parsed.host then
-        lookup_name = parsed.host
-        if parsed.instance then
-          -- Reconstruct full path from split parts
-          lookup_name = lookup_name .. "/" .. parsed.instance
-        end
-        if parsed.path then
-          lookup_name = lookup_name .. parsed.path
-        end
-        -- Normalize backslashes to forward slashes for consistency
-        lookup_name = lookup_name:gsub("\\", "/")
-      elseif parsed.path then
-        -- Just path (remove leading slash)
-        lookup_name = parsed.path:match("^/(.*)") or parsed.path
-        lookup_name = lookup_name:gsub("\\", "/")
-      else
-        lookup_name = ":memory:"
-      end
-  elseif parsed.database and parsed.database ~= '' then
-    -- Database-level connection: use database name for color
-    local database = UiQuery.get_database(bufnr)
-    if database then
-      lookup_name = database.db_name
+  if conn_config and conn_config.type == "sqlite" then
+    -- For SQLite, use the full file path for color lookup
+    local server_info = conn_config.server or {}
+    if server_info.database then
+      lookup_name = server_info.database:gsub("\\", "/")
     else
-      lookup_name = parsed.database
+      lookup_name = ":memory:"
     end
-  else
-    -- Server-level connection: use server name for color
-    if parsed.host then
-      -- Build server name: host[\instance]
-      lookup_name = parsed.host
-      if parsed.instance then
-        lookup_name = lookup_name .. "\\" .. parsed.instance
+  elseif conn_config and conn_config.server then
+    local server_info = conn_config.server
+    -- Check if database was specified in connection
+    if server_info.database and server_info.database ~= '' then
+      -- Database-level connection: use database name for color
+      local database = UiQuery.get_database(bufnr)
+      if database then
+        lookup_name = database.db_name
+      else
+        lookup_name = server_info.database
+      end
+    elseif server_info.host then
+      -- Server-level connection: use server name for color
+      lookup_name = server_info.host
+      if server_info.instance then
+        lookup_name = lookup_name .. "\\" .. server_info.instance
       end
     end
   end

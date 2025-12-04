@@ -256,7 +256,7 @@ end
 --- Sets up a real buffer with the query text and database context
 --- Supports both cursor property and inline █ marker
 --- @param test_data table Test data from test file
---- @param connection_info table? Connection info { server, database, connection_string }
+--- @param connection_info table? Connection info { server, database, connection_config }
 --- @return number bufnr The created buffer number
 --- @return string query Clean query (marker removed if present)
 function M.create_mock_buffer(test_data, connection_info)

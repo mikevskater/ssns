@@ -13,13 +13,33 @@ M.config = {
   test_file = vim.fn.stdpath("data") .. "/ssns/roadmap/phase-10/test_queries.sql",
   output_dir = vim.fn.stdpath("data") .. "/ssns/test_results",
 
-  -- Connection strings by database type
+  -- Connection configs by database type (ConnectionData structures)
   connections = {
-    sqlserver = "sqlserver://.\\SQLEXPRESS",
+    sqlserver = {
+      type = "sqlserver",
+      server = {
+        host = ".",
+        instance = "SQLEXPRESS",
+      },
+      auth = {
+        type = "integrated"
+      }
+    },
     -- Future: Add other database types
-    -- postgres = "postgres://localhost/test_db",
-    -- mysql = "mysql://localhost/test_db",
-    -- sqlite = "sqlite://./test.db",
+    -- postgres = {
+    --   type = "postgres",
+    --   server = { host = "localhost", port = 5432 },
+    --   auth = { type = "password", username = "postgres", password = "" }
+    -- },
+    -- mysql = {
+    --   type = "mysql",
+    --   server = { host = "localhost", port = 3306 },
+    --   auth = { type = "password", username = "root", password = "" }
+    -- },
+    -- sqlite = {
+    --   type = "sqlite",
+    --   server = { database = "./test.db" }
+    -- },
   },
 
   -- Default connection type for tests
