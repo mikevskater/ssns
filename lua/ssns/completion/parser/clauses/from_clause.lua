@@ -16,6 +16,7 @@ local Keywords = require('ssns.completion.parser.utils.keywords')
 local QualifiedName = require('ssns.completion.parser.utils.qualified_name')
 local AliasParser = require('ssns.completion.parser.utils.alias')
 local TableReferenceParser = require('ssns.completion.parser.utils.table_reference')
+local ValuesClauseParser = require('ssns.completion.parser.clauses.values_clause')
 
 local FromClauseParser = {}
 
@@ -82,10 +83,10 @@ function FromClauseParser.parse(state, scope, from_start_token)
         end
         -- Continue parsing FROM clause (may have more tables/subqueries)
       elseif state:is_keyword("VALUES") then
-        -- Parse VALUES table constructor
-        local values_subquery = FromClauseParser._parse_values_constructor(state, token)
+        -- Parse VALUES table constructor using shared parser
+        local values_subquery = ValuesClauseParser.parse_table_constructor(state, token)
         if values_subquery then
-          paren_depth = paren_depth - 1  -- _parse_values_constructor consumes closing paren
+          paren_depth = paren_depth - 1  -- parse_table_constructor consumes closing paren
           if scope then
             scope:add_subquery(values_subquery)
           end
@@ -276,85 +277,6 @@ function FromClauseParser.parse(state, scope, from_start_token)
     join_positions = join_positions,
     on_positions = on_positions,
   }
-end
-
----Parse VALUES table constructor: (VALUES (row1), (row2), ...) AS alias(col1, col2)
----@param state ParserState
----@param open_paren_token table The opening paren token (for position)
----@return SubqueryInfo?
----@private
-function FromClauseParser._parse_values_constructor(state, open_paren_token)
-  state:advance()  -- consume VALUES
-
-  -- Skip value rows - count parens to find end
-  local values_depth = 0
-  while state:current() do
-    local vtok = state:current()
-    if vtok.type == "paren_open" then
-      values_depth = values_depth + 1
-    elseif vtok.type == "paren_close" then
-      if values_depth == 0 then
-        break  -- Found the closing ) for (VALUES ...)
-      end
-      values_depth = values_depth - 1
-    end
-    state:advance()
-  end
-
-  -- Consume closing paren
-  if state:is_type("paren_close") then
-    state:advance()
-  end
-
-  -- Parse alias with column list: AS v(ID, Letter)
-  local values_alias = AliasParser.parse(state)
-  if not values_alias then
-    return nil
-  end
-
-  -- Check for column list
-  local column_list = {}
-  if state:is_type("paren_open") then
-    state:advance()  -- consume (
-    while state:current() do
-      local col_tok = state:current()
-      if col_tok.type == "paren_close" then
-        state:advance()
-        break
-      elseif col_tok.type == "comma" then
-        state:advance()
-      elseif col_tok.type == "identifier" or col_tok.type == "bracket_id" or col_tok.type == "keyword" then
-        table.insert(column_list, Helpers.strip_brackets(col_tok.text))
-        state:advance()
-      else
-        state:advance()
-      end
-    end
-  end
-
-  -- Create a virtual subquery for the VALUES table
-  local values_subquery = {
-    alias = values_alias,
-    columns = {},
-    tables = {},
-    subqueries = {},
-    parameters = {},
-    is_values = true,
-    start_pos = { line = open_paren_token.line, col = open_paren_token.col },
-    end_pos = { line = open_paren_token.line, col = open_paren_token.col },
-    clause_positions = {},
-  }
-
-  -- Add columns from column list
-  for _, col_name in ipairs(column_list) do
-    table.insert(values_subquery.columns, {
-      name = col_name,
-      source_table = values_alias,
-      is_star = false,
-    })
-  end
-
-  return values_subquery
 end
 
 ---Parse CROSS/OUTER APPLY

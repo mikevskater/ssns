@@ -9,6 +9,7 @@
 
 local Helpers = require('ssns.completion.parser.utils.helpers')
 local AliasParser = require('ssns.completion.parser.utils.alias')
+local ColumnListParser = require('ssns.completion.parser.utils.column_list')
 
 local ValuesClauseParser = {}
 
@@ -56,7 +57,7 @@ function ValuesClauseParser.parse_table_constructor(state, open_paren_token)
   end
 
   -- Check for column list
-  local column_list = ValuesClauseParser._parse_column_list(state)
+  local column_list = ColumnListParser.parse(state, { accept_keywords = true })
 
   -- Create a virtual subquery for the VALUES table
   ---@type SubqueryInfo
@@ -141,37 +142,6 @@ function ValuesClauseParser.parse_insert_values(state)
   end
 
   return nil
-end
-
----Parse optional column list for VALUES alias
----@param state ParserState
----@return string[] column_names
----@private
-function ValuesClauseParser._parse_column_list(state)
-  local column_list = {}
-
-  if not state:is_type("paren_open") then
-    return column_list
-  end
-
-  state:advance()  -- consume (
-
-  while state:current() do
-    local col_tok = state:current()
-    if col_tok.type == "paren_close" then
-      state:advance()
-      break
-    elseif col_tok.type == "comma" then
-      state:advance()
-    elseif col_tok.type == "identifier" or col_tok.type == "bracket_id" or col_tok.type == "keyword" then
-      table.insert(column_list, Helpers.strip_brackets(col_tok.text))
-      state:advance()
-    else
-      state:advance()
-    end
-  end
-
-  return column_list
 end
 
 return ValuesClauseParser

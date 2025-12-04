@@ -10,6 +10,7 @@
 ---@module ssns.completion.parser.clauses.cte_clause
 
 local Helpers = require('ssns.completion.parser.utils.helpers')
+local ColumnListParser = require('ssns.completion.parser.utils.column_list')
 
 local CteClauseParser = {}
 
@@ -52,7 +53,7 @@ function CteClauseParser.parse(state, scope)
     state:advance()
 
     -- Parse optional column list: WITH cte (col1, col2) AS (...)
-    local column_list = CteClauseParser._parse_column_list(state)
+    local column_list = ColumnListParser.parse(state)
 
     -- Expect AS
     if not state:consume_keyword("AS") then
@@ -153,37 +154,6 @@ function CteClauseParser.parse(state, scope)
   end
 
   return ctes, cte_names
-end
-
----Parse optional column list in CTE definition
----@param state ParserState
----@return string[] column_names
----@private
-function CteClauseParser._parse_column_list(state)
-  local column_list = {}
-
-  if not state:is_type("paren_open") then
-    return column_list
-  end
-
-  state:advance()  -- consume (
-
-  while state:current() do
-    local col_token = state:current()
-    if col_token.type == "paren_close" then
-      state:advance()
-      break
-    elseif col_token.type == "comma" then
-      state:advance()
-    elseif col_token.type == "identifier" or col_token.type == "bracket_id" then
-      table.insert(column_list, Helpers.strip_brackets(col_token.text))
-      state:advance()
-    else
-      state:advance()
-    end
-  end
-
-  return column_list
 end
 
 return CteClauseParser
