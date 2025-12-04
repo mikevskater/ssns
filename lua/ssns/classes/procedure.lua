@@ -141,7 +141,7 @@ function ProcedureClass:load_parameters()
 
   -- Execute query
   -- TODO: Implement actual execution via vim-dadbod
-  local results = adapter:execute(self:get_server().connection, query)
+  local results = adapter:execute(self:get_server().connection_config, query)
 
   -- Parse results
   local parameters = adapter:parse_parameters(results)

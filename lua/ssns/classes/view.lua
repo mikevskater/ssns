@@ -141,7 +141,7 @@ function ViewClass:load_columns()
 
   -- Execute query
   -- TODO: Implement actual execution via vim-dadbod
-  local results = adapter:execute(self:get_server().connection, query)
+  local results = adapter:execute(self:get_server().connection_config, query)
 
   -- Parse results
   local columns = adapter:parse_columns(results)

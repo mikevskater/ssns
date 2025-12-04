@@ -270,7 +270,7 @@ function TableClass:load_columns()
   local query = adapter:get_columns_query(db.db_name, self.schema_name, self.table_name)
 
   -- Execute query
-  local results = adapter:execute(self:get_server().connection, query)
+  local results = adapter:execute(self:get_server().connection_config, query)
 
   -- Check for errors
   if results.error then
@@ -326,7 +326,7 @@ function TableClass:load_indexes()
 
   -- Execute query
   -- TODO: Implement actual execution via vim-dadbod
-  local results = adapter:execute(self:get_server().connection, query)
+  local results = adapter:execute(self:get_server().connection_config, query)
 
   -- Parse results
   local indexes = adapter:parse_indexes(results)
@@ -385,7 +385,7 @@ function TableClass:load_constraints()
 
   -- Execute query
   -- TODO: Implement actual execution via vim-dadbod
-  local results = adapter:execute(self:get_server().connection, query)
+  local results = adapter:execute(self:get_server().connection_config, query)
 
   -- Parse results
   local constraints = adapter:parse_constraints(results)

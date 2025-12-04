@@ -172,7 +172,7 @@ function FunctionClass:load_parameters()
 
   -- Execute query
   -- TODO: Implement actual execution via vim-dadbod
-  local results = adapter:execute(self:get_server().connection, query)
+  local results = adapter:execute(self:get_server().connection_config, query)
 
   -- Parse results
   local parameters = adapter:parse_parameters(results)
@@ -254,7 +254,7 @@ function FunctionClass:load_columns()
   end
 
   -- Execute query
-  local results = adapter:execute(self:get_server().connection, query)
+  local results = adapter:execute(self:get_server().connection_config, query)
 
   -- Check for errors
   if results.error then

@@ -233,7 +233,7 @@ function ServerClass:load()
   end
 
   local results
-  success, results = pcall(self.adapter.execute, self.adapter, self.connection, query)
+  success, results = pcall(self.adapter.execute, self.adapter, self.connection_config, query)
   if not success then
     self.error_message = "Failed to execute databases query: " .. tostring(results)
     vim.notify("SSNS Error: " .. self.error_message, vim.log.levels.ERROR)
