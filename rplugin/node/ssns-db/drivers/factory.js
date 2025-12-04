@@ -1,12 +1,12 @@
 /**
- * Driver Factory - Auto-detect and create the appropriate database driver
+ * Driver Factory - Create the appropriate database driver based on config type
  *
  * Supports:
- * - SQL Server (sqlserver://)
- * - MySQL (mysql://)
- * - SQLite (sqlite://)
- * - PostgreSQL (postgres:// or postgresql://) - when implemented
-*/
+ * - SQL Server (type: "sqlserver")
+ * - MySQL (type: "mysql")
+ * - SQLite (type: "sqlite")
+ * - PostgreSQL (type: "postgres")
+ */
 const { ssnsLog } = require('../ssns-log');
 const SqlServerDriver = require('./sqlserver');
 const MySQLDriver = require('./mysql');
@@ -14,94 +14,65 @@ const SQLiteDriver = require('./sqlite');
 const PostgresDriver = require('./postgres');
 
 /**
- * Get the appropriate driver for a connection string
+ * Get the appropriate driver for a connection config
  *
- * @param {string} connectionString - Database connection string
+ * @param {Object} config - Connection configuration object
+ * @param {string} config.type - Database type ("sqlserver", "mysql", "sqlite", "postgres")
+ * @param {Object} config.server - Server connection details
+ * @param {Object} config.auth - Authentication details
+ * @param {Object} [config.options] - Additional connection options
  * @returns {BaseDriver} Driver instance
- * @throws {Error} If connection string format is invalid or unsupported
+ * @throws {Error} If config is invalid or type is unsupported
  */
-function getDriver(connectionString) {
-  ssnsLog(`[factory] getDriver called with: ${connectionString}`);
-  if (!connectionString || typeof connectionString !== 'string') {
-    ssnsLog('[factory] Invalid connection string: must be a non-empty string');
-    throw new Error('Invalid connection string: must be a non-empty string');
+function getDriver(config) {
+  ssnsLog(`[factory] getDriver called with config type: ${config && config.type}`);
+
+  if (!config || typeof config !== 'object') {
+    ssnsLog('[factory] Invalid config: must be a non-empty object');
+    throw new Error('Invalid config: must be a non-empty object');
   }
 
-  const connStr = connectionString.toLowerCase();
+  if (!config.type) {
+    ssnsLog('[factory] Invalid config: missing type field');
+    throw new Error('Invalid config: missing type field');
+  }
+
+  const dbType = config.type.toLowerCase();
 
   // SQL Server
-  if (connStr.startsWith('sqlserver://') || connStr.startsWith('mssql://')) {
-    ssnsLog('[factory] Detected SQL Server connection string');
-    return new SqlServerDriver(connectionString);
+  if (dbType === 'sqlserver' || dbType === 'mssql') {
+    ssnsLog('[factory] Creating SQL Server driver');
+    return new SqlServerDriver(config);
   }
 
   // MySQL
-  if (connStr.startsWith('mysql://')) {
-    ssnsLog('[factory] Detected MySQL connection string');
-    return new MySQLDriver(connectionString);
+  if (dbType === 'mysql') {
+    ssnsLog('[factory] Creating MySQL driver');
+    return new MySQLDriver(config);
   }
 
   // SQLite
-  if (connStr.startsWith('sqlite://')) {
-    ssnsLog('[factory] Detected SQLite connection string');
-    return new SQLiteDriver(connectionString);
+  if (dbType === 'sqlite') {
+    ssnsLog('[factory] Creating SQLite driver');
+    return new SQLiteDriver(config);
   }
 
   // PostgreSQL
-  if (connStr.startsWith('postgres://') || connStr.startsWith('postgresql://')) {
-    ssnsLog('[factory] Detected PostgreSQL connection string');
-    return new PostgresDriver(connectionString);
+  if (dbType === 'postgres' || dbType === 'postgresql') {
+    ssnsLog('[factory] Creating PostgreSQL driver');
+    return new PostgresDriver(config);
   }
 
   // Unknown database type
-  ssnsLog(`[factory] Unsupported database type in connection string: ${connectionString}`);
+  ssnsLog(`[factory] Unsupported database type: ${config.type}`);
   throw new Error(
-    `Unsupported database type in connection string: ${connectionString}\n` +
-    `Supported formats:\n` +
-    `  - sqlserver://server/database\n` +
-    `  - mysql://user:pass@host/database\n` +
-    `  - sqlite://./path/to/database.db\n` +
-    `  - postgres://... (coming soon)`
+    `Unsupported database type: ${config.type}\n` +
+    `Supported types:\n` +
+    `  - sqlserver\n` +
+    `  - mysql\n` +
+    `  - sqlite\n` +
+    `  - postgres`
   );
-}
-
-/**
- * Detect database type from connection string
- *
- * @param {string} connectionString - Database connection string
- * @returns {string} Database type ('sqlserver', 'mysql', 'sqlite', 'postgres', 'unknown')
- */
-function detectDatabaseType(connectionString) {
-  ssnsLog(`[factory] detectDatabaseType called with: ${connectionString}`);
-  if (!connectionString || typeof connectionString !== 'string') {
-    ssnsLog('[factory] Invalid connection string for detectDatabaseType');
-    return 'unknown';
-  }
-
-  const connStr = connectionString.toLowerCase();
-
-  if (connStr.startsWith('sqlserver://') || connStr.startsWith('mssql://')) {
-    ssnsLog('[factory] Detected type: sqlserver');
-    return 'sqlserver';
-  }
-
-  if (connStr.startsWith('mysql://')) {
-    ssnsLog('[factory] Detected type: mysql');
-    return 'mysql';
-  }
-
-  if (connStr.startsWith('sqlite://')) {
-    ssnsLog('[factory] Detected type: sqlite');
-    return 'sqlite';
-  }
-
-  if (connStr.startsWith('postgres://') || connStr.startsWith('postgresql://')) {
-    ssnsLog('[factory] Detected type: postgres');
-    return 'postgres';
-  }
-
-  ssnsLog('[factory] Unknown database type');
-  return 'unknown';
 }
 
 /**
@@ -112,7 +83,7 @@ function detectDatabaseType(connectionString) {
  */
 function isSupported(dbType) {
   ssnsLog(`[factory] isSupported called with: ${dbType}`);
-  const supported = ['sqlserver', 'mysql', 'sqlite'];
+  const supported = ['sqlserver', 'mssql', 'mysql', 'sqlite', 'postgres', 'postgresql'];
   const result = supported.includes(dbType.toLowerCase());
   ssnsLog(`[factory] isSupported result: ${result}`);
   return result;
@@ -130,7 +101,6 @@ function getSupportedTypes() {
 
 module.exports = {
   getDriver,
-  detectDatabaseType,
   isSupported,
   getSupportedTypes
 };

@@ -2,26 +2,63 @@
 const DriverFactory = require('./drivers/factory');
 const { ssnsLog } = require('./ssns-log');
 
-// Driver registry - reuse drivers for same connection strings
+// Driver registry - reuse drivers for same connections
 const drivers = new Map();
 
 /**
- * Get or create driver instance for connection string
- * @param {string} connectionString - Database connection string
+ * Generate a connection key from config for driver registry
+ * @param {Object} config - Connection configuration object
+ * @returns {string} Unique key for this connection
+ */
+function generateConnectionKey(config) {
+  const parts = [config.type];
+
+  if (config.server) {
+    parts.push(config.server.host || '');
+    if (config.server.instance) parts.push(config.server.instance);
+    if (config.server.port) parts.push(String(config.server.port));
+    if (config.server.database) parts.push(config.server.database);
+  }
+
+  if (config.auth) {
+    parts.push(config.auth.type || '');
+    if (config.auth.username) parts.push(config.auth.username);
+  }
+
+  return parts.join(':');
+}
+
+/**
+ * Get or create driver instance for connection config
+ * @param {Object} config - Connection configuration object
  * @returns {BaseDriver} Driver instance
  */
-function getDriverInstance(connectionString) {
+function getDriverInstance(config) {
+  const key = generateConnectionKey(config);
+
   // Check if driver already exists in registry
-  if (drivers.has(connectionString)) {
-    return drivers.get(connectionString);
+  if (drivers.has(key)) {
+    return drivers.get(key);
   }
 
   // Use factory to create appropriate driver
-  const driver = DriverFactory.getDriver(connectionString);
+  const driver = DriverFactory.getDriver(config);
 
   // Store in registry for reuse
-  drivers.set(connectionString, driver);
+  drivers.set(key, driver);
   return driver;
+}
+
+/**
+ * Parse config from JSON string or return as-is if already object
+ * @param {string|Object} configInput - JSON string or config object
+ * @returns {Object} Parsed config object
+ */
+function parseConfig(configInput) {
+  if (typeof configInput === 'string') {
+    return JSON.parse(configInput);
+  }
+  return configInput;
 }
 
 /**
@@ -38,23 +75,23 @@ module.exports = (plugin) => {
    * SSNSExecuteQuery - Execute SQL query and return structured results
    *
    * Usage from Lua:
-   *   vim.fn['remote#host#FunctionCall']('node', 'SSNSExecuteQuery', {connection_string, query})
+   *   vim.fn['remote#host#FunctionCall']('node', 'SSNSExecuteQuery', {config_json, query})
    *
-   * @param {Array} args - [connectionString, query]
+   * @param {Array} args - [configJson, query]
    * @returns {Promise<Object>} Result object with resultSets, metadata, error
    */
   plugin.registerFunction('SSNSExecuteQuery', async (args) => {
     try {
       // Handle double-wrapped array from Neovim
-      const connectionString = Array.isArray(args[0]) ? args[0][0] : args[0];
+      const configInput = Array.isArray(args[0]) ? args[0][0] : args[0];
       const query = Array.isArray(args[0]) ? args[0][1] : args[1];
 
-      if (!connectionString || !query) {
+      if (!configInput || !query) {
         return {
           resultSets: [],
           metadata: {},
           error: {
-            message: 'Missing required parameters: connectionString and query',
+            message: 'Missing required parameters: config and query',
             code: null,
             lineNumber: null,
             procName: null
@@ -62,9 +99,11 @@ module.exports = (plugin) => {
         };
       }
 
+      // Parse config from JSON
+      const config = parseConfig(configInput);
 
       // Get driver for this connection
-      const driver = getDriverInstance(connectionString);
+      const driver = getDriverInstance(config);
 
       // Execute query
       const result = await driver.execute(query);
@@ -84,34 +123,37 @@ module.exports = (plugin) => {
         }
       };
     }
-  }, { sync: true }); // Changed to sync: true
+  }, { sync: true });
 
   /**
    * SSNSGetMetadata - Get metadata for database object (for IntelliSense)
    *
    * Usage from Lua:
-   *   vim.fn['remote#host#FunctionCall']('node', 'SSNSGetMetadata', {connection_string, object_type, object_name, schema_name})
+   *   vim.fn['remote#host#FunctionCall']('node', 'SSNSGetMetadata', {config_json, object_type, object_name, schema_name})
    *
-   * @param {Array} args - [connectionString, objectType, objectName, schemaName]
+   * @param {Array} args - [configJson, objectType, objectName, schemaName]
    * @returns {Promise<Object>} Metadata object with columns, indexes, constraints
    */
   plugin.registerFunction('SSNSGetMetadata', async (args) => {
     try {
       // Handle double-wrapped array from Neovim
-      const connectionString = Array.isArray(args[0]) ? args[0][0] : args[0];
+      const configInput = Array.isArray(args[0]) ? args[0][0] : args[0];
       const objectType = Array.isArray(args[0]) ? args[0][1] : args[1];
       const objectName = Array.isArray(args[0]) ? args[0][2] : args[2];
       const schemaName = Array.isArray(args[0]) ? args[0][3] : args[3];
 
-      if (!connectionString || !objectType || !objectName) {
+      if (!configInput || !objectType || !objectName) {
         return {
           columns: [],
-          error: 'Missing required parameters: connectionString, objectType, and objectName'
+          error: 'Missing required parameters: config, objectType, and objectName'
         };
       }
 
+      // Parse config from JSON
+      const config = parseConfig(configInput);
+
       // Get driver for this connection
-      const driver = getDriverInstance(connectionString);
+      const driver = getDriverInstance(config);
 
       // Get metadata
       const metadata = await driver.getMetadata(objectType, objectName, schemaName);
@@ -125,46 +167,41 @@ module.exports = (plugin) => {
         error: err.message || 'Unknown error occurred'
       };
     }
-  }, { sync: true }); // Changed to sync: true
+  }, { sync: true });
 
   /**
    * SSNSTestConnection - Test database connection
    *
    * Usage from Lua:
-   *   vim.fn['remote#host#FunctionCall']('node', 'SSNSTestConnection', {connection_string})
+   *   vim.fn['remote#host#FunctionCall']('node', 'SSNSTestConnection', {config_json})
    *
-   * @param {Array} args - [connectionString]
+   * @param {Array} args - [configJson]
    * @returns {Promise<Object>} { success: boolean, message: string }
    */
   plugin.registerFunction('SSNSTestConnection', async (args) => {
     ssnsLog('[index] SSNSTestConnection called');
     ssnsLog(`[index] args: ${JSON.stringify(args)}`);
-    ssnsLog(`[index] args length: ${args.length}`);
-    ssnsLog(`[index] args[0]: ${args[0]}`);
-    ssnsLog(`[index] args[0] type: ${typeof args[0]}`);
-    ssnsLog(`[index] args[0] isArray: ${Array.isArray(args[0])}`);
-
-    if (Array.isArray(args[0])) {
-      ssnsLog(`[index] args[0][0]: ${args[0][0]}`);
-      ssnsLog(`[index] args[0][0] type: ${typeof args[0][0]}`);
-    }
 
     try {
       // If Neovim double-wraps the array, unwrap it
-      const connectionString = Array.isArray(args[0]) ? args[0][0] : args[0];
-      ssnsLog(`[index] Final connectionString: ${connectionString}, type: ${typeof connectionString}`);
+      const configInput = Array.isArray(args[0]) ? args[0][0] : args[0];
+      ssnsLog(`[index] Config input type: ${typeof configInput}`);
 
-      if (!connectionString) {
-        ssnsLog('[index] No connection string provided');
+      if (!configInput) {
+        ssnsLog('[index] No config provided');
         return {
           success: false,
-          message: 'Missing required parameter: connectionString'
+          message: 'Missing required parameter: config'
         };
       }
 
-      ssnsLog(`[index] Getting driver for: ${connectionString}`);
+      // Parse config from JSON
+      const config = parseConfig(configInput);
+      ssnsLog(`[index] Parsed config type: ${config.type}`);
+
+      ssnsLog('[index] Getting driver...');
       // Get driver for this connection
-      const driver = getDriverInstance(connectionString);
+      const driver = getDriverInstance(config);
 
       ssnsLog('[index] Testing connection...');
       // Test connection
@@ -183,31 +220,35 @@ module.exports = (plugin) => {
         message: err.message || 'Connection failed'
       };
     }
-  }, { sync: true }); // Changed to sync: true
+  }, { sync: true });
 
   /**
    * SSNSCloseConnection - Close database connection
    *
    * Usage from Lua:
-   *   vim.fn['remote#host#FunctionCall']('node', 'SSNSCloseConnection', {connection_string})
+   *   vim.fn['remote#host#FunctionCall']('node', 'SSNSCloseConnection', {config_json})
    *
-   * @param {Array} args - [connectionString]
+   * @param {Array} args - [configJson]
    * @returns {Promise<Object>} { success: boolean }
    */
   plugin.registerFunction('SSNSCloseConnection', async (args) => {
     try {
       // Handle double-wrapped array from Neovim
-      const connectionString = Array.isArray(args[0]) ? args[0][0] : args[0];
+      const configInput = Array.isArray(args[0]) ? args[0][0] : args[0];
 
-      if (!connectionString) {
+      if (!configInput) {
         return { success: false };
       }
 
+      // Parse config from JSON
+      const config = parseConfig(configInput);
+      const key = generateConnectionKey(config);
+
       // Get driver from registry
-      const driver = drivers.get(connectionString);
+      const driver = drivers.get(key);
       if (driver) {
         await driver.disconnect();
-        drivers.delete(connectionString);
+        drivers.delete(key);
       }
 
       return { success: true };
@@ -215,7 +256,7 @@ module.exports = (plugin) => {
     } catch (err) {
       return { success: false };
     }
-  }, { sync: true }); // Changed to sync: true
+  }, { sync: true });
 
   ssnsLog('[index] All functions registered successfully');
 
