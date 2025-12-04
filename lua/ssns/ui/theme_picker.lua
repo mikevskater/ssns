@@ -15,6 +15,7 @@ local KeymapManager = require('ssns.keymap_manager')
 ---@field available_themes table[] List of available themes
 ---@field selected_idx number Currently selected theme index
 ---@field original_theme string? The theme active when picker was opened
+---@field focused_panel string Which panel is focused ("themes" or "preview")
 
 ---@type ThemePickerState?
 local state = nil
@@ -198,7 +199,7 @@ local function calculate_layout(cols, lines)
       focusable = true,
     },
     footer = {
-      text = " <Enter>=Apply  <Esc>=Cancel  j/k=Navigate ",
+      text = " <Enter>=Apply  <Tab>=Switch Panel  <Esc>=Cancel  j/k=Navigate ",
       row = start_row + total_height + 2,
       col = start_col,
       width = total_width,
@@ -242,6 +243,7 @@ function ThemePicker.show()
     available_themes = themes,
     selected_idx = selected_idx,
     original_theme = original_theme,
+    focused_panel = "themes",  -- Start focused on themes list
   }
 
   -- Create the layout
@@ -434,7 +436,8 @@ end
 function ThemePicker._setup_keymaps()
   local km = KeymapManager.get_group("common")
 
-  local keymaps = {
+  -- Keymaps for themes list panel
+  local themes_keymaps = {
     -- Close/Cancel
     { lhs = km.cancel or "<Esc>", rhs = function() ThemePicker._cancel() end, desc = "Cancel" },
     { lhs = km.close or "q", rhs = function() ThemePicker._cancel() end, desc = "Close" },
@@ -447,10 +450,29 @@ function ThemePicker._setup_keymaps()
     { lhs = km.nav_up or "k", rhs = function() ThemePicker._navigate(-1) end, desc = "Previous theme" },
     { lhs = km.nav_down_alt or "<Down>", rhs = function() ThemePicker._navigate(1) end, desc = "Next theme" },
     { lhs = km.nav_up_alt or "<Up>", rhs = function() ThemePicker._navigate(-1) end, desc = "Previous theme" },
+
+    -- Switch to preview panel
+    { lhs = km.next_field or "<Tab>", rhs = function() ThemePicker._swap_focus() end, desc = "Switch to preview" },
   }
 
-  KeymapManager.set_multiple(state.themes_buf, keymaps, true)
+  KeymapManager.set_multiple(state.themes_buf, themes_keymaps, true)
   KeymapManager.mark_group_active(state.themes_buf, "theme_picker")
+
+  -- Keymaps for preview panel (allow scrolling and navigation)
+  local preview_keymaps = {
+    -- Close/Cancel
+    { lhs = km.cancel or "<Esc>", rhs = function() ThemePicker._cancel() end, desc = "Cancel" },
+    { lhs = km.close or "q", rhs = function() ThemePicker._cancel() end, desc = "Close" },
+
+    -- Switch back to themes panel
+    { lhs = km.next_field or "<Tab>", rhs = function() ThemePicker._swap_focus() end, desc = "Switch to themes" },
+    { lhs = km.prev_field or "<S-Tab>", rhs = function() ThemePicker._swap_focus() end, desc = "Switch to themes" },
+
+    -- Standard vim scrolling (j/k work natively in preview for scrolling)
+  }
+
+  KeymapManager.set_multiple(state.preview_buf, preview_keymaps, true)
+  KeymapManager.mark_group_active(state.preview_buf, "theme_picker")
 end
 
 ---Setup autocmds for cleanup
@@ -506,6 +528,36 @@ function ThemePicker._navigate(direction)
     ThemeManager.preview(theme.name)
     -- Re-apply semantic highlighting after theme change
     ThemePicker._apply_preview_highlights()
+  end
+end
+
+---Swap focus between themes list and preview panel
+function ThemePicker._swap_focus()
+  if not state then return end
+
+  if state.focused_panel == "themes" then
+    -- Switch to preview
+    state.focused_panel = "preview"
+    if vim.api.nvim_win_is_valid(state.preview_win) then
+      vim.api.nvim_set_current_win(state.preview_win)
+      -- Enable cursorline on preview, disable on themes
+      vim.api.nvim_set_option_value('cursorline', true, { win = state.preview_win })
+      vim.api.nvim_set_option_value('cursorline', false, { win = state.themes_win })
+    end
+  else
+    -- Switch back to themes
+    state.focused_panel = "themes"
+    if vim.api.nvim_win_is_valid(state.themes_win) then
+      vim.api.nvim_set_current_win(state.themes_win)
+      -- Enable cursorline on themes, disable on preview
+      vim.api.nvim_set_option_value('cursorline', true, { win = state.themes_win })
+      vim.api.nvim_set_option_value('cursorline', false, { win = state.preview_win })
+      -- Restore cursor position on themes list
+      local cursor_line = state.theme_line_map and state.theme_line_map[state.selected_idx]
+      if cursor_line then
+        pcall(vim.api.nvim_win_set_cursor, state.themes_win, {cursor_line + 1, 0})
+      end
+    end
   end
 end
 
