@@ -272,6 +272,56 @@ function Cache.set_active_database(database)
   database.is_connected = true
 end
 
+---Load servers from user configuration (config.connections table)
+---@param config SsnsConfig User configuration
+---@return ServerClass[] servers Created servers
+---@return table<string, string> errors Map of failed connections to error messages
+function Cache.load_from_config(config)
+  local Factory = require('ssns.factory')
+
+  -- Check if config has connections defined
+  if not config or not config.connections then
+    return {}, {}
+  end
+
+  local servers = {}
+  local errors = {}
+
+  -- config.connections can be either:
+  -- 1. Old format: { name = "connection_string" } (deprecated, will be converted)
+  -- 2. New format: { name = ConnectionData } (structured data)
+  for name, conn_data in pairs(config.connections) do
+    -- Skip if server with this name already exists
+    if Cache.server_exists(name) then
+      goto continue
+    end
+
+    -- Handle old connection string format (deprecated)
+    if type(conn_data) == "string" then
+      errors[name] = "Connection string format is deprecated. Please use structured ConnectionData format."
+      goto continue
+    end
+
+    -- Ensure name is set in the connection data
+    if type(conn_data) == "table" then
+      conn_data.name = conn_data.name or name
+
+      local server, err = Factory.create_server(name, conn_data)
+
+      if server then
+        Cache.add_server(server)
+        table.insert(servers, server)
+      else
+        errors[name] = err or "Unknown error"
+      end
+    end
+
+    ::continue::
+  end
+
+  return servers, errors
+end
+
 ---Load servers from connections JSON file
 ---@param auto_connect_only boolean? Only load connections with auto_connect=true
 ---@return ServerClass[] servers Created servers
