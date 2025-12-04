@@ -16,7 +16,7 @@ local ConnectionState = {
 }
 
 ---@class ServerClass : BaseDbObject
----@field connection_string string The database connection string
+---@field connection_config ConnectionData The database connection configuration
 ---@field connection_state string Current connection state
 ---@field adapter BaseAdapter Database-specific adapter
 ---@field connection any Active database connection object
@@ -27,7 +27,7 @@ local ServerClass = setmetatable({}, { __index = BaseDbObject })
 ServerClass.__index = ServerClass
 
 ---Create a new Server instance
----@param opts {name: string, connection_string: string}
+---@param opts {name: string, connection_config: ConnectionData}
 ---@return ServerClass
 function ServerClass.new(opts)
   -- Create base object
@@ -36,23 +36,31 @@ function ServerClass.new(opts)
     parent = nil,  -- Server is root level
   }), ServerClass)
 
-  self.connection_string = opts.connection_string
+  self.connection_config = opts.connection_config
   self.connection_state = ConnectionState.DISCONNECTED
   self.connection = nil
   self.databases = nil
   self.error_message = nil
   self.last_connected_at = nil
 
-  -- Create adapter from connection string
+  -- Create adapter from connection config type
   local AdapterFactory = require('ssns.adapters.factory')
-  local adapter, err = AdapterFactory.create_adapter(self.connection_string)
+  local db_type = self.connection_config and self.connection_config.type
 
-  if not adapter then
-    self.error_message = err or "Failed to create adapter"
+  if not db_type then
+    self.error_message = "No database type specified in connection config"
     self.connection_state = ConnectionState.ERROR
-  end
+    self.adapter = nil
+  else
+    local adapter, err = AdapterFactory.create_adapter_for_type(db_type, self.connection_config)
 
-  self.adapter = adapter
+    if not adapter then
+      self.error_message = err or "Failed to create adapter"
+      self.connection_state = ConnectionState.ERROR
+    end
+
+    self.adapter = adapter
+  end
 
   -- Set object type for highlighting
   self.object_type = "server"
@@ -63,7 +71,7 @@ end
 ---Get the database type for this server
 ---@return string? db_type
 function ServerClass:get_db_type()
-  return self.adapter and self.adapter.db_type or nil
+  return self.connection_config and self.connection_config.type or nil
 end
 
 ---Check if server is connected
@@ -97,7 +105,7 @@ function ServerClass:connect()
   local ConnectionModule = require('ssns.connection')
 
   -- Test the connection
-  local success, err = ConnectionModule.test(self.connection_string)
+  local success, err = ConnectionModule.test(self.connection_config)
 
   if not success then
     self.connection_state = ConnectionState.ERROR
@@ -106,7 +114,7 @@ function ServerClass:connect()
   end
 
   -- Create or get connection from pool
-  self.connection = ConnectionModule.get_or_create(self.connection_string)
+  self.connection = ConnectionModule.get_or_create(self.connection_config)
 
   -- Mark as connected
   self.connection_state = ConnectionState.CONNECTED
@@ -162,7 +170,7 @@ function ServerClass:disconnect()
 
   -- Close connection in pool
   local ConnectionModule = require('ssns.connection')
-  ConnectionModule.close(self.connection_string)
+  ConnectionModule.close(self.connection_config)
 
   self.connection = nil
   self.connection_state = ConnectionState.DISCONNECTED
@@ -194,7 +202,7 @@ function ServerClass:test_connection()
   end
 
   local ConnectionModule = require('ssns.connection')
-  return ConnectionModule.test(self.connection_string)
+  return ConnectionModule.test(self.connection_config)
 end
 
 ---Load databases from the server (lazy loading)
@@ -259,7 +267,7 @@ end
 function ServerClass:reload()
   -- Invalidate query cache for this server's connection
   local Connection = require('ssns.connection')
-  Connection.invalidate_cache(self.connection_string)
+  Connection.invalidate_cache(self.connection_config)
 
   -- Clear databases array and reset loaded state
   self.databases = nil
@@ -335,13 +343,13 @@ function ServerClass:get_status_icon()
   local icons = Config.get_ui().icons
 
   if self.connection_state == ConnectionState.CONNECTED then
-    return icons.connected or "\u{f00c}"  -- ✓
+    return icons.connected or "\u{f00c}"  -- checkmark
   elseif self.connection_state == ConnectionState.ERROR then
-    return icons.error or "\u{f026}"  -- ⚠
+    return icons.error or "\u{f026}"  -- warning
   elseif self.connection_state == ConnectionState.CONNECTING then
-    return icons.connecting or "\u{f110}"  --
+    return icons.connecting or "\u{f110}"  -- spinner
   elseif self.connection_state == ConnectionState.DISCONNECTED then
-    return icons.disconnected or "\u{f00d}"  -- ✗
+    return icons.disconnected or "\u{f00d}"  -- x
   else
     return ""
   end
@@ -367,6 +375,14 @@ end
 ---@return ServerClass
 function ServerClass:get_server()
   return self
+end
+
+---Get a copy of connection config with a different database
+---@param new_database string The new database name
+---@return ConnectionData modified Modified connection config
+function ServerClass:get_connection_config_for_database(new_database)
+  local Connections = require('ssns.connections')
+  return Connections.with_database(self.connection_config, new_database)
 end
 
 ---Get string representation for debugging
