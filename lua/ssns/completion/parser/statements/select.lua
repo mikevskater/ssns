@@ -102,33 +102,7 @@ end
 function SelectStatement._parse_from(state, chunk, scope)
   local from_token = state:current()
   local result = FromClauseParser.parse(state, scope, from_token)
-
-  -- Copy tables from result
-  chunk.tables = result.tables
-
-  -- Store clause positions
-  if result.clause_position then
-    chunk.clause_positions["from"] = result.clause_position
-  end
-
-  -- Store individual JOIN positions
-  if result.join_positions then
-    for i, pos in ipairs(result.join_positions) do
-      chunk.clause_positions["join_" .. i] = pos
-    end
-  end
-
-  -- Store individual ON positions
-  if result.on_positions then
-    for i, pos in ipairs(result.on_positions) do
-      chunk.clause_positions["on_" .. i] = pos
-    end
-  end
-
-  -- Add tables to scope for visibility in subqueries
-  for _, table_ref in ipairs(result.tables) do
-    scope:add_table(table_ref)
-  end
+  BaseStatement.process_from_result(chunk, scope, result)
 end
 
 return SelectStatement

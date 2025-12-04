@@ -207,34 +207,7 @@ function InsertStatement._parse_select(state, chunk, scope)
   if state:is_keyword("FROM") then
     local from_token = state:current()
     local result = FromClauseParser.parse(state, scope, from_token)
-
-    -- Add FROM tables to existing tables (preserve INSERT target)
-    for _, t in ipairs(result.tables) do
-      table.insert(chunk.tables, t)
-    end
-
-    if result.clause_position then
-      chunk.clause_positions["from"] = result.clause_position
-    end
-
-    -- Store individual JOIN positions
-    if result.join_positions then
-      for i, pos in ipairs(result.join_positions) do
-        chunk.clause_positions["join_" .. i] = pos
-      end
-    end
-
-    -- Store individual ON positions
-    if result.on_positions then
-      for i, pos in ipairs(result.on_positions) do
-        chunk.clause_positions["on_" .. i] = pos
-      end
-    end
-
-    -- Add tables to scope
-    for _, table_ref in ipairs(result.tables) do
-      scope:add_table(table_ref)
-    end
+    BaseStatement.process_from_result(chunk, scope, result, { append_tables = true })
   end
 end
 

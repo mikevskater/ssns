@@ -52,36 +52,7 @@ end
 function UpdateStatement.parse_from(state, chunk, scope)
   local from_token = state:current()
   local result = FromClauseParser.parse(state, scope, from_token)
-
-  -- Copy tables from result (replace any existing)
-  chunk.tables = result.tables
-
-  -- Store clause positions
-  if result.clause_position then
-    chunk.clause_positions["from"] = result.clause_position
-  end
-
-  -- Store individual JOIN positions
-  if result.join_positions then
-    for i, pos in ipairs(result.join_positions) do
-      chunk.clause_positions["join_" .. i] = pos
-    end
-  end
-
-  -- Store individual ON positions
-  if result.on_positions then
-    for i, pos in ipairs(result.on_positions) do
-      chunk.clause_positions["on_" .. i] = pos
-    end
-  end
-
-  -- Mark that we found a FROM clause
-  chunk.has_from_clause = true
-
-  -- Add tables to scope
-  for _, table_ref in ipairs(result.tables) do
-    scope:add_table(table_ref)
-  end
+  BaseStatement.process_from_result(chunk, scope, result, { set_has_from = true })
 end
 
 ---Finalize UPDATE chunk after all parsing

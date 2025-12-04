@@ -77,4 +77,55 @@ function BaseStatement.add_clause_position(chunk, clause_name, start_token, end_
   }
 end
 
+---Process FROM clause result and update chunk/scope
+---Consolidates the common pattern used across SELECT, INSERT, UPDATE, DELETE handlers
+---
+---@param chunk StatementChunk The chunk to update
+---@param scope ScopeContext The scope context
+---@param result FromClauseResult The result from FromClauseParser.parse()
+---@param options? {append_tables?: boolean, set_has_from?: boolean} Processing options
+function BaseStatement.process_from_result(chunk, scope, result, options)
+  options = options or {}
+
+  -- Copy tables from result
+  if options.append_tables then
+    -- Append mode: preserve existing tables (e.g., INSERT target)
+    for _, t in ipairs(result.tables) do
+      table.insert(chunk.tables, t)
+    end
+  else
+    -- Replace mode: replace any existing tables
+    chunk.tables = result.tables
+  end
+
+  -- Store clause positions
+  if result.clause_position then
+    chunk.clause_positions["from"] = result.clause_position
+  end
+
+  -- Store individual JOIN positions
+  if result.join_positions then
+    for i, pos in ipairs(result.join_positions) do
+      chunk.clause_positions["join_" .. i] = pos
+    end
+  end
+
+  -- Store individual ON positions
+  if result.on_positions then
+    for i, pos in ipairs(result.on_positions) do
+      chunk.clause_positions["on_" .. i] = pos
+    end
+  end
+
+  -- Mark that we found a FROM clause (for UPDATE/DELETE extended syntax)
+  if options.set_has_from then
+    chunk.has_from_clause = true
+  end
+
+  -- Add tables to scope for visibility in subqueries
+  for _, table_ref in ipairs(result.tables) do
+    scope:add_table(table_ref)
+  end
+end
+
 return BaseStatement
