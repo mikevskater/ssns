@@ -232,6 +232,11 @@ function UiQuery.setup_query_keymaps(bufnr)
       local ViewMetadata = require('ssns.features.view_metadata')
       ViewMetadata.view_metadata_at_cursor()
     end, desc = "View object metadata" },
+
+    -- Toggle results window
+    { mode = "n", lhs = km.toggle_results or "<C-r>", rhs = function()
+      UiQuery.toggle_results()
+    end, desc = "Toggle results window" },
   }
 
   KeymapManager.set_multiple(bufnr, keymaps, true)
@@ -543,9 +548,13 @@ function UiQuery.display_error(error, sql, query_bufnr)
     vim.api.nvim_win_set_height(result_win, 10)
   end
 
-  -- Set keymap to close
+  -- Set keymap to close and toggle
   local common = KeymapManager.get_group("common")
+  local query_km = KeymapManager.get_group("query")
   vim.api.nvim_buf_set_keymap(result_buf, 'n', common.close or 'q', ':close<CR>', { noremap = true, silent = true })
+  vim.api.nvim_buf_set_keymap(result_buf, 'n', query_km.toggle_results or '<C-r>',
+    "<Cmd>lua require('ssns.ui.query').toggle_results()<CR>",
+    { noremap = true, silent = true, desc = "Toggle results window" })
 end
 
 ---Display query results
@@ -600,9 +609,62 @@ function UiQuery.display_results(result, sql, execution_time_ms)
     vim.api.nvim_set_current_win(result_win)
   end
 
-  -- Setup close keymap
+  -- Setup close keymap and toggle keymap
   local common = KeymapManager.get_group("common")
+  local query_km = KeymapManager.get_group("query")
   vim.api.nvim_buf_set_keymap(result_buf, 'n', common.close or 'q', ':close<CR>', { noremap = true, silent = true })
+  vim.api.nvim_buf_set_keymap(result_buf, 'n', query_km.toggle_results or '<C-r>',
+    "<Cmd>lua require('ssns.ui.query').toggle_results()<CR>",
+    { noremap = true, silent = true, desc = "Toggle results window" })
+end
+
+---Toggle the results window (show if hidden, hide if visible)
+function UiQuery.toggle_results()
+  -- Find the results buffer
+  local result_buf = nil
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_valid(buf) then
+      local buf_name = vim.api.nvim_buf_get_name(buf)
+      if buf_name:match("SSNS Results") then
+        result_buf = buf
+        break
+      end
+    end
+  end
+
+  -- If no results buffer exists, nothing to toggle
+  if not result_buf then
+    vim.notify("SSNS: No results to show", vim.log.levels.INFO)
+    return
+  end
+
+  -- Check if buffer is visible in a window
+  local result_win = nil
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(win) == result_buf then
+      result_win = win
+      break
+    end
+  end
+
+  if result_win then
+    -- Results window is visible, close it
+    vim.api.nvim_win_close(result_win, false)
+  else
+    -- Results window is hidden, open it in a split
+    vim.cmd('botright split')
+    vim.api.nvim_win_set_buf(0, result_buf)
+    local new_win = vim.api.nvim_get_current_win()
+    vim.api.nvim_win_set_height(new_win, 10)
+
+    -- Re-setup keymaps on the buffer (in case they were lost)
+    local common = KeymapManager.get_group("common")
+    local query_km = KeymapManager.get_group("query")
+    vim.api.nvim_buf_set_keymap(result_buf, 'n', common.close or 'q', ':close<CR>', { noremap = true, silent = true })
+    vim.api.nvim_buf_set_keymap(result_buf, 'n', query_km.toggle_results or '<C-r>',
+      "<Cmd>lua require('ssns.ui.query').toggle_results()<CR>",
+      { noremap = true, silent = true, desc = "Toggle results window" })
+  end
 end
 
 ---Parse divider format string and generate lines

@@ -426,6 +426,7 @@ local default_config = {
       execute = "<Leader>r", -- Execute query
       execute_selection = "<Leader>r", -- Execute visual selection
       execute_statement = "<Leader>R", -- Execute statement under cursor
+      toggle_results = "<C-r>", -- Toggle results window (show/hide)
       save_query = "<Leader>s", -- Save query to file
       expand_asterisk = "<Leader>ce", -- Expand asterisk to columns
       go_to = "gd",          -- Go to object in tree
