@@ -84,6 +84,14 @@ local QualifiedName = require('ssns.completion.parser.utils.qualified_name')
 local AliasParser = require('ssns.completion.parser.utils.alias')
 local TableReferenceParser = require('ssns.completion.parser.utils.table_reference')
 
+-- Import clause parser modules (Phase 2 refactoring)
+local SelectListParser = require('ssns.completion.parser.clauses.select_list')
+local FromClauseParser = require('ssns.completion.parser.clauses.from_clause')
+local CteClauseParser = require('ssns.completion.parser.clauses.cte_clause')
+local ValuesClauseParser = require('ssns.completion.parser.clauses.values_clause')
+local ColumnDefsParser = require('ssns.completion.parser.clauses.column_defs')
+local ScopeContext = require('ssns.completion.parser.scope')
+
 local StatementParser = {}
 
 -- Local aliases for module functions (for convenience and backward compatibility)
