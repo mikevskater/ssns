@@ -5,10 +5,10 @@ local SQLiteAdapter = setmetatable({}, { __index = BaseAdapter })
 SQLiteAdapter.__index = SQLiteAdapter
 
 ---Create a new SQLite adapter instance
----@param connection_string string
+---@param connection_config ConnectionData
 ---@return SQLiteAdapter
-function SQLiteAdapter.new(connection_string)
-  local self = setmetatable(BaseAdapter.new("sqlite", connection_string), SQLiteAdapter)
+function SQLiteAdapter.new(connection_config)
+  local self = setmetatable(BaseAdapter.new("sqlite", connection_config), SQLiteAdapter)
 
   -- SQLite feature flags
   self.features = {
@@ -27,7 +27,7 @@ function SQLiteAdapter.new(connection_string)
 end
 
 ---Execute a query against SQLite using Node.js backend
----@param connection any The database connection object or connection string
+---@param connection any The database connection object
 ---@param query string The SQL query to execute
 ---@param opts table? Options (reserved for future use)
 ---@return table result Node.js result object { success, resultSets, metadata, error }
@@ -35,35 +35,8 @@ function SQLiteAdapter:execute(connection, query, opts)
   opts = opts or {}
   local ConnectionModule = require('ssns.connection')
 
-  -- Handle both connection object and connection string
-  local conn_str
-  if type(connection) == "string" then
-    conn_str = connection
-  elseif type(connection) == "table" and connection.connection_string then
-    conn_str = connection.connection_string
-  else
-    -- Fallback to adapter's connection string
-    conn_str = self.connection_string
-  end
-
-  -- Execute via Node.js backend
-  return ConnectionModule.execute(conn_str, query, opts)
-end
-
----Parse SQLite connection string
----@return table connection_info
-function SQLiteAdapter:parse_connection_string()
-  -- Format: sqlite://./path/to/database.db or sqlite:///absolute/path/to/database.db
-  local info = {}
-
-  local pattern = "^sqlite://(.+)$"
-  local path = self.connection_string:match(pattern)
-
-  if path then
-    info.database_path = path
-  end
-
-  return info
+  -- Use adapter's connection config
+  return ConnectionModule.execute(self.connection_config, query, opts)
 end
 
 ---Test SQLite connection
@@ -72,18 +45,7 @@ end
 ---@return string? error_message
 function SQLiteAdapter:test_connection(connection)
   local ConnectionModule = require('ssns.connection')
-
-  -- Handle both connection object and connection string
-  local conn_str
-  if type(connection) == "string" then
-    conn_str = connection
-  elseif type(connection) == "table" and connection.connection_string then
-    conn_str = connection.connection_string
-  else
-    conn_str = self.connection_string
-  end
-
-  return ConnectionModule.test(conn_str)
+  return ConnectionModule.test(self.connection_config)
 end
 
 -- ============================================================================
@@ -387,7 +349,11 @@ end
 ---Get a string representation for debugging
 ---@return string
 function SQLiteAdapter:to_string()
-  return string.format("SQLiteAdapter{connection=%s}", self.connection_string)
+  local db_path = ""
+  if self.connection_config and self.connection_config.server then
+    db_path = self.connection_config.server.database or self.connection_config.server.host or ""
+  end
+  return string.format("SQLiteAdapter{database=%s}", db_path)
 end
 
 return SQLiteAdapter
