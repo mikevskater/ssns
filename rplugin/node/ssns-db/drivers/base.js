@@ -6,10 +6,14 @@
  */
 class BaseDriver {
   /**
-   * @param {string} connectionString - Database connection string
+   * @param {Object} config - Connection configuration object
+   * @param {string} config.type - Database type
+   * @param {Object} config.server - Server connection details
+   * @param {Object} config.auth - Authentication details
+   * @param {Object} [config.options] - Additional connection options
    */
-  constructor(connectionString) {
-    this.connectionString = connectionString;
+  constructor(config) {
+    this.config = config;
     this.pool = null;
     this.isConnected = false;
   }
@@ -92,15 +96,6 @@ class BaseDriver {
    */
   async getMetadata(objectType, objectName, schemaName = null) {
     throw new Error('BaseDriver.getMetadata() must be implemented by subclass');
-  }
-
-  /**
-   * Parse connection string and return connection config
-   * @returns {Object} Connection configuration object
-   * @throws {Error} Must be implemented by subclass
-   */
-  parseConnectionString() {
-    throw new Error('BaseDriver.parseConnectionString() must be implemented by subclass');
   }
 
   /**
