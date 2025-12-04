@@ -12,19 +12,19 @@
 ---@class BaseAdapter
 ---@field db_type string The database type identifier (e.g., "sqlserver", "postgres", "mysql")
 ---@field features AdapterFeatures Feature flags for this database type
----@field connection_string string The connection string for this database
+---@field connection_config ConnectionData The connection configuration for this database
 local BaseAdapter = {}
 BaseAdapter.__index = BaseAdapter
 
 ---Create a new adapter instance
 ---@param db_type string
----@param connection_string string
+---@param connection_config ConnectionData
 ---@return BaseAdapter
-function BaseAdapter.new(db_type, connection_string)
+function BaseAdapter.new(db_type, connection_config)
   local self = setmetatable({}, BaseAdapter)
 
   self.db_type = db_type
-  self.connection_string = connection_string
+  self.connection_config = connection_config
 
   -- Default features (subclasses override)
   self.features = {
@@ -48,12 +48,6 @@ end
 ---@return table results Array of result rows
 function BaseAdapter:execute(connection, query)
   error("BaseAdapter:execute() must be implemented by subclass")
-end
-
----Parse connection string and extract components
----@return table connection_info Table with host, port, database, user, password, etc.
-function BaseAdapter:parse_connection_string()
-  error("BaseAdapter:parse_connection_string() must be implemented by subclass")
 end
 
 ---Test if the connection is valid
