@@ -15,6 +15,17 @@ function Helpers.strip_brackets(text)
   return text
 end
 
+---Get identifier text from token with brackets stripped
+---Returns nil if token is not an identifier type
+---@param token table? The token to extract identifier from
+---@return string? identifier The identifier text (brackets stripped) or nil
+function Helpers.get_identifier_text(token)
+  if token and (token.type == "identifier" or token.type == "bracket_id") then
+    return Helpers.strip_brackets(token.text)
+  end
+  return nil
+end
+
 ---Check if identifier is a temp table (#temp or ##temp)
 ---@param name string
 ---@return boolean

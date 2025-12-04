@@ -92,6 +92,13 @@ function ParserState:is_keyword(keyword)
   return token and token.type == "keyword" and token.text:upper() == keyword:upper()
 end
 
+---Check if current token is an identifier (identifier or bracket_id type)
+---@return boolean
+function ParserState:is_identifier()
+  local token = self:current()
+  return token and (token.type == "identifier" or token.type == "bracket_id")
+end
+
 ---Check if current token is any of the given keywords
 ---@param keywords string[]
 ---@return boolean
