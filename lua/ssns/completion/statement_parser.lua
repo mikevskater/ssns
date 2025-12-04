@@ -77,267 +77,46 @@ require('ssns.completion.parser.types')
 -- Import ParserState from parser module
 local ParserState = require('ssns.completion.parser.state')
 
+-- Import utility modules (Phase 1 refactoring)
+local Keywords = require('ssns.completion.parser.utils.keywords')
+local Helpers = require('ssns.completion.parser.utils.helpers')
+local QualifiedName = require('ssns.completion.parser.utils.qualified_name')
+local AliasParser = require('ssns.completion.parser.utils.alias')
+local TableReferenceParser = require('ssns.completion.parser.utils.table_reference')
+
 local StatementParser = {}
 
---- Resolve parent_table for columns using the aliases map
----@param columns ColumnInfo[]? The columns to resolve
----@param aliases table<string, TableReference> The alias mapping
----@param tables TableReference[] The tables in the FROM clause
-local function resolve_column_parents(columns, aliases, tables)
-    if not columns then return end
+-- Local aliases for module functions (for convenience and backward compatibility)
+local resolve_column_parents = Helpers.resolve_column_parents
+local strip_brackets = Helpers.strip_brackets
+local is_temp_table = Helpers.is_temp_table
+local is_global_temp_table = Helpers.is_global_temp_table
+local is_table_variable = Helpers.is_table_variable
+local is_from_keyword = Keywords.is_from_keyword
+local is_statement_starter = Keywords.is_statement_starter
+local JOIN_MODIFIERS = Keywords.JOIN_MODIFIERS
+local FROM_TERMINATORS = Keywords.FROM_TERMINATORS
 
-    for _, col in ipairs(columns) do
-        if col.source_table then
-            -- Try to resolve from aliases (case-insensitive)
-            local source_lower = col.source_table:lower()
-            local table_ref = aliases[source_lower]
-            if table_ref then
-                col.parent_table = table_ref.name
-                col.parent_schema = table_ref.schema
-            else
-                -- Check if source_table is an actual table name (not alias)
-                for _, tbl in ipairs(tables) do
-                    if tbl.name:lower() == source_lower then
-                        col.parent_table = tbl.name
-                        col.parent_schema = tbl.schema
-                        break
-                    end
-                end
-            end
-        elseif #tables == 1 then
-            -- Unqualified column/star with single table - can infer parent
-            col.parent_table = tables[1].name
-            col.parent_schema = tables[1].schema
-        end
-    end
-end
-
--- Keywords that indicate we're in a FROM/JOIN context
-local FROM_KEYWORDS = {
-  FROM = true,
-  JOIN = true,
-  INNER = true,
-  LEFT = true,
-  RIGHT = true,
-  FULL = true,
-  CROSS = true,
-  OUTER = true,
-}
-
--- Keywords that can appear after JOIN
-local JOIN_MODIFIERS = {
-  INNER = true,
-  LEFT = true,
-  RIGHT = true,
-  FULL = true,
-  CROSS = true,
-  OUTER = true,
-}
-
--- Keywords that terminate FROM/JOIN clause parsing
-local FROM_TERMINATORS = {
-  WHERE = true,
-  GROUP = true,
-  HAVING = true,
-  ORDER = true,
-  LIMIT = true,
-  OFFSET = true,
-  FETCH = true,
-  FOR = true,       -- FOR UPDATE, FOR XML, etc.
-  OPTION = true,    -- Query hints
-}
-
----Check if keyword is FROM or JOIN related
----@param keyword string
----@return boolean
-local function is_from_keyword(keyword)
-  return FROM_KEYWORDS[keyword:upper()] == true
-end
-
----Strip brackets from identifier
----@param text string
----@return string
-local function strip_brackets(text)
-  if text:sub(1, 1) == '[' and text:sub(-1) == ']' then
-    return text:sub(2, -2)
-  end
-  return text
-end
-
----Check if identifier is a temp table
----@param name string
----@return boolean
-local function is_temp_table(name)
-  return name:sub(1, 1) == '#'
-end
-
----Check if identifier is a global temp table (##)
----@param name string
----@return boolean
-local function is_global_temp_table(name)
-  return name:sub(1, 2) == '##'
-end
-
----Check if identifier is a table variable (@TableVar)
----@param name string
----@return boolean
-local function is_table_variable(name)
-  return name:sub(1, 1) == '@'
-end
-
--- Statement-starting keywords (temporary duplicate - will be replaced by Keywords module in Phase 1)
-local STATEMENT_STARTERS = {
-  SELECT = true, INSERT = true, UPDATE = true, DELETE = true,
-  MERGE = true, CREATE = true, ALTER = true, DROP = true,
-  TRUNCATE = true, WITH = true, EXEC = true, EXECUTE = true,
-  DECLARE = true, SET = true,
-}
-
----Check if keyword starts a new statement (temporary - will be replaced by Keywords.is_statement_starter in Phase 1)
----@param keyword string
----@return boolean
-local function is_statement_starter(keyword)
-  return STATEMENT_STARTERS[keyword:upper()] == true
-end
-
--- Note: ParserState base class is now imported from 'ssns.completion.parser.state'
--- The methods below extend ParserState with additional parsing functionality
--- (parse_qualified_identifier, parse_alias, parse_table_reference)
+-- ParserState method wrappers that delegate to utility modules
+-- These maintain the method-style interface while using the extracted modules
 
 ---Parse qualified identifier (server.db.schema.table or db.schema.table or schema.table or table)
 ---@return {server: string?, database: string?, schema: string?, name: string}?
 function ParserState:parse_qualified_identifier()
-  local parts = {}
-  local prefix = ""  -- For # or ## temp table prefixes, or @ for table variables
-
-  -- Check for temp table prefix (# or ##)
-  if self:is_type("hash") then
-    prefix = "#"
-    self:advance()
-    -- Check for second # (global temp table)
-    if self:is_type("hash") then
-      prefix = "##"
-      self:advance()
-    end
-  -- Check for table variable prefix (@)
-  elseif self:is_type("at") then
-    prefix = "@"
-    self:advance()
-  end
-
-  -- Read first part
-  local token = self:current()
-  if not token then
-    return nil
-  end
-
-  if token.type == "identifier" or token.type == "bracket_id" then
-    local name = strip_brackets(token.text)
-    -- Prepend prefix if present (temp table or table variable)
-    if prefix ~= "" then
-      name = prefix .. name
-    end
-    table.insert(parts, name)
-    self:advance()
-  else
-    -- If we consumed a prefix but no identifier follows, return nil
-    if prefix ~= "" then
-      return nil
-    end
-    return nil
-  end
-
-  -- Read additional parts separated by dots
-  while self:is_type("dot") do
-    self:advance()
-    token = self:current()
-    if token and (token.type == "identifier" or token.type == "bracket_id") then
-      table.insert(parts, strip_brackets(token.text))
-      self:advance()
-    else
-      break
-    end
-  end
-
-  -- Map parts to server.database.schema.name
-  if #parts == 1 then
-    return { server = nil, database = nil, schema = nil, name = parts[1] }
-  elseif #parts == 2 then
-    return { server = nil, database = nil, schema = parts[1], name = parts[2] }
-  elseif #parts == 3 then
-    return { server = nil, database = parts[1], schema = parts[2], name = parts[3] }
-  elseif #parts == 4 then
-    return { server = parts[1], database = parts[2], schema = parts[3], name = parts[4] }
-  else
-    -- More than 4 parts - use last 4
-    local n = #parts
-    return { server = parts[n-3], database = parts[n-2], schema = parts[n-1], name = parts[n] }
-  end
+  return QualifiedName.parse(self)
 end
 
 ---Try to parse an alias (AS alias or just alias)
 ---@return string?
 function ParserState:parse_alias()
-  -- Check for AS keyword
-  local has_as = self:consume_keyword("AS")
-
-  -- Next token should be identifier (but not GO batch separator)
-  local token = self:current()
-  if token and (token.type == "identifier" or token.type == "bracket_id") then
-    -- Don't treat GO as an alias
-    if token.text:upper() == "GO" then
-      return nil
-    end
-    local alias = strip_brackets(token.text)
-    self:advance()
-    return alias
-  end
-
-  return nil
+  return AliasParser.parse(self)
 end
 
 ---Parse a table reference with optional alias
 ---@param known_ctes table<string, boolean>
 ---@return TableReference?
 function ParserState:parse_table_reference(known_ctes)
-  local qualified = self:parse_qualified_identifier()
-  if not qualified then
-    return nil
-  end
-
-  local alias = self:parse_alias()
-
-  -- Handle table hints: WITH (NOLOCK, READPAST, etc.)
-  -- SQL Server allows hints between table name and alias
-  if not alias and self:is_keyword("WITH") then
-    self:advance()  -- consume WITH
-    if self:is_type("paren_open") then
-      local hint_depth = 1
-      self:advance()  -- consume (
-      while self:current() and hint_depth > 0 do
-        if self:is_type("paren_open") then
-          hint_depth = hint_depth + 1
-        elseif self:is_type("paren_close") then
-          hint_depth = hint_depth - 1
-        end
-        self:advance()
-      end
-    end
-    -- Try to parse alias after the hint
-    alias = self:parse_alias()
-  end
-
-  return {
-    server = qualified.server,
-    database = qualified.database,
-    schema = qualified.schema,
-    name = qualified.name,
-    alias = alias,
-    is_temp = is_temp_table(qualified.name),
-    is_global_temp = is_global_temp_table(qualified.name),
-    is_table_variable = is_table_variable(qualified.name),
-    is_cte = known_ctes[qualified.name] == true,
-  }
+  return TableReferenceParser.parse_legacy(self, known_ctes)
 end
 
 ---Parse columns in SELECT list (between SELECT and FROM)
