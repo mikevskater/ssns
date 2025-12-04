@@ -11,55 +11,39 @@ const BaseDriver = require('./base');
  * - Column metadata
  */
 class MySQLDriver extends BaseDriver {
-  constructor(connectionString) {
-    super(connectionString);
-    this.config = this.parseConnectionString();
+  /**
+   * @param {Object} config - Connection configuration object
+   * @param {string} config.type - "mysql"
+   * @param {Object} config.server - Server details
+   * @param {string} config.server.host - Server hostname or IP
+   * @param {number} [config.server.port] - Port number (default: 3306)
+   * @param {string} [config.server.database] - Database name
+   * @param {Object} config.auth - Authentication details
+   * @param {string} [config.auth.username] - Username (default: root)
+   * @param {string} [config.auth.password] - Password
+   * @param {Object} [config.options] - Additional options
+   * @param {boolean} [config.options.ssl] - Use SSL
+   */
+  constructor(config) {
+    super(config);
+    this.mysqlConfig = this.buildMysqlConfig(config);
   }
 
   /**
-   * Parse MySQL connection string
-   * Formats:
-   *   mysql://host/database
-   *   mysql://user:pass@host/database
-   *   mysql://user:pass@host:port/database
+   * Build mysql2 configuration from connection config
    *
-   * @returns {Object} mysql2 configuration object
+   * @param {Object} config - Connection configuration
+   * @returns {Object} mysql2 config object
    */
-  parseConnectionString() {
-    const connStr = this.connectionString;
+  buildMysqlConfig(config) {
+    const server = config.server || {};
+    const auth = config.auth || {};
+    const options = config.options || {};
 
-    console.error('[DEBUG] MySQL connection string:', connStr);
-
-    // Remove mysql:// prefix
-    const cleaned = connStr.replace(/^mysql:\/\//, '');
-
-    // Parse authentication (if present)
-    let auth = null;
-    let serverPart = cleaned;
-
-    if (cleaned.includes('@')) {
-      const parts = cleaned.split('@');
-      const [user, password] = parts[0].split(':');
-      auth = { user, password };
-      serverPart = parts[1];
-    }
-
-    // Parse host, port, and database
-    const [hostWithPort, database] = serverPart.split('/');
-    let host = hostWithPort;
-    let port = 3306; // Default MySQL port
-
-    if (hostWithPort.includes(':')) {
-      const parts = hostWithPort.split(':');
-      host = parts[0];
-      port = parseInt(parts[1], 10);
-    }
-
-    // Build mysql2 config
-    const config = {
-      host: host || 'localhost',
-      port: port,
-      database: database || 'mysql',
+    const mysqlConfig = {
+      host: server.host || 'localhost',
+      port: server.port || 3306,
+      database: server.database || 'mysql',
       waitForConnections: true,
       connectionLimit: 10,
       queueLimit: 0,
@@ -68,17 +52,17 @@ class MySQLDriver extends BaseDriver {
       multipleStatements: true  // Enable multiple result sets
     };
 
-    if (auth) {
-      config.user = auth.user;
-      config.password = auth.password;
-    } else {
-      // Default to root with no password (common for local development)
-      config.user = 'root';
-      config.password = '';
+    // Authentication
+    mysqlConfig.user = auth.username || 'root';
+    mysqlConfig.password = auth.password || '';
+
+    // SSL option
+    if (options.ssl) {
+      mysqlConfig.ssl = { rejectUnauthorized: false };
     }
 
-    console.error('[DEBUG] MySQL config:', JSON.stringify(config, null, 2));
-    return config;
+    console.error('[DEBUG] MySQL config:', JSON.stringify(mysqlConfig, null, 2));
+    return mysqlConfig;
   }
 
   /**
@@ -90,7 +74,7 @@ class MySQLDriver extends BaseDriver {
     }
 
     try {
-      this.pool = mysql.createPool(this.config);
+      this.pool = mysql.createPool(this.mysqlConfig);
 
       // Test connection
       const connection = await this.pool.getConnection();
@@ -281,7 +265,7 @@ class MySQLDriver extends BaseDriver {
         await this.connect();
       }
 
-      const database = schemaName || this.config.database;
+      const database = schemaName || this.mysqlConfig.database;
 
       if (objectType === 'table' || objectType === 'view') {
         // Query information_schema for column metadata
