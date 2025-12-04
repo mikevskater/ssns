@@ -51,20 +51,16 @@ local function debug_log(message)
 end
 
 ---Extract connection key from connection object
----Removes credentials from connection string for privacy
----@param connection table Connection context object with connection_string field
+---Uses Connections module to generate a consistent key
+---@param connection table Connection context object with connection_config field
 ---@return string connection_key
 local function _get_connection_key(connection)
-  if not connection or not connection.connection_string then
+  if not connection or not connection.connection_config then
     return ""
   end
 
-  local conn_str = connection.connection_string
-
-  -- Remove credentials: user:pass@host -> host
-  local without_creds = conn_str:gsub("://[^:]+:[^@]+@", "://")
-
-  return without_creds
+  local Connections = require('ssns.connections')
+  return Connections.generate_connection_key(connection.connection_config)
 end
 
 ---Ensure nested structure exists for connection
@@ -259,7 +255,7 @@ end
 
 ---Record a completion selection
 ---Increments weight and updates timestamp
----@param connection table Connection context object with connection_string field
+---@param connection table Connection context object with connection_config field
 ---@param item_type string Type: "database", "schema", "table", "column", "procedure", "function"
 ---@param item_path string Full qualified path (e.g., "AdventureWorks.dbo.Employees.EmployeeID")
 ---@return boolean success
@@ -328,7 +324,7 @@ function UsageTracker.record_selection(connection, item_type, item_path)
 end
 
 ---Get weight for an item
----@param connection table Connection context object with connection_string field
+---@param connection table Connection context object with connection_config field
 ---@param item_type string Type: "database", "schema", "table", "column", "procedure", "function"
 ---@param item_path string Full qualified path
 ---@return number weight Weight value (0 if not found)
@@ -366,7 +362,7 @@ function UsageTracker.get_weight(connection, item_type, item_path)
 end
 
 ---Get all weights for a specific type
----@param connection table Connection context object with connection_string field
+---@param connection table Connection context object with connection_config field
 ---@param item_type string Type to get weights for
 ---@return table<string, number> Map of path -> weight
 function UsageTracker.get_all_weights(connection, item_type)
