@@ -22,8 +22,10 @@ M.config = {
         instance = "SQLEXPRESS",
       },
       auth = {
-        type = "integrated"
-      }
+        type = "windows",
+        password = "",
+        username = ""
+      },
     },
     -- Future: Add other database types
     -- postgres = {
