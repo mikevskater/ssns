@@ -413,6 +413,15 @@ function Ssns._register_commands()
     desc = "View parsed statement chunks in floating window (debugging)",
   })
 
+  -- :SSNSTokens - View tokenizer output for debugging
+  vim.api.nvim_create_user_command("SSNSTokens", function()
+    local ViewTokens = require('ssns.features.view_tokens')
+    ViewTokens.view_tokens()
+  end, {
+    nargs = 0,
+    desc = "View tokenizer output in floating window (debugging)",
+  })
+
   -- :SSNSAddServer - Open add server UI
   vim.api.nvim_create_user_command("SSNSAddServer", function()
     local AddServerUI = require('ssns.ui.add_server')
