@@ -79,10 +79,10 @@ end
 
 ---Find or create a server
 ---@param server_name string Server name
----@param connection_string string Connection string
+---@param connection_config ConnectionData Connection configuration
 ---@return ServerClass? server The server or nil if creation failed
 ---@return string? error_message Error message if creation failed
-function Cache.find_or_create_server(server_name, connection_string)
+function Cache.find_or_create_server(server_name, connection_config)
   -- Check if server already exists
   local existing = Cache.find_server(server_name)
   if existing then
@@ -91,7 +91,7 @@ function Cache.find_or_create_server(server_name, connection_string)
 
   -- Create new server
   local Factory = require('ssns.factory')
-  local server, err = Factory.create_server(server_name, connection_string)
+  local server, err = Factory.create_server(server_name, connection_config)
 
   if not server then
     return nil, err
@@ -272,26 +272,6 @@ function Cache.set_active_database(database)
   database.is_connected = true
 end
 
----Load servers from user configuration
----@param config table Configuration table with connections
----@return ServerClass[] servers Created servers
----@return table<string, string> errors Map of failed connections to error messages
-function Cache.load_from_config(config)
-  if not config or not config.connections then
-    return {}, {}
-  end
-
-  local Factory = require('ssns.factory')
-  local servers, errors = Factory.create_servers_from_config(config.connections)
-
-  -- Add all successfully created servers to cache
-  for _, server in ipairs(servers) do
-    Cache.add_server(server)
-  end
-
-  return servers, errors
-end
-
 ---Load servers from connections JSON file
 ---@param auto_connect_only boolean? Only load connections with auto_connect=true
 ---@return ServerClass[] servers Created servers
@@ -320,7 +300,8 @@ function Cache.load_from_connections_file(auto_connect_only)
       goto continue
     end
 
-    local server, err = Factory.create_server(conn.name, conn.connection_string)
+    -- Pass the entire connection config (not a connection_string field)
+    local server, err = Factory.create_server(conn.name, conn)
 
     if server then
       Cache.add_server(server)
@@ -335,13 +316,21 @@ function Cache.load_from_connections_file(auto_connect_only)
   return servers, errors
 end
 
----Add a server from a ConnectionData object and connect it
----@param connection_data table Connection data with name, connection_string, type
+---Add a server from a ConnectionData object
+---@param connection_data ConnectionData Connection data with all structured fields
 ---@return ServerClass? server The created server or nil
 ---@return string? error Error message if failed
 function Cache.add_server_from_connection(connection_data)
-  if not connection_data or not connection_data.name or not connection_data.connection_string then
-    return nil, "Invalid connection data"
+  if not connection_data or not connection_data.name then
+    return nil, "Invalid connection data: missing name"
+  end
+
+  if not connection_data.type then
+    return nil, "Invalid connection data: missing database type"
+  end
+
+  if not connection_data.server or not connection_data.server.host then
+    return nil, "Invalid connection data: missing server host"
   end
 
   -- Check if server already exists
@@ -350,7 +339,7 @@ function Cache.add_server_from_connection(connection_data)
   end
 
   local Factory = require('ssns.factory')
-  local server, err = Factory.create_server(connection_data.name, connection_data.connection_string)
+  local server, err = Factory.create_server(connection_data.name, connection_data)
 
   if not server then
     return nil, err or "Failed to create server"
@@ -444,7 +433,7 @@ function Cache.debug_print()
     if server.is_loaded and #databases > 0 then
       print(string.format("      Databases: %d", #databases))
       for _, db in ipairs(databases) do
-        local connected = db.is_connected and "✓" or ""
+        local connected = db.is_connected and "[connected]" or ""
         print(string.format("        - %s %s", db.name, connected))
       end
     end
@@ -463,7 +452,7 @@ function Cache.export()
   for _, server in ipairs(Cache.servers) do
     table.insert(data.servers, {
       name = server.name,
-      connection_string = server.connection_string,
+      connection_config = server.connection_config,
       connection_state = server.connection_state,
     })
   end
@@ -484,7 +473,7 @@ function Cache.import(data)
   local Factory = require('ssns.factory')
 
   for _, server_data in ipairs(data.servers) do
-    local server, err = Factory.create_server(server_data.name, server_data.connection_string)
+    local server, _ = Factory.create_server(server_data.name, server_data.connection_config)
 
     if server then
       Cache.add_server(server)
