@@ -431,6 +431,51 @@ function Ssns._register_commands()
     desc = "View statement context at cursor in floating window (debugging)",
   })
 
+  -- :SSNSStatementCache - View statement cache for current buffer
+  vim.api.nvim_create_user_command("SSNSStatementCache", function()
+    local ViewStatementCache = require('ssns.features.view_statement_cache')
+    ViewStatementCache.view_cache()
+  end, {
+    nargs = 0,
+    desc = "View statement cache in floating window (debugging)",
+  })
+
+  -- :SSNSDebugLog - View debug log in floating window
+  vim.api.nvim_create_user_command("SSNSDebugLog", function(opts)
+    local ViewDebugLog = require('ssns.features.view_debug_log')
+    ViewDebugLog.view_log(opts.args ~= "" and opts.args or nil)
+  end, {
+    nargs = "?",
+    desc = "View debug log in floating window (optional filter argument)",
+  })
+
+  -- :SSNSQueryCache - View query result cache
+  vim.api.nvim_create_user_command("SSNSQueryCache", function()
+    local ViewQueryCache = require('ssns.features.view_query_cache')
+    ViewQueryCache.view_cache()
+  end, {
+    nargs = 0,
+    desc = "View query cache in floating window (debugging)",
+  })
+
+  -- :SSNSUsageWeights - View usage-based ranking weights
+  vim.api.nvim_create_user_command("SSNSUsageWeights", function()
+    local ViewUsageWeights = require('ssns.features.view_usage_weights')
+    ViewUsageWeights.view_weights()
+  end, {
+    nargs = 0,
+    desc = "View usage-based ranking weights in floating window (debugging)",
+  })
+
+  -- :SSNSCompletionMetadata - View completion metadata resolution
+  vim.api.nvim_create_user_command("SSNSCompletionMetadata", function()
+    local ViewCompletionMetadata = require('ssns.features.view_completion_metadata')
+    ViewCompletionMetadata.view_metadata()
+  end, {
+    nargs = 0,
+    desc = "View completion metadata resolution in floating window (debugging)",
+  })
+
   -- :SSNSAddServer - Open add server UI
   vim.api.nvim_create_user_command("SSNSAddServer", function()
     local AddServerUI = require('ssns.ui.add_server')
