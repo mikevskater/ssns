@@ -197,7 +197,7 @@ function ViewClass:load_definition()
   local query = adapter:get_definition_query(db.db_name, self.schema_name, self.view_name, "VIEW")
 
   -- Execute query
-  local results = adapter:execute(self:get_server().connection_string, query, { use_delimiter = false })
+  local results = adapter:execute(self:get_server().connection_config, query, { use_delimiter = false })
 
   -- Use adapter's parse method for consistent result handling
   self.definition = adapter:parse_definition(results)
