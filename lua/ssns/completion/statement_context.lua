@@ -188,36 +188,37 @@ function Context._detect_unparsed_subquery(tokens, line, col)
     return false
   end
 
-  -- When walking backwards:
-  -- - paren_depth > 0 means we've passed more ) than ( (we're inside parens)
-  -- - paren_depth <= 0 means we've exited all parentheses
+  -- When walking backwards from cursor INSIDE a subquery like "(SELECT ... FROM |cursor| )":
+  -- - The closing ) is AFTER cursor, so we haven't seen it yet
+  -- - paren_depth stays at 0 until we hit nested parens or the opening (
+  -- - When we hit an opening ( that makes paren_depth negative, we found an UNCLOSED paren
+  -- - If we've seen SELECT...FROM before hitting that unclosed (, we're in a subquery
+  --
+  -- Track: ) increments paren_depth (entering closed group)
+  --        ( decrements paren_depth (exiting group, or entering unclosed if goes negative)
   local paren_depth = 0
-  local found_from_in_subquery = false
-  local found_select_in_subquery = false
+  local found_from = false
+  local found_select_after_from = false
 
   for _, t in ipairs(prev_tokens) do
     if t.type == "paren_close" then
       paren_depth = paren_depth + 1
     elseif t.type == "paren_open" then
       paren_depth = paren_depth - 1
-      -- If we matched or passed the opening paren and found SELECT...FROM, we're in a subquery
-      if paren_depth <= 0 and found_select_in_subquery then
+      -- If paren_depth goes negative AND we've seen SELECT...FROM, we're in an unclosed subquery
+      if paren_depth < 0 and found_select_after_from then
         return true
-      end
-      -- Reset tracking when we exit a paren level
-      if paren_depth <= 0 then
-        found_from_in_subquery = false
-        found_select_in_subquery = false
       end
     elseif t.type == "keyword" then
       local kw = t.text:upper()
-      -- Only track FROM/SELECT when we're inside parentheses (paren_depth > 0)
-      if kw == "FROM" and paren_depth > 0 then
-        found_from_in_subquery = true
-      elseif kw == "SELECT" and paren_depth > 0 and found_from_in_subquery then
-        found_select_in_subquery = true
-      elseif (kw == "INSERT" or kw == "UPDATE" or kw == "DELETE" or kw == "MERGE") and paren_depth <= 0 then
-        -- Hit a statement starter outside our paren depth - stop searching
+      -- Track FROM first (walking backwards, so FROM appears before SELECT in actual query)
+      if kw == "FROM" and not found_from then
+        found_from = true
+      elseif kw == "SELECT" and found_from then
+        -- Found SELECT after FROM (in reverse = SELECT before FROM in actual query)
+        found_select_after_from = true
+      elseif (kw == "INSERT" or kw == "UPDATE" or kw == "DELETE" or kw == "MERGE") and paren_depth >= 0 then
+        -- Hit a statement starter outside our subquery context - stop searching
         break
       end
     end
