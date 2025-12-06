@@ -1,6 +1,20 @@
 ---Statement-based context detection for SQL completion
----Uses StatementCache/StatementChunk exclusively (no tree-sitter)
----Enhanced with token-based qualified name detection for accuracy
+---
+---Architecture:
+---  - Uses StatementCache/StatementChunk for clause position tracking
+---  - Uses TokenContext for all token-based detection (no regex patterns)
+---  - Supports multi-line SQL statements with accurate cursor position detection
+---
+---Detection Flow:
+---  1. _detect_special_cases() - OUTPUT, EXEC, INSERT columns, ON clause
+---  2. _detect_from_clause() - Clause-based detection if chunk available
+---  3. TokenContext.detect_context() - Unified token-based fallback
+---
+---Key Functions:
+---  - Context.detect() - Simple context detection
+---  - Context.detect_full() - Full detection with should_complete flag
+---  - _handle_clause_context() - Per-clause handling
+---  - _handle_clause_continuation() - Cursor past clause end detection
 local Debug = require('ssns.debug')
 local StatementCache = require('ssns.completion.statement_cache')
 local TokenContext = require('ssns.completion.token_context')
