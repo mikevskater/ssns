@@ -45,7 +45,7 @@ function SelectStatement.parse(state, scope, temp_tables)
   end
 
   -- Parse remaining clauses (WHERE, GROUP BY, HAVING, ORDER BY)
-  SelectStatement._parse_remaining_clauses(state, chunk)
+  SelectStatement._parse_remaining_clauses(state, chunk, scope)
 
   -- Finalize: build aliases, resolve column parents, copy subqueries
   BaseStatement.finalize_chunk(chunk, scope)
@@ -109,7 +109,8 @@ end
 ---Parse remaining clauses after FROM (WHERE, GROUP BY, HAVING, ORDER BY)
 ---@param state ParserState
 ---@param chunk StatementChunk
-function SelectStatement._parse_remaining_clauses(state, chunk)
+---@param scope ScopeContext
+function SelectStatement._parse_remaining_clauses(state, chunk, scope)
   local paren_depth = 0
   local last_valid_token = nil
 
@@ -147,7 +148,7 @@ function SelectStatement._parse_remaining_clauses(state, chunk)
       local upper_text = token.text:upper()
 
       if upper_text == "WHERE" then
-        SelectStatement._parse_where_clause(state, chunk)
+        SelectStatement._parse_where_clause(state, chunk, scope)
       elseif upper_text == "GROUP" then
         SelectStatement._parse_group_by_clause(state, chunk)
       elseif upper_text == "HAVING" then
@@ -185,12 +186,16 @@ end
 ---Parse WHERE clause and track its position
 ---@param state ParserState
 ---@param chunk StatementChunk
-function SelectStatement._parse_where_clause(state, chunk)
+---@param scope ScopeContext
+function SelectStatement._parse_where_clause(state, chunk, scope)
   local where_token = state:current()
   state:advance()  -- consume WHERE
 
   local paren_depth = 0
   local last_token = where_token
+
+  -- Build known_ctes for subquery parsing
+  local known_ctes = scope and scope:get_known_ctes_table() or {}
 
   -- Parse until we hit GROUP BY, HAVING, ORDER BY, or statement end
   while state:current() do
@@ -200,6 +205,22 @@ function SelectStatement._parse_where_clause(state, chunk)
       paren_depth = paren_depth + 1
       last_token = token
       state:advance()
+      -- Check for subquery: (SELECT ...
+      if state:is_keyword("SELECT") then
+        local subquery = state:parse_subquery(known_ctes)
+        if subquery then
+          -- After parse_subquery, parser is AT the closing ) - consume it
+          if state:is_type("paren_close") then
+            last_token = state:current()
+            state:advance()
+          end
+          paren_depth = paren_depth - 1
+          -- Add to scope so it gets copied to chunk in finalize
+          if scope then
+            scope:add_subquery(subquery)
+          end
+        end
+      end
     elseif token.type == "paren_close" then
       paren_depth = paren_depth - 1
       if paren_depth < 0 then
