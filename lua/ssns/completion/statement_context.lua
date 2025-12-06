@@ -205,8 +205,11 @@ function Context._detect_unparsed_subquery(tokens, line, col)
       paren_depth = paren_depth + 1
     elseif t.type == "paren_open" then
       paren_depth = paren_depth - 1
-      -- If paren_depth goes negative AND we've seen SELECT...FROM, we're in an unclosed subquery
-      if paren_depth < 0 and found_select_after_from then
+      -- If paren_depth goes to 0 or negative AND we've seen SELECT...FROM, we're in a subquery
+      -- paren_depth <= 0 handles both cases:
+      --   - Cursor AT closing `)`: `)` included, paren_depth starts at 1, goes to 0 at `(`
+      --   - Cursor BEFORE `)`: `)` not included, paren_depth starts at 0, goes to -1 at `(`
+      if paren_depth <= 0 and found_select_after_from then
         return true
       end
     elseif t.type == "keyword" then

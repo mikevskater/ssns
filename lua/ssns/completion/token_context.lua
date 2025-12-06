@@ -359,9 +359,36 @@ function TokenContext.is_in_string_or_comment(tokens, line, col)
     return false
   end
 
-  return token.type == "string"
-      or token.type == "comment"
-      or token.type == "line_comment"
+  -- Only consider it "in" a string/comment if the token type matches
+  -- AND the cursor is actually within the token's range (not just after it)
+  if token.type ~= "string" and token.type ~= "comment" and token.type ~= "line_comment" then
+    return false
+  end
+
+  -- Check if cursor is within the token's range
+  -- get_token_at_position may return a token from a previous line or
+  -- one that ends BEFORE the cursor (when cursor is in whitespace)
+  if token.line ~= line then
+    -- Token is on a different line - for single-line tokens (like line comments),
+    -- cursor on a different line is NOT inside the token
+    -- For multi-line tokens, we'd need more complex logic, but for now
+    -- line_comment tokens are single-line
+    if token.type == "line_comment" then
+      return false
+    end
+    -- For block comments, check if the token ends before the cursor line
+    -- (simplified: assume single-line block comments for now)
+    return false
+  end
+
+  -- Same line - check column range
+  local token_end_col = token.col + #token.text - 1
+  if col > token_end_col then
+    -- Cursor is after the end of this token, not inside it
+    return false
+  end
+
+  return true
 end
 
 ---Extract the left-side column from a comparison expression
