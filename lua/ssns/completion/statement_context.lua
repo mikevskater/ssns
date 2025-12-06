@@ -780,7 +780,8 @@ function Context.detect(bufnr, line_num, col)
      upper:match("%s+ON%s+[%w_%.]+%s+AND%s+[%w_%.]*$") or
      upper:match("%s+ON%s+[%w_%.]+%s*[=<>!]+%s*[%w_%.]+%s+AND%s+[%w_%.]*$") then
     extra = {}
-    local left_side = extract_left_side_column(before_cursor)
+    -- Use token-based left-side column extraction
+    local left_side = TokenContext.extract_left_side_column(tokens, line_num, col)
     if left_side then
       extra.left_side = left_side
     end
@@ -935,9 +936,10 @@ function Context.detect(bufnr, line_num, col)
       elseif clause == "on" then
         ctx_type = Context.Type.COLUMN
         mode = "on"
-        local left_side = extract_left_side_column(before_cursor)
-        if left_side then
-          extra.left_side = left_side
+        -- Use token-based left-side column extraction
+        local left_side_on = TokenContext.extract_left_side_column(tokens, line_num, col)
+        if left_side_on then
+          extra.left_side = left_side_on
         end
         -- Check for qualified column reference in ON clause (e.g., d.█) using token-based detection
         local is_after_dot_on, _ = TokenContext.is_dot_triggered(tokens, line_num, col)
@@ -951,9 +953,10 @@ function Context.detect(bufnr, line_num, col)
       elseif clause == "where" then
         ctx_type = Context.Type.COLUMN
         mode = "where"
-        local left_side = extract_left_side_column(before_cursor)
-        if left_side then
-          extra.left_side = left_side
+        -- Use token-based left-side column extraction
+        local left_side_where = TokenContext.extract_left_side_column(tokens, line_num, col)
+        if left_side_where then
+          extra.left_side = left_side_where
         end
       elseif clause == "group_by" then
         ctx_type = Context.Type.COLUMN
