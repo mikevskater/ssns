@@ -126,12 +126,14 @@ function TablesProvider._get_completions_impl(ctx)
   local include_functions = false  -- DEFAULT: Don't include functions in FROM/JOIN
 
   -- Adjust based on context mode
-  if mode:match("^insert") or mode:match("^update") or mode:match("^delete") then
+  -- Use string.sub for efficient prefix matching (replaces regex patterns)
+  local mode_prefix = mode:sub(1, 6)  -- Get first 6 chars for prefix checks
+  if mode_prefix == "insert" or mode_prefix == "update" or mode_prefix == "delete" then
     -- DML statements: only tables (views/synonyms are read-only)
     include_views = false
     include_synonyms = false
     include_functions = false
-  elseif mode:match("^from") or mode:match("^join") then
+  elseif mode_prefix == "from" or mode:sub(1, 4) == "join" then
     -- FROM/JOIN: tables, views, synonyms, AND table-valued functions
     include_functions = true
   elseif mode == "qualified_partial" or mode == "qualified_bracket" then

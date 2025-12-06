@@ -4,6 +4,7 @@
 local JoinsProvider = {}
 
 local FKGraph = require('ssns.completion.fk_graph')
+local TokenContext = require('ssns.completion.token_context')
 
 ---Get JOIN completions for the given context
 ---@param ctx table Context from source (has bufnr, connection info, sql_context)
@@ -220,7 +221,8 @@ end
 ---@return string alias Generated alias
 function JoinsProvider._generate_alias(table_name, existing_aliases)
   -- Remove schema prefix if present (e.g., "dbo.Employees" -> "Employees")
-  local base_name = table_name:match("%.([^%.]+)$") or table_name
+  -- Use TokenContext.get_last_name_part for consistent qualified name handling
+  local base_name = TokenContext.get_last_name_part(table_name)
 
   -- Build set of used aliases (values in existing_aliases map)
   local used_aliases = {}

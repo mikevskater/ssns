@@ -4,6 +4,7 @@
 local Resolver = {}
 
 local Debug = require('ssns.debug')
+local TokenContext = require('ssns.completion.token_context')
 
 -- Helper: Conditional debug logging based on config
 local function debug_log(message)
@@ -27,10 +28,10 @@ function Resolver.resolve_table(reference, connection, context)
   end
 
   -- Step 0: Check if reference is a temp table (#temp or ##temp)
-  if reference:match("^#") then
+  if TokenContext.is_temp_table(reference) then
     -- Temp table resolution needs bufnr and cursor_pos, which we can extract from context if available
     -- For now, we'll skip temp table cache lookup and only check tempdb
-    if reference:match("^##") then
+    if TokenContext.is_global_temp_table(reference) then
       return Resolver._find_in_tempdb(reference, connection)
     end
     -- Local temp tables require buffer cache, which requires bufnr
@@ -47,8 +48,8 @@ function Resolver.resolve_table(reference, connection, context)
     reference = resolved_name
 
     -- Check again if resolved name is a temp table
-    if reference:match("^#") then
-      if reference:match("^##") then
+    if TokenContext.is_temp_table(reference) then
+      if TokenContext.is_global_temp_table(reference) then
         return Resolver._find_in_tempdb(reference, connection)
       end
       return nil  -- Local temp tables not supported without buffer context
@@ -401,6 +402,7 @@ function Resolver.resolve_alias_with_scope(alias, context)
 end
 
 ---Helper: Strip brackets/quotes from identifier
+---Uses TokenContext.strip_identifier_quotes for consistent handling
 ---@param identifier string Identifier with possible brackets/quotes
 ---@return string clean Cleaned identifier
 function Resolver._clean_identifier(identifier)
@@ -408,13 +410,7 @@ function Resolver._clean_identifier(identifier)
     return ""
   end
 
-  -- Remove: [brackets], "quotes", `backticks`
-  local cleaned = identifier
-  cleaned = cleaned:gsub("^%[(.-)%]$", "%1")
-  cleaned = cleaned:gsub('^"(.-)"$', "%1")
-  cleaned = cleaned:gsub("^`(.-)`$", "%1")
-
-  return cleaned
+  return TokenContext.strip_identifier_quotes(identifier)
 end
 
 ---Helper: Parse schema-qualified name
@@ -530,7 +526,7 @@ function Resolver._resolve_temp_table(temp_name, bufnr, cursor_pos, connection)
 
   -- Fallback: Check global cache (for ##globalTemp after execution)
   -- Look in tempdb.dbo for global temp tables
-  if temp_name:match("^##") and connection then
+  if TokenContext.is_global_temp_table(temp_name) and connection then
     return Resolver._find_in_tempdb(temp_name, connection)
   end
 
@@ -591,7 +587,7 @@ function Resolver.pre_resolve_scope(sql_context, connection)
     for alias_name, table_ref in pairs(sql_context.aliases) do
       -- table_ref is just a string (the table name), not a table with metadata
       -- Skip CTEs, temp tables, and subqueries (they don't resolve to database objects)
-      if table_ref and type(table_ref) == "string" and not table_ref:match("^#") then
+      if table_ref and type(table_ref) == "string" and not TokenContext.is_temp_table(table_ref) then
         local resolved = Resolver.resolve_table(table_ref, connection, sql_context)
         if resolved then
           resolved_scope.resolved_aliases[alias_name:lower()] = resolved
@@ -610,7 +606,7 @@ function Resolver.pre_resolve_scope(sql_context, connection)
     for _, table_info in ipairs(sql_context.tables_in_scope) do
       -- table_info structure: {alias = "e", table = "dbo.EMPLOYEES", scope = "main"}
       local table_name = table_info.table
-      if table_name and type(table_name) == "string" and not table_name:match("^#") then
+      if table_name and type(table_name) == "string" and not TokenContext.is_temp_table(table_name) then
         local key = table_name:lower()
         if not resolved_scope.resolved_tables[key] then
           local resolved = Resolver.resolve_table(table_name, connection, sql_context)
