@@ -54,7 +54,9 @@ function ColumnDefsParser.parse(state)
     end
 
     -- Parse column name
-    if token.type == "identifier" or token.type == "bracket_id" then
+    -- Note: SQL allows keywords as column names (e.g., NewID, Status)
+    -- We check for identifier, bracket_id, OR keyword that isn't a constraint keyword
+    if token.type == "identifier" or token.type == "bracket_id" or token.type == "keyword" then
       local col_name = Helpers.strip_brackets(token.text)
       state:advance()
 
