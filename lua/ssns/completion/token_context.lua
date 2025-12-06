@@ -947,6 +947,373 @@ function TokenContext.detect_other_context_from_tokens(tokens, line, col)
   return nil, nil, extra
 end
 
+---Detect VALUES clause context from tokens
+---Handles patterns like: VALUES (val1, |val2) with position tracking for type-aware completion
+---@param tokens Token[] Parsed tokens
+---@param line number 1-indexed line
+---@param col number 1-indexed column
+---@return string? ctx_type Context type ("column" or nil if not in VALUES)
+---@return string? mode Sub-mode for provider routing ("values" or nil)
+---@return table extra Extra context info (value_position for column position)
+function TokenContext.detect_values_context_from_tokens(tokens, line, col)
+  if not tokens or #tokens == 0 then
+    return nil, nil, {}
+  end
+
+  local extra = {}
+
+  -- We need to find the pattern: VALUES ( ... cursor ... )
+  -- Walk through tokens to find VALUES keyword, then track parens and commas
+
+  -- Find cursor position in token stream
+  local _, cursor_idx = TokenContext.get_token_at_position(tokens, line, col)
+  if not cursor_idx then
+    -- Cursor might be after last token, try to find nearby tokens
+    cursor_idx = #tokens
+  end
+
+  -- Look backwards for VALUES keyword
+  local values_idx = nil
+  for i = cursor_idx, 1, -1 do
+    local t = tokens[i]
+    if t.type == "keyword" and t.text:upper() == "VALUES" then
+      values_idx = i
+      break
+    end
+    -- Stop if we hit SELECT/INSERT/UPDATE/DELETE (past the VALUES clause)
+    if t.type == "keyword" then
+      local kw = t.text:upper()
+      if kw == "SELECT" or kw == "INSERT" or kw == "UPDATE" or kw == "DELETE" or kw == "MERGE" then
+        break
+      end
+    end
+  end
+
+  if not values_idx then
+    return nil, nil, {}
+  end
+
+  -- Now verify cursor is inside a VALUES paren group
+  -- Track paren depth from VALUES to cursor
+  local paren_depth = 0
+  local value_position = 0
+  local found_values_paren = false
+  local in_current_row = false
+
+  for i = values_idx + 1, #tokens do
+    local t = tokens[i]
+
+    -- Check if we've passed the cursor position
+    if t.line > line or (t.line == line and t.col >= col) then
+      -- Cursor is before this token
+      if in_current_row then
+        extra.value_position = value_position
+        return "column", "values", extra
+      end
+      break
+    end
+
+    if t.type == "lparen" then
+      paren_depth = paren_depth + 1
+      if paren_depth == 1 then
+        found_values_paren = true
+        in_current_row = true
+        value_position = 0  -- Reset for new row (multi-row VALUES)
+      end
+    elseif t.type == "rparen" then
+      paren_depth = paren_depth - 1
+      if paren_depth == 0 then
+        in_current_row = false
+      end
+    elseif t.type == "comma" and paren_depth == 1 then
+      -- Comma at depth 1 = separator between values in row
+      value_position = value_position + 1
+    end
+  end
+
+  -- If we're still inside VALUES parens at cursor position
+  if found_values_paren and in_current_row then
+    extra.value_position = value_position
+    return "column", "values", extra
+  end
+
+  return nil, nil, {}
+end
+
+---Detect INSERT column list context from tokens
+---Handles patterns like: INSERT INTO table (col1, |col2) for column completion
+---@param tokens Token[] Parsed tokens
+---@param line number 1-indexed line
+---@param col number 1-indexed column
+---@return string? ctx_type Context type ("column" or nil if not in INSERT column list)
+---@return string? mode Sub-mode for provider routing ("insert_columns" or nil)
+---@return table extra Extra context info (insert_table, insert_schema)
+function TokenContext.detect_insert_columns_from_tokens(tokens, line, col)
+  if not tokens or #tokens == 0 then
+    return nil, nil, {}
+  end
+
+  local extra = {}
+
+  -- We need to find: INSERT INTO table_name ( ... cursor ... ) VALUES
+  -- The column list is between the first ( after table name and VALUES keyword
+
+  -- Find cursor position in token stream
+  local _, cursor_idx = TokenContext.get_token_at_position(tokens, line, col)
+  if not cursor_idx then
+    cursor_idx = #tokens
+  end
+
+  -- Look backwards for INSERT keyword
+  local insert_idx = nil
+  local into_idx = nil
+  local table_tokens = {}
+  local lparen_idx = nil
+
+  for i = cursor_idx, 1, -1 do
+    local t = tokens[i]
+    if t.type == "keyword" then
+      local kw = t.text:upper()
+      if kw == "VALUES" then
+        -- VALUES keyword found - we might be in column list before it
+        -- Don't break, continue looking for INSERT
+      elseif kw == "INTO" and not into_idx then
+        into_idx = i
+      elseif kw == "INSERT" and into_idx then
+        insert_idx = i
+        break
+      elseif kw == "SELECT" or kw == "UPDATE" or kw == "DELETE" or kw == "MERGE" then
+        -- Different statement type
+        break
+      end
+    end
+  end
+
+  if not insert_idx or not into_idx then
+    return nil, nil, {}
+  end
+
+  -- Now collect table name tokens after INTO
+  -- Pattern: INTO [identifier] [dot identifier]* [lparen]
+  local i = into_idx + 1
+  while i <= #tokens do
+    local t = tokens[i]
+    if t.type == "identifier" or t.type == "bracket_id" then
+      table.insert(table_tokens, t)
+      i = i + 1
+    elseif t.type == "dot" then
+      -- Part of qualified name
+      i = i + 1
+    elseif t.type == "lparen" then
+      lparen_idx = i
+      break
+    elseif t.type == "keyword" then
+      -- Unexpected keyword - no column list paren
+      break
+    else
+      i = i + 1
+    end
+  end
+
+  if not lparen_idx or #table_tokens == 0 then
+    return nil, nil, {}
+  end
+
+  -- Check if cursor is between lparen and VALUES (or rparen)
+  -- Find the matching rparen or VALUES keyword after lparen
+  local rparen_idx = nil
+  local values_idx = nil
+  local paren_depth = 1
+
+  for j = lparen_idx + 1, #tokens do
+    local t = tokens[j]
+    if t.type == "lparen" then
+      paren_depth = paren_depth + 1
+    elseif t.type == "rparen" then
+      paren_depth = paren_depth - 1
+      if paren_depth == 0 then
+        rparen_idx = j
+        break
+      end
+    elseif t.type == "keyword" and t.text:upper() == "VALUES" then
+      values_idx = j
+      break
+    end
+  end
+
+  -- Check if cursor is within the column list
+  local lparen_token = tokens[lparen_idx]
+  local cursor_after_lparen = line > lparen_token.line or
+    (line == lparen_token.line and col > lparen_token.col)
+
+  local cursor_before_end = true
+  if rparen_idx then
+    local rparen_token = tokens[rparen_idx]
+    cursor_before_end = line < rparen_token.line or
+      (line == rparen_token.line and col <= rparen_token.col)
+  elseif values_idx then
+    local values_token = tokens[values_idx]
+    cursor_before_end = line < values_token.line or
+      (line == values_token.line and col < values_token.col)
+  end
+
+  if cursor_after_lparen and cursor_before_end then
+    -- We're in the INSERT column list! Extract table info
+    local parts = {}
+    for _, t in ipairs(table_tokens) do
+      local name = t.text
+      if t.type == "bracket_id" then
+        name = name:sub(2, -2)  -- Remove [ and ]
+      end
+      table.insert(parts, name)
+    end
+
+    if #parts >= 2 then
+      extra.insert_schema = parts[#parts - 1]
+      extra.insert_table = parts[#parts]
+      extra.schema = extra.insert_schema
+      extra.table = extra.insert_table
+    elseif #parts == 1 then
+      extra.insert_table = parts[1]
+      extra.table = extra.insert_table
+    end
+
+    return "column", "insert_columns", extra
+  end
+
+  return nil, nil, {}
+end
+
+---Detect MERGE INSERT column list context from tokens
+---Handles patterns like: WHEN NOT MATCHED THEN INSERT (col1, |col2)
+---@param tokens Token[] Parsed tokens
+---@param line number 1-indexed line
+---@param col number 1-indexed column
+---@return string? ctx_type Context type ("column" or nil if not in MERGE INSERT)
+---@return string? mode Sub-mode for provider routing ("merge_insert_columns" or nil)
+---@return table extra Extra context info (is_merge_insert flag)
+function TokenContext.detect_merge_insert_from_tokens(tokens, line, col)
+  if not tokens or #tokens == 0 then
+    return nil, nil, {}
+  end
+
+  local extra = {}
+
+  -- Pattern: WHEN NOT MATCHED THEN INSERT ( ... cursor ... )
+  -- Find cursor position
+  local _, cursor_idx = TokenContext.get_token_at_position(tokens, line, col)
+  if not cursor_idx then
+    cursor_idx = #tokens
+  end
+
+  -- Look backwards for pattern: WHEN NOT MATCHED THEN INSERT (
+  local found_lparen = false
+  local found_insert = false
+  local found_then = false
+  local found_matched = false
+  local found_not = false
+  local found_when = false
+  local lparen_idx = nil
+
+  for i = cursor_idx, 1, -1 do
+    local t = tokens[i]
+    if t.type == "lparen" and not found_lparen then
+      found_lparen = true
+      lparen_idx = i
+    elseif t.type == "keyword" then
+      local kw = t.text:upper()
+      if kw == "INSERT" and found_lparen and not found_insert then
+        found_insert = true
+      elseif kw == "THEN" and found_insert and not found_then then
+        found_then = true
+      elseif kw == "MATCHED" and found_then and not found_matched then
+        found_matched = true
+      elseif kw == "NOT" and found_matched and not found_not then
+        found_not = true
+      elseif kw == "WHEN" and found_not and not found_when then
+        found_when = true
+        break
+      elseif kw == "MERGE" then
+        -- Found MERGE before completing the pattern - stop
+        break
+      elseif kw == "VALUES" then
+        -- We've hit VALUES - we're past the column list
+        return nil, nil, {}
+      end
+    elseif t.type == "rparen" and found_lparen then
+      -- Closed paren before we found the pattern - cursor not in column list
+      return nil, nil, {}
+    end
+  end
+
+  if found_when and found_not and found_matched and found_then and found_insert and lparen_idx then
+    -- Verify cursor is after the lparen
+    local lparen_token = tokens[lparen_idx]
+    if line > lparen_token.line or (line == lparen_token.line and col > lparen_token.col) then
+      extra.is_merge_insert = true
+      return "column", "merge_insert_columns", extra
+    end
+  end
+
+  return nil, nil, {}
+end
+
+---Detect if cursor is inside a subquery SELECT clause
+---Handles patterns like: WHERE col IN (SELECT |column FROM table)
+---@param tokens Token[] Parsed tokens
+---@param line number 1-indexed line
+---@param col number 1-indexed column
+---@return boolean in_subquery_select True if in subquery SELECT clause
+---@return table extra Extra context info
+function TokenContext.is_in_subquery_select(tokens, line, col)
+  if not tokens or #tokens == 0 then
+    return false, {}
+  end
+
+  -- Find cursor position
+  local _, cursor_idx = TokenContext.get_token_at_position(tokens, line, col)
+  if not cursor_idx then
+    cursor_idx = #tokens
+  end
+
+  -- Look backwards tracking paren depth
+  -- We're in a subquery SELECT if:
+  -- 1. There's a ( before us
+  -- 2. Followed by SELECT
+  -- 3. No FROM after the SELECT (between SELECT and cursor)
+  local paren_depth = 0
+  local found_select_in_subquery = false
+  local select_idx = nil
+
+  for i = cursor_idx, 1, -1 do
+    local t = tokens[i]
+    if t.type == "rparen" then
+      paren_depth = paren_depth + 1
+    elseif t.type == "lparen" then
+      paren_depth = paren_depth - 1
+      if paren_depth < 0 then
+        -- We're inside a paren group - look for SELECT after this
+        for j = i + 1, cursor_idx do
+          local t2 = tokens[j]
+          if t2.type == "keyword" then
+            local kw = t2.text:upper()
+            if kw == "SELECT" then
+              found_select_in_subquery = true
+              select_idx = j
+            elseif kw == "FROM" and found_select_in_subquery then
+              -- There's a FROM after SELECT - not in SELECT clause
+              found_select_in_subquery = false
+            end
+          end
+        end
+        break
+      end
+    end
+  end
+
+  return found_select_in_subquery, {}
+end
+
 ---Debug: Print tokens around cursor
 ---@param tokens Token[] Tokens
 ---@param line number Cursor line

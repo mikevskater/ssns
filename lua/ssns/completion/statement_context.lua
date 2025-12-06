@@ -1114,8 +1114,19 @@ function Context.detect(bufnr, line_num, col)
           mode = in_join_context and "join" or "from"
         end
       else
-        -- Fallback: Try token-based detection first (TABLE -> COLUMN -> OTHER)
-        ctx_type, mode, extra = TokenContext.detect_table_context_from_tokens(tokens, line_num, col)
+        -- Fallback: Try token-based detection first
+        -- Check special cases (VALUES, INSERT columns, MERGE INSERT, subquery SELECT) first
+        ctx_type, mode, extra = TokenContext.detect_values_context_from_tokens(tokens, line_num, col)
+        if not ctx_type then
+          ctx_type, mode, extra = TokenContext.detect_insert_columns_from_tokens(tokens, line_num, col)
+        end
+        if not ctx_type then
+          ctx_type, mode, extra = TokenContext.detect_merge_insert_from_tokens(tokens, line_num, col)
+        end
+        -- Then try general context detection (TABLE -> COLUMN -> OTHER)
+        if not ctx_type then
+          ctx_type, mode, extra = TokenContext.detect_table_context_from_tokens(tokens, line_num, col)
+        end
         if not ctx_type then
           ctx_type, mode, extra = TokenContext.detect_column_context_from_tokens(tokens, line_num, col)
         end
@@ -1123,14 +1134,25 @@ function Context.detect(bufnr, line_num, col)
           ctx_type, mode, extra = TokenContext.detect_other_context_from_tokens(tokens, line_num, col)
         end
         if not ctx_type then
-          -- Final fallback to regex-based detection for special cases (VALUES, INSERT columns, etc.)
+          -- Final fallback to regex-based detection for any edge cases not yet converted
           ctx_type, mode, extra = Context._detect_type_from_line(before_cursor, chunk)
         end
       end
     end
   else
-    -- No chunk: Try token-based detection first (TABLE -> COLUMN -> OTHER)
-    ctx_type, mode, extra = TokenContext.detect_table_context_from_tokens(tokens, line_num, col)
+    -- No chunk: Try token-based detection first
+    -- Check special cases (VALUES, INSERT columns, MERGE INSERT, subquery SELECT) first
+    ctx_type, mode, extra = TokenContext.detect_values_context_from_tokens(tokens, line_num, col)
+    if not ctx_type then
+      ctx_type, mode, extra = TokenContext.detect_insert_columns_from_tokens(tokens, line_num, col)
+    end
+    if not ctx_type then
+      ctx_type, mode, extra = TokenContext.detect_merge_insert_from_tokens(tokens, line_num, col)
+    end
+    -- Then try general context detection (TABLE -> COLUMN -> OTHER)
+    if not ctx_type then
+      ctx_type, mode, extra = TokenContext.detect_table_context_from_tokens(tokens, line_num, col)
+    end
     if not ctx_type then
       ctx_type, mode, extra = TokenContext.detect_column_context_from_tokens(tokens, line_num, col)
     end
@@ -1138,7 +1160,7 @@ function Context.detect(bufnr, line_num, col)
       ctx_type, mode, extra = TokenContext.detect_other_context_from_tokens(tokens, line_num, col)
     end
     if not ctx_type then
-      -- Final fallback to regex-based detection for special cases (VALUES, INSERT columns, etc.)
+      -- Final fallback to regex-based detection for any edge cases not yet converted
       ctx_type, mode, extra = Context._detect_type_from_line(before_cursor, chunk)
     end
   end
