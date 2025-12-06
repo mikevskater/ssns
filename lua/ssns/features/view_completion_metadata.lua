@@ -354,6 +354,16 @@ function ViewCompletionMetadata.view_metadata()
       trigger = context.trigger,
       statement_type = context.statement_type,
       clause = context.clause,
+      -- Filter/qualification fields (important for debugging)
+      filter_schema = context.filter_schema,
+      filter_database = context.filter_database,
+      filter_table = context.filter_table,
+      potential_database = context.potential_database,
+      omit_schema = context.omit_schema,
+      schema = context.schema,
+      database = context.database,
+      table_ref = context.table_ref,
+      -- Counts
       tables_in_scope_count = context.tables_in_scope and #context.tables_in_scope or 0,
       aliases_count = context.aliases and vim.tbl_count(context.aliases) or 0,
       ctes_count = context.ctes and #context.ctes or 0,
