@@ -535,6 +535,7 @@ function parse_exec_statement(state, scope)
   local chunk = BaseStatement.create_chunk("EXEC", start_token, state.go_batch_index)
 
   scope.statement_type = "EXEC"
+  state:advance()  -- Must advance past EXEC before consume_until_statement_end
   state:consume_until_statement_end()
 
   return chunk
@@ -549,6 +550,7 @@ function parse_set_statement(state, scope)
   local chunk = BaseStatement.create_chunk("SET", start_token, state.go_batch_index)
 
   scope.statement_type = "SET"
+  state:advance()  -- Must advance past SET before consume_until_statement_end
   state:consume_until_statement_end()
 
   return chunk
