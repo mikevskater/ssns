@@ -590,7 +590,7 @@ function TokenContext.extract_prefix_and_trigger(tokens, line, col)
     local first_token = prev_tokens[1]
     if first_token.type == "dot" then
       trigger = "."
-    elseif first_token.type == "lparen" then
+    elseif first_token.type == "paren_open" then
       -- Opening paren could be a trigger
       trigger = "("
     elseif first_token.text == "[" then
@@ -860,12 +860,12 @@ function TokenContext.detect_column_context_from_tokens(tokens, line, col)
   end
 
   -- Subquery SELECT detection: (SELECT ...
-  -- Look for lparen before SELECT
+  -- Look for paren_open before SELECT
   if kw == "SELECT" then
     -- Check for opening paren indicating subquery
     for i = keyword_idx + 1, #prev_tokens do
       local t = prev_tokens[i]
-      if t.type == "lparen" then
+      if t.type == "paren_open" then
         -- This is a subquery SELECT
         return "column", "select", extra
       elseif t.type == "keyword" then
@@ -1057,14 +1057,14 @@ function TokenContext.detect_values_context_from_tokens(tokens, line, col)
       break
     end
 
-    if t.type == "lparen" then
+    if t.type == "paren_open" then
       paren_depth = paren_depth + 1
       if paren_depth == 1 then
         found_values_paren = true
         in_current_row = true
         value_position = 0  -- Reset for new row (multi-row VALUES)
       end
-    elseif t.type == "rparen" then
+    elseif t.type == "paren_close" then
       paren_depth = paren_depth - 1
       if paren_depth == 0 then
         in_current_row = false
@@ -1112,7 +1112,7 @@ function TokenContext.detect_insert_columns_from_tokens(tokens, line, col)
   local insert_idx = nil
   local into_idx = nil
   local table_tokens = {}
-  local lparen_idx = nil
+  local paren_open_idx = nil
 
   for i = cursor_idx, 1, -1 do
     local t = tokens[i]
@@ -1138,7 +1138,7 @@ function TokenContext.detect_insert_columns_from_tokens(tokens, line, col)
   end
 
   -- Now collect table name tokens after INTO
-  -- Pattern: INTO [identifier] [dot identifier]* [lparen]
+  -- Pattern: INTO [identifier] [dot identifier]* [paren_open]
   local i = into_idx + 1
   while i <= #tokens do
     local t = tokens[i]
@@ -1148,8 +1148,8 @@ function TokenContext.detect_insert_columns_from_tokens(tokens, line, col)
     elseif t.type == "dot" then
       -- Part of qualified name
       i = i + 1
-    elseif t.type == "lparen" then
-      lparen_idx = i
+    elseif t.type == "paren_open" then
+      paren_open_idx = i
       break
     elseif t.type == "keyword" then
       -- Unexpected keyword - no column list paren
@@ -1159,24 +1159,24 @@ function TokenContext.detect_insert_columns_from_tokens(tokens, line, col)
     end
   end
 
-  if not lparen_idx or #table_tokens == 0 then
+  if not paren_open_idx or #table_tokens == 0 then
     return nil, nil, {}
   end
 
-  -- Check if cursor is between lparen and VALUES (or rparen)
-  -- Find the matching rparen or VALUES keyword after lparen
-  local rparen_idx = nil
+  -- Check if cursor is between paren_open and VALUES (or paren_close)
+  -- Find the matching paren_close or VALUES keyword after paren_open
+  local paren_close_idx = nil
   local values_idx = nil
   local paren_depth = 1
 
-  for j = lparen_idx + 1, #tokens do
+  for j = paren_open_idx + 1, #tokens do
     local t = tokens[j]
-    if t.type == "lparen" then
+    if t.type == "paren_open" then
       paren_depth = paren_depth + 1
-    elseif t.type == "rparen" then
+    elseif t.type == "paren_close" then
       paren_depth = paren_depth - 1
       if paren_depth == 0 then
-        rparen_idx = j
+        paren_close_idx = j
         break
       end
     elseif t.type == "keyword" and t.text:upper() == "VALUES" then
@@ -1186,22 +1186,22 @@ function TokenContext.detect_insert_columns_from_tokens(tokens, line, col)
   end
 
   -- Check if cursor is within the column list
-  local lparen_token = tokens[lparen_idx]
-  local cursor_after_lparen = line > lparen_token.line or
-    (line == lparen_token.line and col > lparen_token.col)
+  local paren_open_token = tokens[paren_open_idx]
+  local cursor_after_paren_open = line > paren_open_token.line or
+    (line == paren_open_token.line and col > paren_open_token.col)
 
   local cursor_before_end = true
-  if rparen_idx then
-    local rparen_token = tokens[rparen_idx]
-    cursor_before_end = line < rparen_token.line or
-      (line == rparen_token.line and col <= rparen_token.col)
+  if paren_close_idx then
+    local paren_close_token = tokens[paren_close_idx]
+    cursor_before_end = line < paren_close_token.line or
+      (line == paren_close_token.line and col <= paren_close_token.col)
   elseif values_idx then
     local values_token = tokens[values_idx]
     cursor_before_end = line < values_token.line or
       (line == values_token.line and col < values_token.col)
   end
 
-  if cursor_after_lparen and cursor_before_end then
+  if cursor_after_paren_open and cursor_before_end then
     -- We're in the INSERT column list! Extract table info
     local parts = {}
     for _, t in ipairs(table_tokens) do
@@ -1251,49 +1251,66 @@ function TokenContext.detect_merge_insert_from_tokens(tokens, line, col)
   end
 
   -- Look backwards for pattern: WHEN NOT MATCHED THEN INSERT (
-  local found_lparen = false
+  local found_paren_open = false
   local found_insert = false
   local found_then = false
   local found_matched = false
   local found_not = false
   local found_when = false
-  local lparen_idx = nil
+  local paren_open_idx = nil
+
+  -- Track paren depth to handle nested structures like USING (SELECT ...)
+  -- We're looking for: WHEN NOT MATCHED THEN INSERT ( ... cursor ... )
+  -- The paren_close check should only apply to the INSERT's column list paren,
+  -- not to parens from earlier clauses like USING (subquery)
+  local paren_depth = 0  -- Track balance of parens AFTER our INSERT paren
 
   for i = cursor_idx, 1, -1 do
     local t = tokens[i]
-    if t.type == "lparen" and not found_lparen then
-      found_lparen = true
-      lparen_idx = i
+    if t.type == "paren_open" then
+      if not found_paren_open then
+        -- This is the INSERT's opening paren
+        found_paren_open = true
+        paren_open_idx = i
+      else
+        -- This is a nested paren (e.g., from USING subquery) - adjust depth
+        paren_depth = paren_depth - 1
+      end
+    elseif t.type == "paren_close" then
+      if found_paren_open then
+        -- We're inside our INSERT paren context
+        paren_depth = paren_depth + 1
+      end
     elseif t.type == "keyword" then
       local kw = t.text:upper()
-      if kw == "INSERT" and found_lparen and not found_insert then
-        found_insert = true
-      elseif kw == "THEN" and found_insert and not found_then then
-        found_then = true
-      elseif kw == "MATCHED" and found_then and not found_matched then
-        found_matched = true
-      elseif kw == "NOT" and found_matched and not found_not then
-        found_not = true
-      elseif kw == "WHEN" and found_not and not found_when then
-        found_when = true
-        break
-      elseif kw == "MERGE" then
-        -- Found MERGE before completing the pattern - stop
-        break
-      elseif kw == "VALUES" then
-        -- We've hit VALUES - we're past the column list
-        return nil, nil, {}
+      -- Only process keywords when we're at the same paren depth (not inside nested parens)
+      if paren_depth == 0 then
+        if kw == "INSERT" and found_paren_open and not found_insert then
+          found_insert = true
+        elseif kw == "THEN" and found_insert and not found_then then
+          found_then = true
+        elseif kw == "MATCHED" and found_then and not found_matched then
+          found_matched = true
+        elseif kw == "NOT" and found_matched and not found_not then
+          found_not = true
+        elseif kw == "WHEN" and found_not and not found_when then
+          found_when = true
+          break
+        elseif kw == "MERGE" then
+          -- Found MERGE before completing the pattern - stop
+          break
+        elseif kw == "VALUES" then
+          -- We've hit VALUES - we're past the column list
+          return nil, nil, {}
+        end
       end
-    elseif t.type == "rparen" and found_lparen then
-      -- Closed paren before we found the pattern - cursor not in column list
-      return nil, nil, {}
     end
   end
 
-  if found_when and found_not and found_matched and found_then and found_insert and lparen_idx then
-    -- Verify cursor is after the lparen
-    local lparen_token = tokens[lparen_idx]
-    if line > lparen_token.line or (line == lparen_token.line and col > lparen_token.col) then
+  if found_when and found_not and found_matched and found_then and found_insert and paren_open_idx then
+    -- Verify cursor is after the paren_open
+    local paren_open_token = tokens[paren_open_idx]
+    if line > paren_open_token.line or (line == paren_open_token.line and col > paren_open_token.col) then
       extra.is_merge_insert = true
       return "column", "merge_insert_columns", extra
     end
@@ -1477,9 +1494,9 @@ function TokenContext.is_in_subquery_select(tokens, line, col)
 
   for i = cursor_idx, 1, -1 do
     local t = tokens[i]
-    if t.type == "rparen" then
+    if t.type == "paren_close" then
       paren_depth = paren_depth + 1
-    elseif t.type == "lparen" then
+    elseif t.type == "paren_open" then
       paren_depth = paren_depth - 1
       if paren_depth < 0 then
         -- We're inside a paren group - look for SELECT after this

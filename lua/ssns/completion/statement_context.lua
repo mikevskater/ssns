@@ -124,7 +124,13 @@ function Context._detect_special_cases(tokens, line, col)
     return ctx_type, mode, extra
   end
 
-  -- 5. ON clause detection (JOIN conditions)
+  -- 5. MERGE INSERT column list detection (WHEN NOT MATCHED THEN INSERT (columns))
+  ctx_type, mode, extra = TokenContext.detect_merge_insert_from_tokens(tokens, line, col)
+  if ctx_type then
+    return ctx_type, mode, extra
+  end
+
+  -- 6. ON clause detection (JOIN conditions)
   ctx_type, mode, extra = TokenContext.detect_on_clause_from_tokens(tokens, line, col)
   if ctx_type then
     return ctx_type, mode, extra
