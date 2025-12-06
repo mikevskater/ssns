@@ -392,6 +392,15 @@ local function parse_statement_dispatch(state, scope, temp_tables)
     end
     -- Finalize chunk
     BaseStatement.finalize_chunk(chunk, scope)
+    -- Update chunk end position from clause positions
+    for _, pos in pairs(chunk.clause_positions or {}) do
+      if pos.end_line and pos.end_col then
+        if pos.end_line > chunk.end_line or (pos.end_line == chunk.end_line and pos.end_col > chunk.end_col) then
+          chunk.end_line = pos.end_line
+          chunk.end_col = pos.end_col
+        end
+      end
+    end
     return chunk
   elseif keyword == "MERGE" then
     return MergeStatement.parse(state, scope, temp_tables)
@@ -469,6 +478,16 @@ function parse_statement_remaining(state, chunk, scope, statement_type)
 
   -- Finalize chunk
   BaseStatement.finalize_chunk(chunk, scope)
+
+  -- Update chunk end position from clause positions (same as SELECT does)
+  for _, pos in pairs(chunk.clause_positions or {}) do
+    if pos.end_line and pos.end_col then
+      if pos.end_line > chunk.end_line or (pos.end_line == chunk.end_line and pos.end_col > chunk.end_col) then
+        chunk.end_line = pos.end_line
+        chunk.end_col = pos.end_col
+      end
+    end
+  end
 end
 
 ---Parse WHERE clause and track its position (shared by UPDATE/DELETE)
