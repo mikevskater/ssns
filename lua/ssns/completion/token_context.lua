@@ -364,6 +364,58 @@ function TokenContext.is_in_string_or_comment(tokens, line, col)
       or token.type == "line_comment"
 end
 
+---Extract prefix and trigger character using token analysis
+---Replaces regex-based Context._extract_prefix_and_trigger()
+---@param tokens Token[] Parsed tokens
+---@param line number 1-indexed line
+---@param col number 1-indexed column
+---@return string prefix The partial word being typed
+---@return string? trigger Trigger character (".", "[", " ", or nil)
+function TokenContext.extract_prefix_and_trigger(tokens, line, col)
+  local token_at, _ = TokenContext.get_token_at_position(tokens, line, col)
+  local prev_tokens = TokenContext.get_tokens_before_cursor(tokens, line, col, 3)
+
+  local trigger = nil
+
+  -- Check the most recent token for trigger characters
+  if #prev_tokens > 0 then
+    local first_token = prev_tokens[1]
+    if first_token.type == "dot" then
+      trigger = "."
+    elseif first_token.type == "lparen" then
+      -- Opening paren could be a trigger
+      trigger = "("
+    elseif first_token.text == "[" then
+      -- Start of bracket identifier
+      trigger = "["
+    end
+
+    -- Check for space trigger (keyword followed by space)
+    -- This is trickier - we need to check if cursor is right after a space
+    if not trigger and token_at then
+      -- If we're at the start of a new token and previous was keyword
+      if first_token.type == "keyword" then
+        -- Check if there's whitespace between keyword and cursor
+        local keyword_end_col = first_token.col + #first_token.text
+        if first_token.line == line and keyword_end_col < col then
+          trigger = " "
+        end
+      end
+    end
+  end
+
+  -- Extract prefix from current token
+  local prefix = ""
+  if token_at then
+    -- If cursor is within an identifier, extract the partial text
+    if token_at.type == "identifier" or token_at.type == "keyword" or token_at.type == "bracket_id" then
+      prefix = TokenContext.extract_prefix(token_at, line, col)
+    end
+  end
+
+  return prefix, trigger
+end
+
 ---Debug: Print tokens around cursor
 ---@param tokens Token[] Tokens
 ---@param line number Cursor line
