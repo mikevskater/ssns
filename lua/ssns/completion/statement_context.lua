@@ -156,12 +156,74 @@ function Context._detect_from_clause(bufnr, line_num, col, tokens, chunk, cache_
   local clause = StatementParser.get_clause_at_position(clause_source, line_num, col)
   Debug.log(string.format("[statement_context] get_clause_at_position returned: %s", tostring(clause)))
 
+  -- If we're in WHERE/HAVING clause but might be inside an unparsed subquery,
+  -- check using token-based analysis
+  if clause == "where" or clause == "having" then
+    -- Look for SELECT keyword inside parentheses before cursor
+    local in_unparsed_subquery = Context._detect_unparsed_subquery(tokens, line_num, col)
+    if in_unparsed_subquery then
+      Debug.log("[statement_context] Detected unparsed subquery, falling through to token-based detection")
+      return nil, nil, nil  -- Fall through to token-based detection
+    end
+  end
+
   if clause then
     return Context._handle_clause_context(bufnr, line_num, col, tokens, chunk, clause)
   end
 
   -- Clause detection returned nil - check if we're just past a FROM or JOIN clause
   return Context._handle_clause_continuation(line_num, col, tokens, chunk)
+end
+
+---Detect if cursor is inside an unparsed subquery (SELECT inside parentheses in WHERE/HAVING)
+---@param tokens Token[] Parsed tokens
+---@param line number 1-indexed line
+---@param col number 1-indexed column
+---@return boolean is_in_unparsed_subquery True if we're inside a subquery that wasn't parsed
+function Context._detect_unparsed_subquery(tokens, line, col)
+  -- Walk backwards from cursor looking for pattern: ( SELECT ... FROM
+  -- If we find this pattern with unclosed parens, we're in an unparsed subquery
+  local prev_tokens = TokenContext.get_tokens_before_cursor(tokens, line, col, 50)
+  if not prev_tokens or #prev_tokens == 0 then
+    return false
+  end
+
+  -- When walking backwards:
+  -- - paren_depth > 0 means we've passed more ) than ( (we're inside parens)
+  -- - paren_depth <= 0 means we've exited all parentheses
+  local paren_depth = 0
+  local found_from_in_subquery = false
+  local found_select_in_subquery = false
+
+  for _, t in ipairs(prev_tokens) do
+    if t.type == "paren_close" then
+      paren_depth = paren_depth + 1
+    elseif t.type == "paren_open" then
+      paren_depth = paren_depth - 1
+      -- If we matched or passed the opening paren and found SELECT...FROM, we're in a subquery
+      if paren_depth <= 0 and found_select_in_subquery then
+        return true
+      end
+      -- Reset tracking when we exit a paren level
+      if paren_depth <= 0 then
+        found_from_in_subquery = false
+        found_select_in_subquery = false
+      end
+    elseif t.type == "keyword" then
+      local kw = t.text:upper()
+      -- Only track FROM/SELECT when we're inside parentheses (paren_depth > 0)
+      if kw == "FROM" and paren_depth > 0 then
+        found_from_in_subquery = true
+      elseif kw == "SELECT" and paren_depth > 0 and found_from_in_subquery then
+        found_select_in_subquery = true
+      elseif (kw == "INSERT" or kw == "UPDATE" or kw == "DELETE" or kw == "MERGE") and paren_depth <= 0 then
+        -- Hit a statement starter outside our paren depth - stop searching
+        break
+      end
+    end
+  end
+
+  return false
 end
 
 ---Handle known clause context
