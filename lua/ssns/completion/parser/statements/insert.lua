@@ -122,10 +122,11 @@ function InsertStatement._parse_column_list(state, chunk)
   else
     -- Incomplete column list (no closing paren yet)
     -- Still track position for context detection during typing
+    -- Extend both end_line and end_col to large values to handle multiline typing
     chunk.clause_positions["insert_columns"] = {
       start_line = col_start.line,
       start_col = col_start.col,
-      end_line = last_token.line,
+      end_line = last_token.line + 1000,  -- Handle multiline incomplete lists
       end_col = last_token.col + #last_token.text + 1000,  -- Include cursor position
     }
     chunk.insert_columns = insert_columns
