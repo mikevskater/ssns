@@ -716,11 +716,14 @@ function Context.detect(bufnr, line_num, col)
   local line = lines[1]
   local before_cursor = line:sub(1, col - 1)
 
+  -- Get tokens for buffer (used for token-based detection throughout)
+  local tokens = TokenContext.get_buffer_tokens(bufnr)
+
   -- Get StatementCache context
   local cache_ctx = StatementCache.get_context_at_position(bufnr, line_num, col)
 
-  -- Extract prefix and trigger
-  local prefix, trigger = Context._extract_prefix_and_trigger(line, col)
+  -- Extract prefix and trigger using token-based detection
+  local prefix, trigger = TokenContext.extract_prefix_and_trigger(tokens, line_num, col)
 
   -- NOTE: We now use token-based qualified name detection via detect_qualified_from_tokens()
   -- which properly handles cursor position relative to the trigger character (dot)
@@ -1297,32 +1300,25 @@ function Context.detect_full(bufnr, line_num, col)
 
   local line = lines[1]
 
-  -- Check if in comment or string
-  if Context._is_in_comment(line, col) then
-    Debug.log("[statement_context] Inside comment, skipping completion")
+  -- Check if in comment or string using token-based detection
+  -- This is more reliable than regex-based line parsing, especially for multi-line comments
+  local tokens = TokenContext.get_buffer_tokens(bufnr)
+  if TokenContext.is_in_string_or_comment(tokens, line_num, col) then
+    -- Determine if it's a comment or string for the mode field
+    local token_at = TokenContext.get_token_at_position(tokens, line_num, col)
+    local mode = "string_or_comment"
+    if token_at then
+      if token_at.type == "comment" or token_at.type == "line_comment" then
+        mode = "comment"
+        Debug.log("[statement_context] Inside comment (token-based), skipping completion")
+      elseif token_at.type == "string" then
+        mode = "string"
+        Debug.log("[statement_context] Inside string (token-based), skipping completion")
+      end
+    end
     return {
       type = Context.Type.UNKNOWN,
-      mode = "comment",
-      prefix = "",
-      trigger = nil,
-      should_complete = false,
-      line = line,
-      line_num = line_num,
-      col = col,
-      chunk = nil,
-      tables = {},
-      aliases = {},
-      ctes = {},
-      temp_tables = {},
-      subquery = nil,
-    }
-  end
-
-  if Context._is_in_string(line, col) then
-    Debug.log("[statement_context] Inside string, skipping completion")
-    return {
-      type = Context.Type.UNKNOWN,
-      mode = "string",
+      mode = mode,
       prefix = "",
       trigger = nil,
       should_complete = false,
