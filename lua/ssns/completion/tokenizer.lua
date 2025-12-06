@@ -78,6 +78,8 @@ local CLAUSE_KEYWORDS = {
   OFFSET = true, NEXT = true, ROWS = true, ONLY = true,
   LIMIT = true, RETURNING = true,
   FOR = true, USING = true,
+  -- MERGE clause keywords
+  MATCHED = true, SOURCE = true, TARGET = true,
 }
 
 -- Category 3: Functions (Aggregate/Scalar/System)
