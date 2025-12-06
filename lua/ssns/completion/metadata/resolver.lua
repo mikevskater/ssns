@@ -698,7 +698,9 @@ function Resolver.resolve_tvf_columns(function_name, schema_name, connection)
             function_name
           )
           if query then
-            local results = adapter:execute(connection.server.connection, query)
+            -- Use connection_config (serializable) not connection (has methods)
+            local conn_config = connection.server and connection.server.connection_config
+            local results = adapter:execute(conn_config, query)
             if results and results.success and results.resultSets and #results.resultSets > 0 then
               local columns = {}
               local rows = results.resultSets[1].rows or {}
