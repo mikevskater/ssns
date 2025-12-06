@@ -9,7 +9,7 @@ return {
   query = [[MERGE INTO Employees AS target
 USING (SELECT * FROM Employees WHERE DepartmentID = 1) AS source
 ON target.EmployeeID = source.EmployeeID
-WHEN NOT MATCHED THEN INSERT ()█ VALUES (source.EmployeeID)]],
+WHEN NOT MATCHED THEN INSERT (█) VALUES (source.EmployeeID)]],
   expected = {
     items = {
       includes = {
