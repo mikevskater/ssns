@@ -267,8 +267,144 @@ function Context._detect_unparsed_subquery(tokens, line, col)
   return true, subquery_tables
 end
 
+---Extract table references by walking backwards from cursor
+---Finds FROM clause tables when cursor is in WHERE/HAVING of subquery
+---@param tokens Token[] Parsed tokens
+---@param cursor_idx number Token index at cursor position
+---@return table[]? tables Array of table references
+function Context._extract_subquery_tables_backward(tokens, cursor_idx)
+  local tables = {}
+
+  -- Walk backwards from cursor looking for FROM ... table pattern
+  -- Stop at ( which marks the start of subquery, or SELECT which starts the subquery
+  local paren_depth = 0
+  local found_from = false
+  local after_from_tokens = {}
+
+  for i = cursor_idx - 1, 1, -1 do
+    local t = tokens[i]
+
+    if t.type == "paren_close" then
+      paren_depth = paren_depth + 1
+    elseif t.type == "paren_open" then
+      if paren_depth == 0 then
+        -- Hit the opening paren of our subquery - stop
+        break
+      end
+      paren_depth = paren_depth - 1
+    elseif paren_depth == 0 then
+      if t.type == "keyword" then
+        local kw = t.text:upper()
+        if kw == "FROM" then
+          found_from = true
+          break
+        elseif kw == "SELECT" then
+          -- Hit SELECT without finding FROM - no tables yet
+          break
+        elseif kw == "WHERE" or kw == "GROUP" or kw == "HAVING" or kw == "ORDER" then
+          -- These come after FROM, continue backwards
+        elseif kw == "ON" or kw == "JOIN" or kw == "INNER" or kw == "LEFT" or kw == "RIGHT" or kw == "FULL" or kw == "CROSS" or kw == "OUTER" then
+          -- Part of FROM clause, continue backwards
+        end
+      end
+      -- Collect tokens between cursor and FROM
+      table.insert(after_from_tokens, 1, t)
+    end
+  end
+
+  if not found_from then
+    return nil
+  end
+
+  -- Now parse the collected tokens to extract table references
+  -- Format: table1 alias1, table2 alias2 JOIN table3 alias3 ON ... WHERE
+  local i = 1
+  while i <= #after_from_tokens do
+    local t = after_from_tokens[i]
+
+    if t.type == "keyword" then
+      local kw = t.text:upper()
+      if kw == "WHERE" or kw == "GROUP" or kw == "HAVING" or kw == "ORDER" then
+        -- End of table references
+        break
+      elseif kw == "ON" then
+        -- Skip ON clause
+        i = i + 1
+        while i <= #after_from_tokens do
+          local on_t = after_from_tokens[i]
+          if on_t.type == "keyword" then
+            local on_kw = on_t.text:upper()
+            if on_kw == "JOIN" or on_kw == "INNER" or on_kw == "LEFT" or on_kw == "RIGHT" or on_kw == "FULL" or on_kw == "CROSS" or on_kw == "WHERE" or on_kw == "GROUP" then
+              break
+            end
+          end
+          i = i + 1
+        end
+      else
+        i = i + 1
+      end
+    elseif t.type == "identifier" or t.type == "bracket_id" then
+      -- Found a table name
+      local table_name = t.text
+      local schema = nil
+      local alias = nil
+      local skip_count = 1
+
+      -- Check for schema.table pattern
+      if i + 1 <= #after_from_tokens and after_from_tokens[i + 1].type == "dot" then
+        if i + 2 <= #after_from_tokens then
+          local name_t = after_from_tokens[i + 2]
+          if name_t.type == "identifier" or name_t.type == "bracket_id" then
+            schema = table_name
+            table_name = name_t.text
+            skip_count = 3
+          end
+        end
+      end
+
+      -- Check for alias
+      local alias_idx = i + skip_count
+      if alias_idx <= #after_from_tokens then
+        local alias_t = after_from_tokens[alias_idx]
+        if alias_t.type == "keyword" and alias_t.text:upper() == "AS" then
+          if alias_idx + 1 <= #after_from_tokens then
+            local actual_alias = after_from_tokens[alias_idx + 1]
+            if actual_alias.type == "identifier" or actual_alias.type == "bracket_id" then
+              alias = actual_alias.text
+              skip_count = skip_count + 2
+            end
+          end
+        elseif alias_t.type == "identifier" or alias_t.type == "bracket_id" then
+          alias = alias_t.text
+          skip_count = skip_count + 1
+        end
+      end
+
+      -- Clean up bracket identifiers
+      table_name = table_name:gsub("^%[", ""):gsub("%]$", "")
+      if schema then schema = schema:gsub("^%[", ""):gsub("%]$", "") end
+      if alias then alias = alias:gsub("^%[", ""):gsub("%]$", "") end
+
+      local full_name = schema and (schema .. "." .. table_name) or table_name
+
+      table.insert(tables, {
+        table = full_name,
+        name = table_name,
+        schema = schema,
+        alias = alias or table_name,
+      })
+
+      i = i + skip_count
+    else
+      i = i + 1
+    end
+  end
+
+  return #tables > 0 and tables or nil
+end
+
 ---Extract table references from a subquery's FROM clause
----Walks forward from cursor position to find FROM tablename pattern
+---Looks both backwards and forwards from cursor position to find FROM tablename pattern
 ---Handles multiple tables (JOINs, commas) within the subquery
 ---@param tokens Token[] Parsed tokens
 ---@param line number 1-indexed line
@@ -290,7 +426,15 @@ function Context._extract_subquery_tables(tokens, line, col)
     cursor_idx = #tokens + 1
   end
 
-  -- Walk forward from cursor looking for "FROM tablename" within the subquery
+  -- First, try walking BACKWARDS from cursor to find FROM clause that's already parsed
+  -- This handles cases like: SELECT ... FROM Table WHERE █
+  local backward_tables = Context._extract_subquery_tables_backward(tokens, cursor_idx)
+  if backward_tables and #backward_tables > 0 then
+    return backward_tables
+  end
+
+  -- If not found backwards, walk forward from cursor looking for "FROM tablename"
+  -- This handles cases like: SELECT █ FROM Table
   local in_from_clause = false
   local paren_depth = 0
   local i = cursor_idx
