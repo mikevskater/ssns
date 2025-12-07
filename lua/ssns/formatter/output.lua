@@ -169,6 +169,8 @@ function Output.generate(tokens, config)
   local current_indent = 0
   local in_select_list = false
   local in_where_clause = false
+  local in_set_clause = false
+  local in_values_clause = false
   local prev_token = nil
   local pending_join = false -- Track if we're building a compound JOIN keyword
 
@@ -177,19 +179,43 @@ function Output.generate(tokens, config)
     local needs_newline = false
     local extra_indent = 0
 
-    -- Track SELECT list context
+    -- Track clause context
     if token.type == "keyword" then
       local upper = string.upper(token.text)
       if upper == "SELECT" then
         in_select_list = true
         in_where_clause = false
+        in_set_clause = false
+        in_values_clause = false
         pending_join = false
       elseif upper == "FROM" then
         in_select_list = false
         in_where_clause = false
+        in_set_clause = false
+        in_values_clause = false
       elseif upper == "WHERE" then
         in_select_list = false
         in_where_clause = true
+        in_set_clause = false
+        in_values_clause = false
+        pending_join = false
+      elseif upper == "SET" then
+        in_select_list = false
+        in_where_clause = false
+        in_set_clause = true
+        in_values_clause = false
+        pending_join = false
+      elseif upper == "VALUES" then
+        in_select_list = false
+        in_where_clause = false
+        in_set_clause = false
+        in_values_clause = true
+        pending_join = false
+      elseif upper == "UPDATE" or upper == "INSERT" or upper == "DELETE" then
+        in_select_list = false
+        in_where_clause = false
+        in_set_clause = false
+        in_values_clause = false
         pending_join = false
       end
     end
@@ -243,7 +269,7 @@ function Output.generate(tokens, config)
       end
     end
 
-    -- Handle comma for column lists
+    -- Handle comma for column lists (SELECT)
     if token.type == "comma" and in_select_list then
       if config.comma_position == "leading" then
         -- Comma starts new line
@@ -252,6 +278,12 @@ function Output.generate(tokens, config)
         extra_indent = 1
       end
       -- For trailing, we handle after adding the token
+    end
+
+    -- Handle comma for SET clause assignments (UPDATE)
+    if token.type == "comma" and in_set_clause then
+      -- SET assignments get newlines after commas (trailing comma style)
+      -- We handle this after adding the token
     end
 
     -- Apply newline if needed
@@ -294,6 +326,21 @@ function Output.generate(tokens, config)
       end
     end
 
+    -- Handle trailing comma newline in SET clause (UPDATE assignments)
+    if token.type == "comma" and in_set_clause then
+      local line_text = table.concat(current_line, "")
+      if line_text:match("%S") then
+        table.insert(result, line_text)
+      end
+      current_line = {}
+      -- Indent continuation for SET assignments
+      local base_indent = token.indent_level or 0
+      local indent = get_indent(config, base_indent + 1)
+      if indent ~= "" then
+        table.insert(current_line, indent)
+      end
+    end
+
     -- Handle semicolon - end of statement
     if token.type == "semicolon" then
       local line_text = table.concat(current_line, "")
@@ -304,6 +351,8 @@ function Output.generate(tokens, config)
       current_indent = 0
       in_select_list = false
       in_where_clause = false
+      in_set_clause = false
+      in_values_clause = false
       pending_join = false
     end
 
@@ -329,6 +378,8 @@ function Output.generate(tokens, config)
       current_indent = 0
       in_select_list = false
       in_where_clause = false
+      in_set_clause = false
+      in_values_clause = false
       pending_join = false
     end
 
