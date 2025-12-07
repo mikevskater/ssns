@@ -36,14 +36,12 @@ Context.Type = {
 
 ---Detect qualified name using token-based analysis
 ---This is more reliable than regex because tokens have accurate positions
----@param bufnr number Buffer number
+---@param tokens Token[] Parsed tokens
 ---@param line number 1-indexed line
 ---@param col number 1-indexed column
 ---@return QualifiedName? qualified Parsed qualified name, or nil
 ---@return boolean is_after_dot Whether cursor is immediately after a dot
-local function detect_qualified_from_tokens(bufnr, line, col)
-  -- Get tokens for the buffer
-  local tokens = TokenContext.get_buffer_tokens(bufnr)
+local function detect_qualified_from_tokens(tokens, line, col)
   if not tokens or #tokens == 0 then
     return nil, false
   end
@@ -592,7 +590,7 @@ function Context._handle_clause_context(bufnr, line_num, col, tokens, chunk, cla
     ctx_type = Context.Type.TABLE
     mode = "from"
     -- Use token-based detection for reliable qualified name parsing
-    local token_qualified, is_after_dot = detect_qualified_from_tokens(bufnr, line_num, col)
+    local token_qualified, is_after_dot = detect_qualified_from_tokens(tokens, line_num, col)
 
     -- Check if we're in a JOIN context using tokens (look for recent JOIN keyword)
     local is_join_context = false
@@ -628,7 +626,7 @@ function Context._handle_clause_context(bufnr, line_num, col, tokens, chunk, cla
   elseif clause == "join" then
     ctx_type = Context.Type.TABLE
     mode = "join"
-    local token_qualified, is_after_dot = detect_qualified_from_tokens(bufnr, line_num, col)
+    local token_qualified, is_after_dot = detect_qualified_from_tokens(tokens, line_num, col)
 
     -- Use qualified info when cursor is after a dot OR typing partial identifier after dot
     if token_qualified and (token_qualified.database or token_qualified.schema) then
@@ -824,8 +822,9 @@ end
 ---@param bufnr number Buffer number
 ---@param line_num number 1-indexed line number
 ---@param col number 1-indexed column
+---@param tokens? Token[] Optional pre-fetched tokens (avoids redundant cache lookup)
 ---@return table context Context information
-function Context.detect(bufnr, line_num, col)
+function Context.detect(bufnr, line_num, col, tokens)
   Debug.log(string.format("[statement_context] detect: bufnr=%d, line=%d, col=%d", bufnr, line_num, col))
 
   -- Get line text
@@ -849,7 +848,8 @@ function Context.detect(bufnr, line_num, col)
   local before_cursor = line:sub(1, col - 1)
 
   -- Get tokens for buffer (used for token-based detection throughout)
-  local tokens = TokenContext.get_buffer_tokens(bufnr)
+  -- Use passed tokens if available, otherwise fetch from cache
+  tokens = tokens or TokenContext.get_buffer_tokens(bufnr)
 
   -- Get StatementCache context
   local cache_ctx = StatementCache.get_context_at_position(bufnr, line_num, col)
@@ -1106,8 +1106,8 @@ function Context.detect_full(bufnr, line_num, col)
     }
   end
 
-  -- Get basic context
-  local context = Context.detect(bufnr, line_num, col)
+  -- Get basic context (pass tokens to avoid redundant cache lookup)
+  local context = Context.detect(bufnr, line_num, col, tokens)
 
   -- Add full check fields
   context.should_complete = context.type ~= Context.Type.UNKNOWN
