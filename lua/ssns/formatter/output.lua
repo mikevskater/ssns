@@ -24,8 +24,8 @@ local function is_major_clause(text)
     SELECT = true,
     FROM = true,
     WHERE = true,
-    ["GROUP BY"] = true,
-    ["ORDER BY"] = true,
+    GROUP = true,  -- Start of GROUP BY
+    ORDER = true,  -- Start of ORDER BY
     HAVING = true,
     UNION = true,
     INTERSECT = true,
@@ -39,14 +39,21 @@ local function is_major_clause(text)
   return major_clauses[upper] == true
 end
 
----Check if keyword starts a JOIN
+---Check if keyword is a join modifier (will be followed by JOIN)
 ---@param text string
 ---@return boolean
-local function is_join_start(text)
+local function is_join_modifier(text)
   local upper = string.upper(text)
-  return upper == "JOIN" or upper == "INNER" or upper == "LEFT" or
-         upper == "RIGHT" or upper == "FULL" or upper == "CROSS" or
-         upper == "NATURAL"
+  return upper == "INNER" or upper == "LEFT" or upper == "RIGHT" or
+         upper == "FULL" or upper == "CROSS" or upper == "NATURAL" or
+         upper == "OUTER"
+end
+
+---Check if keyword is JOIN
+---@param text string
+---@return boolean
+local function is_join_keyword(text)
+  return string.upper(text) == "JOIN"
 end
 
 ---Check if token is AND or OR
@@ -156,7 +163,7 @@ function Output.generate(tokens, config)
   local in_select_list = false
   local in_where_clause = false
   local prev_token = nil
-  local join_context = false -- Track if we're processing a JOIN clause
+  local pending_join = false -- Track if we're building a compound JOIN keyword
 
   for i, token in ipairs(tokens) do
     local text = token.text
@@ -164,30 +171,49 @@ function Output.generate(tokens, config)
     local extra_indent = 0
 
     -- Track SELECT list context
-    if token.type == "keyword" and string.upper(token.text) == "SELECT" then
-      in_select_list = true
-      in_where_clause = false
-      join_context = false
-    elseif token.type == "keyword" and string.upper(token.text) == "FROM" then
-      in_select_list = false
-      in_where_clause = false
-    elseif token.type == "keyword" and string.upper(token.text) == "WHERE" then
-      in_select_list = false
-      in_where_clause = true
-      join_context = false
-    elseif token.type == "keyword" and is_join_start(token.text) then
-      join_context = true
-      in_where_clause = false
+    if token.type == "keyword" then
+      local upper = string.upper(token.text)
+      if upper == "SELECT" then
+        in_select_list = true
+        in_where_clause = false
+        pending_join = false
+      elseif upper == "FROM" then
+        in_select_list = false
+        in_where_clause = false
+      elseif upper == "WHERE" then
+        in_select_list = false
+        in_where_clause = true
+        pending_join = false
+      end
     end
 
     -- Handle newlines before major clauses
     if config.newline_before_clause and token.type == "keyword" then
-      if is_major_clause(token.text) then
+      local upper = string.upper(token.text)
+
+      -- Check if this is a join modifier or JOIN keyword
+      if token.is_join_modifier or is_join_modifier(upper) then
+        -- This is a join modifier (INNER, LEFT, OUTER, etc.)
+        -- Add newline if this is the START of a new join clause
+        if not pending_join then
+          needs_newline = true
+          current_indent = 0
+        end
+        pending_join = true
+      elseif is_join_keyword(upper) then
+        -- This is JOIN - only add newline if no modifier preceded it
+        if not pending_join then
+          needs_newline = true
+          current_indent = 0
+        end
+        pending_join = false
+      elseif upper == "BY" and token.part_of_compound then
+        -- BY is part of GROUP BY or ORDER BY, don't add newline
+        needs_newline = false
+      elseif is_major_clause(token.text) then
         needs_newline = true
         current_indent = 0
-      elseif is_join_start(token.text) then
-        needs_newline = true
-        current_indent = 0
+        pending_join = false
       end
     end
 
@@ -207,14 +233,12 @@ function Output.generate(tokens, config)
 
     -- Handle comma for column lists
     if token.type == "comma" and in_select_list then
-      if config.comma_position == "trailing" then
-        -- Comma stays at end of line, newline after
-        -- This is default behavior, handled after adding token
-      elseif config.comma_position == "leading" then
+      if config.comma_position == "leading" then
         -- Comma starts new line
         needs_newline = true
         extra_indent = 1
       end
+      -- For trailing, we handle after adding the token
     end
 
     -- Apply newline if needed
@@ -266,7 +290,40 @@ function Output.generate(tokens, config)
       current_indent = 0
       in_select_list = false
       in_where_clause = false
-      join_context = false
+      pending_join = false
+    end
+
+    -- Handle GO - batch separator
+    if token.type == "go" then
+      -- Ensure GO is on its own line
+      if #current_line > 1 then
+        -- There's content before GO
+        local go_text = table.remove(current_line)
+        local line_text = table.concat(current_line, "")
+        if line_text:match("%S") then
+          table.insert(result, line_text)
+        end
+        table.insert(result, go_text)
+        current_line = {}
+      else
+        local line_text = table.concat(current_line, "")
+        if line_text:match("%S") then
+          table.insert(result, line_text)
+        end
+        current_line = {}
+      end
+      current_indent = 0
+      in_select_list = false
+      in_where_clause = false
+      pending_join = false
+    end
+
+    -- Reset pending_join if we hit something other than OUTER or JOIN
+    if token.type == "keyword" then
+      local upper = string.upper(token.text)
+      if pending_join and upper ~= "OUTER" and upper ~= "JOIN" and not is_join_modifier(upper) then
+        pending_join = false
+      end
     end
 
     prev_token = token
