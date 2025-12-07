@@ -337,6 +337,21 @@ function Output.generate(tokens, config)
       end
     end
 
+    -- Handle CASE expression formatting
+    if token.is_case_when then
+      -- WHEN starts new line with case indent
+      needs_newline = true
+      current_indent = token.case_indent or token.indent_level or 0
+    elseif token.is_case_else then
+      -- ELSE starts new line at same level as WHEN
+      needs_newline = true
+      current_indent = token.case_indent or token.indent_level or 0
+    elseif token.is_case_end then
+      -- END starts new line at CASE level (one less than WHEN)
+      needs_newline = true
+      current_indent = token.case_indent or token.indent_level or 0
+    end
+
     -- Handle comma for column lists (SELECT)
     if token.type == "comma" and in_select_list then
       if config.comma_position == "leading" then

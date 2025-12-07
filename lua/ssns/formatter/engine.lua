@@ -38,6 +38,9 @@ local function create_state()
     -- CASE expression tracking
     case_stack = {},           -- Stack for nested CASE expressions {indent_level}
     in_case = false,           -- Currently inside CASE expression
+    -- Window function (OVER clause) tracking
+    in_over = false,           -- Currently inside OVER clause
+    over_paren_depth = 0,      -- Paren depth when entering OVER
   }
 end
 
@@ -253,6 +256,36 @@ function Engine.format(sql, config, opts)
         elseif (upper == "SELECT" or upper == "INSERT" or upper == "UPDATE" or upper == "DELETE") and state.in_cte and not state.cte_body_start and state.paren_depth == 0 then
           -- Main query after CTE - CTE section is done
           state.in_cte = false
+        end
+
+        -- Handle CASE expression tracking
+        if upper == "CASE" then
+          -- Push current indent onto case stack and start CASE expression
+          table.insert(state.case_stack, {
+            indent_level = state.indent_level,
+          })
+          state.in_case = true
+          processed.is_case_start = true
+          processed.case_indent = state.indent_level
+          -- Increase indent for WHEN/THEN/ELSE inside CASE
+          state.indent_level = state.indent_level + config.case_indent
+        elseif upper == "WHEN" and state.in_case then
+          processed.is_case_when = true
+          processed.case_indent = state.indent_level
+        elseif upper == "THEN" and state.in_case then
+          processed.is_case_then = true
+        elseif upper == "ELSE" and state.in_case then
+          processed.is_case_else = true
+          processed.case_indent = state.indent_level
+        elseif upper == "END" and state.in_case then
+          -- Pop from case stack and restore indent
+          if #state.case_stack > 0 then
+            local case_info = table.remove(state.case_stack)
+            state.indent_level = case_info.indent_level
+            processed.is_case_end = true
+            processed.case_indent = case_info.indent_level
+            state.in_case = #state.case_stack > 0
+          end
         end
 
         -- Apply keyword casing

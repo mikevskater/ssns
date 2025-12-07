@@ -76,6 +76,100 @@ function Alignment.apply(token, context, config)
   return token
 end
 
+---Check if token is a window function keyword
+---@param token table Token to check
+---@return boolean
+function Alignment.is_window_function_keyword(token)
+  if token.type ~= "keyword" then
+    return false
+  end
+  local upper = string.upper(token.text)
+  return upper == "OVER" or upper == "PARTITION" or upper == "ROWS" or
+         upper == "RANGE" or upper == "UNBOUNDED" or upper == "PRECEDING" or
+         upper == "FOLLOWING" or upper == "CURRENT"
+end
+
+---Check if token is CAST or CONVERT
+---@param token table Token to check
+---@return boolean
+function Alignment.is_cast_convert(token)
+  if token.type ~= "keyword" then
+    return false
+  end
+  local upper = string.upper(token.text)
+  return upper == "CAST" or upper == "CONVERT" or upper == "TRY_CAST" or upper == "TRY_CONVERT"
+end
+
+---Check if we're inside an OVER clause
+---@param tokens table[] Token list
+---@param current_idx number Current position
+---@return boolean in_over
+---@return number|nil over_start_idx
+function Alignment.find_over_context(tokens, current_idx)
+  -- Look backward for OVER keyword
+  local paren_depth = 0
+  for i = current_idx, 1, -1 do
+    local token = tokens[i]
+    if token.type == "paren_close" then
+      paren_depth = paren_depth + 1
+    elseif token.type == "paren_open" then
+      paren_depth = paren_depth - 1
+      if paren_depth < 0 then
+        -- Check if OVER precedes this paren
+        local prev_idx = i - 1
+        while prev_idx >= 1 and
+              (tokens[prev_idx].type == "comment" or tokens[prev_idx].type == "line_comment") do
+          prev_idx = prev_idx - 1
+        end
+        if prev_idx >= 1 and tokens[prev_idx].type == "keyword" and
+           string.upper(tokens[prev_idx].text) == "OVER" then
+          return true, prev_idx
+        end
+        return false, nil
+      end
+    end
+  end
+  return false, nil
+end
+
+---Find function arguments for alignment
+---@param tokens table[] Token list
+---@param paren_open_idx number Index of opening parenthesis
+---@return table[] arguments List of argument token groups
+function Alignment.find_function_arguments(tokens, paren_open_idx)
+  local arguments = {}
+  local current_arg = {}
+  local paren_depth = 1
+  local i = paren_open_idx + 1
+
+  while i <= #tokens and paren_depth > 0 do
+    local token = tokens[i]
+    if token.type == "paren_open" then
+      paren_depth = paren_depth + 1
+      table.insert(current_arg, token)
+    elseif token.type == "paren_close" then
+      paren_depth = paren_depth - 1
+      if paren_depth > 0 then
+        table.insert(current_arg, token)
+      end
+    elseif token.type == "comma" and paren_depth == 1 then
+      if #current_arg > 0 then
+        table.insert(arguments, current_arg)
+        current_arg = {}
+      end
+    else
+      table.insert(current_arg, token)
+    end
+    i = i + 1
+  end
+
+  if #current_arg > 0 then
+    table.insert(arguments, current_arg)
+  end
+
+  return arguments
+end
+
 ---Post-process output for alias alignment (if enabled)
 ---@param lines string[] Output lines
 ---@param config FormatterConfig
