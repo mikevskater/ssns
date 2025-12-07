@@ -365,14 +365,30 @@ function Engine.format(sql, config, opts)
           end
           if next_idx <= #tokens and tokens[next_idx].type == "keyword" and
              string.upper(tokens[next_idx].text) == "SELECT" then
+            -- Check for subquery context (EXISTS, IN, NOT IN, etc.)
+            local subquery_context = nil
+            local prev_idx = i - 1
+            while prev_idx >= 1 and
+                  (tokens[prev_idx].type == "comment" or tokens[prev_idx].type == "line_comment") do
+              prev_idx = prev_idx - 1
+            end
+            if prev_idx >= 1 and tokens[prev_idx].type == "keyword" then
+              local prev_upper = string.upper(tokens[prev_idx].text)
+              if prev_upper == "EXISTS" or prev_upper == "IN" or prev_upper == "ANY" or
+                 prev_upper == "ALL" or prev_upper == "SOME" then
+                subquery_context = prev_upper
+              end
+            end
             -- Push current state onto subquery stack before entering subquery
             table.insert(state.subquery_stack, {
               paren_depth = state.paren_depth,
               indent_level = state.indent_level,
+              context = subquery_context,  -- Track subquery context (EXISTS, IN, etc.)
             })
             state.in_subquery = true
             state.indent_level = state.indent_level + config.subquery_indent
             processed.starts_subquery = true
+            processed.subquery_context = subquery_context
           end
         end
       elseif token.type == "paren_close" then
