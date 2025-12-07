@@ -74,6 +74,17 @@ function UnitRunner.scan_tests()
     end
   end
 
+  -- Scan formatter tests
+  local formatter_path = base_path .. "/formatter"
+  local formatter_files = vim.fn.glob(formatter_path .. "/*.lua", false, true)
+  for _, filepath in ipairs(formatter_files) do
+    local file_tests = load_test_file(filepath)
+    for _, test in ipairs(file_tests) do
+      test.source_file = filepath
+      table.insert(tests, test)
+    end
+  end
+
   -- Scan root level tests (fuzzy_matcher, type_compatibility, fk_graph, etc.)
   local root_files = vim.fn.glob(base_path .. "/*.lua", false, true)
   for _, filepath in ipairs(root_files) do
@@ -115,6 +126,8 @@ function UnitRunner.run_test(test)
       result.actual, result.passed, result.error = UnitRunner._run_type_compatibility_test(test)
     elseif test.type == "fk_graph" then
       result.actual, result.passed, result.error = UnitRunner._run_fk_graph_test(test)
+    elseif test.type == "formatter" then
+      result.actual, result.passed, result.error = UnitRunner._run_formatter_test(test)
     else
       error("Unknown test type: " .. tostring(test.type))
     end
@@ -523,6 +536,139 @@ function UnitRunner._run_fk_graph_test(test)
   -- 4. Compare actual results with test.expected
   -- For now, return placeholder result
   return {}, true, nil
+end
+
+---Run formatter test
+---@param test table Test definition
+---@return table actual Actual formatted output
+---@return boolean passed Whether test passed
+---@return string? error Error message if failed
+function UnitRunner._run_formatter_test(test)
+  local ok, Formatter = pcall(require, "ssns.formatter")
+  if not ok then
+    return nil, false, "Failed to load formatter module: " .. tostring(Formatter)
+  end
+
+  -- Get test options (config overrides)
+  local opts = test.opts or {}
+
+  -- Format the input SQL
+  local format_ok, actual = pcall(Formatter.format, test.input, opts)
+  if not format_ok then
+    return nil, false, "Formatter.format() failed: " .. tostring(actual)
+  end
+
+  -- Compare with expected
+  local passed, error_msg = UnitRunner._compare_formatter_output(actual, test.expected, test)
+  return actual, passed, error_msg
+end
+
+---Compare formatter output with expected
+---@param actual string Actual formatted output
+---@param expected table Expected structure
+---@param test table Full test definition for context
+---@return boolean passed
+---@return string? error Error message if failed
+function UnitRunner._compare_formatter_output(actual, expected, test)
+  -- If expected.formatted is specified, do exact string comparison
+  if expected.formatted then
+    -- Normalize line endings for comparison
+    local norm_actual = actual:gsub("\r\n", "\n"):gsub("\r", "\n")
+    local norm_expected = expected.formatted:gsub("\r\n", "\n"):gsub("\r", "\n")
+
+    if norm_actual ~= norm_expected then
+      -- Build a helpful diff message
+      local actual_lines = vim.split(norm_actual, "\n", { plain = true })
+      local expected_lines = vim.split(norm_expected, "\n", { plain = true })
+
+      local diff_msg = string.format(
+        "Output mismatch:\nExpected (%d lines):\n%s\n\nActual (%d lines):\n%s",
+        #expected_lines,
+        norm_expected,
+        #actual_lines,
+        norm_actual
+      )
+
+      -- Find first differing line for quick identification
+      for i = 1, math.max(#actual_lines, #expected_lines) do
+        if actual_lines[i] ~= expected_lines[i] then
+          diff_msg = string.format(
+            "First difference at line %d:\nExpected: %s\nActual:   %s\n\n%s",
+            i,
+            expected_lines[i] or "(missing)",
+            actual_lines[i] or "(missing)",
+            diff_msg
+          )
+          break
+        end
+      end
+
+      return false, diff_msg
+    end
+  end
+
+  -- Check for expected.contains - lines or patterns that must appear
+  if expected.contains then
+    for _, pattern in ipairs(expected.contains) do
+      if not actual:find(pattern, 1, true) then
+        return false, string.format("Expected output to contain '%s'", pattern)
+      end
+    end
+  end
+
+  -- Check for expected.not_contains - patterns that must NOT appear
+  if expected.not_contains then
+    for _, pattern in ipairs(expected.not_contains) do
+      if actual:find(pattern, 1, true) then
+        return false, string.format("Expected output to NOT contain '%s'", pattern)
+      end
+    end
+  end
+
+  -- Check for expected.line_count
+  if expected.line_count then
+    local actual_lines = vim.split(actual, "\n", { plain = true })
+    if #actual_lines ~= expected.line_count then
+      return false, string.format("Line count mismatch: expected %d, got %d", expected.line_count, #actual_lines)
+    end
+  end
+
+  -- Check for expected.starts_with
+  if expected.starts_with then
+    if not actual:sub(1, #expected.starts_with) == expected.starts_with then
+      return false, string.format("Expected output to start with '%s'", expected.starts_with)
+    end
+  end
+
+  -- Check for expected.matches (regex patterns)
+  if expected.matches then
+    for _, pattern in ipairs(expected.matches) do
+      if not actual:match(pattern) then
+        return false, string.format("Expected output to match pattern '%s'", pattern)
+      end
+    end
+  end
+
+  -- Check preserves_keywords - verify keyword case transformation
+  if expected.preserves_keywords then
+    local config = require("ssns.config").get_formatter()
+    local keyword_case = config.keyword_case
+    for _, kw in ipairs(expected.preserves_keywords) do
+      local check_kw
+      if keyword_case == "upper" then
+        check_kw = string.upper(kw)
+      elseif keyword_case == "lower" then
+        check_kw = string.lower(kw)
+      else
+        check_kw = kw
+      end
+      if not actual:find(check_kw, 1, true) then
+        return false, string.format("Expected keyword '%s' (case: %s) not found in output", check_kw, keyword_case)
+      end
+    end
+  end
+
+  return true, nil
 end
 
 ---Compare token arrays
