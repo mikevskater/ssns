@@ -112,6 +112,60 @@ function FormatterCommands.format_statement(opts)
   return success
 end
 
+---Show formatter performance statistics
+function FormatterCommands.show_stats()
+  local Stats = require('ssns.formatter.stats')
+  local output = Stats.format_summary()
+
+  -- Display in a floating window
+  local buf = vim.api.nvim_create_buf(false, true)
+  local lines = vim.split(output, "\n")
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.api.nvim_buf_set_option(buf, "modifiable", false)
+  vim.api.nvim_buf_set_option(buf, "buftype", "nofile")
+  vim.api.nvim_buf_set_option(buf, "filetype", "text")
+
+  local width = 60
+  local height = math.min(#lines + 2, 25)
+  vim.api.nvim_open_win(buf, true, {
+    relative = "editor",
+    width = width,
+    height = height,
+    col = math.floor((vim.o.columns - width) / 2),
+    row = math.floor((vim.o.lines - height) / 2),
+    style = "minimal",
+    border = "rounded",
+    title = " Formatter Stats ",
+    title_pos = "center",
+  })
+
+  -- Close on q or Esc
+  vim.api.nvim_buf_set_keymap(buf, "n", "q", ":close<CR>", { noremap = true, silent = true })
+  vim.api.nvim_buf_set_keymap(buf, "n", "<Esc>", ":close<CR>", { noremap = true, silent = true })
+end
+
+---Reset formatter statistics
+function FormatterCommands.reset_stats()
+  local Stats = require('ssns.formatter.stats')
+  Stats.reset()
+  vim.notify("SSNS: Formatter stats reset", vim.log.levels.INFO)
+end
+
+---Run formatter benchmarks
+---@param opts? {sizes?: string[]} Options
+function FormatterCommands.run_benchmark(opts)
+  opts = opts or {}
+  local Benchmark = require('ssns.formatter.benchmark')
+  Benchmark.run_and_display(opts)
+end
+
+---Clear the token cache
+function FormatterCommands.clear_cache()
+  local Engine = require('ssns.formatter.engine')
+  Engine.cache.clear()
+  vim.notify("SSNS: Formatter cache cleared", vim.log.levels.INFO)
+end
+
 ---Register formatter commands
 function FormatterCommands.register_commands()
   -- :SSNSFormat - Format entire buffer
@@ -135,6 +189,34 @@ function FormatterCommands.register_commands()
     FormatterCommands.format_statement()
   end, {
     desc = "Format SQL statement under cursor",
+  })
+
+  -- :SSNSFormatterStats - Show performance statistics
+  vim.api.nvim_create_user_command("SSNSFormatterStats", function()
+    FormatterCommands.show_stats()
+  end, {
+    desc = "Show formatter performance statistics",
+  })
+
+  -- :SSNSFormatterStatsReset - Reset performance statistics
+  vim.api.nvim_create_user_command("SSNSFormatterStatsReset", function()
+    FormatterCommands.reset_stats()
+  end, {
+    desc = "Reset formatter performance statistics",
+  })
+
+  -- :SSNSFormatterBenchmark - Run benchmarks
+  vim.api.nvim_create_user_command("SSNSFormatterBenchmark", function()
+    FormatterCommands.run_benchmark()
+  end, {
+    desc = "Run formatter benchmarks",
+  })
+
+  -- :SSNSFormatterCacheReset - Clear token cache
+  vim.api.nvim_create_user_command("SSNSFormatterCacheReset", function()
+    FormatterCommands.clear_cache()
+  end, {
+    desc = "Clear formatter token cache",
   })
 end
 
