@@ -551,6 +551,35 @@ function M.run_intellisense_tests(opts)
   return all_results
 end
 
+--- Run formatter tests
+--- @param opts table|nil Optional configuration
+--- @return table results {total, passed, failed, results: table[]}
+function M.run_formatter_tests(opts)
+  opts = opts or {}
+
+  vim.notify("Running formatter tests...", vim.log.levels.INFO)
+
+  local results = unit_runner.run_all({ type = "formatter" })
+
+  if results.total == 0 then
+    vim.notify("No formatter tests found", vim.log.levels.WARN)
+    return results
+  end
+
+  -- Display results
+  reporter.display_unit_results(results)
+
+  -- Write markdown report
+  local output_path = vim.fn.stdpath("data") .. "/ssns/formatter_test_results.md"
+  local success = reporter.write_unit_markdown(results, output_path)
+
+  if success then
+    vim.notify(string.format("Formatter test results written to: %s", output_path), vim.log.levels.INFO)
+  end
+
+  return results
+end
+
 --- Expose submodules for direct access
 M.runner = runner
 M.reporter = reporter

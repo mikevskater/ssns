@@ -82,4 +82,46 @@ function Formatter.get_config()
   return require('ssns.config').get_formatter()
 end
 
+---Get performance statistics summary
+---@return table
+function Formatter.get_stats()
+  local Stats = require('ssns.formatter.stats')
+  return Stats.get_summary()
+end
+
+---Reset performance statistics
+function Formatter.reset_stats()
+  local Stats = require('ssns.formatter.stats')
+  Stats.reset()
+end
+
+---Get formatted stats display
+---@return string
+function Formatter.format_stats()
+  local Stats = require('ssns.formatter.stats')
+  return Stats.format_summary()
+end
+
+---Run benchmarks
+---@param opts? table Benchmark options
+---@return table[] results
+function Formatter.run_benchmarks(opts)
+  local Benchmark = require('ssns.formatter.benchmark')
+  return Benchmark.run_suite(opts)
+end
+
+---Format benchmark results for display
+---@param results table[] Benchmark results
+---@return string
+function Formatter.format_benchmark_results(results)
+  local Benchmark = require('ssns.formatter.benchmark')
+  return Benchmark.format_results(results)
+end
+
+---Clear the token cache
+function Formatter.clear_cache()
+  local Engine = require('ssns.formatter.engine')
+  Engine.cache.clear()
+end
+
 return Formatter
