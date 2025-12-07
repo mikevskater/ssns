@@ -52,6 +52,7 @@ return {
     keyword_modifier = { fg = "#6C71C4" },
     keyword_misc = { fg = "#586E75" },
     keyword_global_variable = { fg = "#DC322F" },         -- Red (@@ROWCOUNT, @@VERSION, etc.)
+    keyword_system_procedure = { fg = "#B58900" },        -- Yellow (sp_*, xp_*)
 
     -- Literals & misc
     operator = { fg = "#93A1A1" },

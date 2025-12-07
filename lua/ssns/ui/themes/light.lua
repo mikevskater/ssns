@@ -52,6 +52,7 @@ return {
     keyword_modifier = { fg = "#001080" },                -- Dark Blue (ASC, DESC, etc.)
     keyword_misc = { fg = "#808080" },                    -- Gray
     keyword_global_variable = { fg = "#C72E29" },         -- Red (@@ROWCOUNT, @@VERSION, etc.)
+    keyword_system_procedure = { fg = "#AF8700" },        -- Gold (sp_*, xp_*)
 
     -- Other semantic highlights
     operator = { fg = "#000000" },                        -- Black

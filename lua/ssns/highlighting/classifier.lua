@@ -25,6 +25,7 @@ local TOKEN_TYPES = {
   GO = "go",
   AT = "at",
   GLOBAL_VARIABLE = "global_variable",
+  SYSTEM_PROCEDURE = "system_procedure",
   HASH = "hash",
   COMMENT = "comment",
   LINE_COMMENT = "line_comment",
@@ -44,6 +45,7 @@ local HIGHLIGHT_MAP = {
   keyword_modifier = "SsnsKeywordModifier",
   keyword_misc = "SsnsKeywordMisc",
   keyword_global_variable = "SsnsKeywordGlobalVariable",
+  keyword_system_procedure = "SsnsKeywordSystemProcedure",
   -- Database objects
   database = "SsnsDatabase",
   schema = "SsnsSchema",
@@ -604,6 +606,17 @@ function Classifier.classify(tokens, chunks, connection, config)
           highlight_group = HIGHLIGHT_MAP.keyword_global_variable,
         }
       end
+      prev_token = token
+      i = i + 1
+
+    elseif token.type == TOKEN_TYPES.SYSTEM_PROCEDURE then
+      -- System stored procedures (sp_*, xp_*, DBCC)
+      -- These are tokenized as SYSTEM_PROCEDURE tokens
+      result = {
+        token = token,
+        semantic_type = "keyword_system_procedure",
+        highlight_group = HIGHLIGHT_MAP.keyword_system_procedure,
+      }
       prev_token = token
       i = i + 1
 
