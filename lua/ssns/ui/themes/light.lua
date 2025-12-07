@@ -51,6 +51,7 @@ return {
     keyword_constraint = { fg = "#B35900" },              -- Orange (PRIMARY, KEY, etc.)
     keyword_modifier = { fg = "#001080" },                -- Dark Blue (ASC, DESC, etc.)
     keyword_misc = { fg = "#808080" },                    -- Gray
+    keyword_global_variable = { fg = "#C72E29" },         -- Red (@@ROWCOUNT, @@VERSION, etc.)
 
     -- Other semantic highlights
     operator = { fg = "#000000" },                        -- Black

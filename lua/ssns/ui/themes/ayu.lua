@@ -51,6 +51,7 @@ return {
     keyword_constraint = { fg = "#FF8F40" },
     keyword_modifier = { fg = "#D2A6FF" },
     keyword_misc = { fg = "#565B66" },
+    keyword_global_variable = { fg = "#F07178" },         -- Red (@@ROWCOUNT, @@VERSION, etc.)
 
     -- Literals & misc
     operator = { fg = "#F29668" },

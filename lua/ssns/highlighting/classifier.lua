@@ -24,6 +24,7 @@ local TOKEN_TYPES = {
   STAR = "star",
   GO = "go",
   AT = "at",
+  GLOBAL_VARIABLE = "global_variable",
   HASH = "hash",
   COMMENT = "comment",
   LINE_COMMENT = "line_comment",
@@ -42,6 +43,7 @@ local HIGHLIGHT_MAP = {
   keyword_constraint = "SsnsKeywordConstraint",
   keyword_modifier = "SsnsKeywordModifier",
   keyword_misc = "SsnsKeywordMisc",
+  keyword_global_variable = "SsnsKeywordGlobalVariable",
   -- Database objects
   database = "SsnsDatabase",
   schema = "SsnsSchema",
@@ -574,11 +576,11 @@ function Classifier.classify(tokens, chunks, connection, config)
       i = i + 1
 
     elseif token.type == TOKEN_TYPES.AT then
-      -- @ symbol starts a parameter/variable (@UserId, @@ROWCOUNT)
+      -- @ symbol starts a parameter/variable (@UserId)
       -- Look ahead for identifier to highlight the @ as parameter
       if i + 1 <= #tokens then
         local next_token = tokens[i + 1]
-        if next_token.type == TOKEN_TYPES.IDENTIFIER or next_token.type == TOKEN_TYPES.AT then
+        if next_token.type == TOKEN_TYPES.IDENTIFIER then
           -- Valid parameter/variable start
           if config.highlight_parameters then
             result = {
@@ -588,6 +590,19 @@ function Classifier.classify(tokens, chunks, connection, config)
             }
           end
         end
+      end
+      prev_token = token
+      i = i + 1
+
+    elseif token.type == TOKEN_TYPES.GLOBAL_VARIABLE then
+      -- @@ system global variable (@@ROWCOUNT, @@VERSION, etc.)
+      -- These are now tokenized as a single GLOBAL_VARIABLE token
+      if config.highlight_parameters then
+        result = {
+          token = token,
+          semantic_type = "keyword_global_variable",
+          highlight_group = HIGHLIGHT_MAP.keyword_global_variable,
+        }
       end
       prev_token = token
       i = i + 1

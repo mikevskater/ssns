@@ -51,6 +51,7 @@ return {
     keyword_constraint = { fg = "#FAB387" },              -- Peach (PRIMARY, KEY, etc.)
     keyword_modifier = { fg = "#F5C2E7" },                -- Pink (ASC, DESC, etc.)
     keyword_misc = { fg = "#6C7086" },                    -- Overlay0
+    keyword_global_variable = { fg = "#F38BA8" },         -- Red (@@ROWCOUNT, @@VERSION, etc.)
 
     -- Other semantic highlights
     operator = { fg = "#89DCEB" },                        -- Sky
