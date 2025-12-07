@@ -504,6 +504,17 @@ function UiBuffer.setup_keymaps()
       rhs = "<Cmd>lua require('ssns.ui.tree').view_metadata()<CR>",
       desc = "View object metadata",
     },
+    -- Mouse support
+    {
+      lhs = "<LeftMouse>",
+      rhs = "<Cmd>lua require('ssns.ui.tree').handle_mouse_click()<CR>",
+      desc = "Select node with mouse",
+    },
+    {
+      lhs = "<2-LeftMouse>",
+      rhs = "<Cmd>lua require('ssns.ui.tree').handle_double_click()<CR>",
+      desc = "Toggle expand with double-click",
+    },
   }
 
   -- Add escape key for float mode only
@@ -690,6 +701,11 @@ function UiBuffer.show_help()
     "  <C-[>        - Go to first child in group",
     "  <C-]>        - Go to last child in group",
     "  q            - Close SSNS window",
+    "",
+    "Mouse:",
+    "  Click        - Select node",
+    "  Click icon   - Expand/collapse node",
+    "  Double-click - Expand/collapse node",
     "",
     "Actions:",
     "  a            - Add server connection",

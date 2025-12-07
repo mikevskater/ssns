@@ -2218,4 +2218,103 @@ function UiTree.view_metadata()
   })
 end
 
+---Handle mouse click on tree
+---@param double_click boolean? Whether this is a double-click
+function UiTree.handle_mouse_click(double_click)
+  local Buffer = require('ssns.ui.buffer')
+
+  -- Verify tree is open
+  if not Buffer.is_open() then
+    return
+  end
+
+  -- Get actual mouse click position
+  local mouse = vim.fn.getmousepos()
+
+  -- Verify click was in the tree window
+  if mouse.winid ~= Buffer.winid then
+    return
+  end
+
+  local line_num = mouse.line
+  local obj = UiTree.line_map[line_num]
+
+  if not obj then
+    return
+  end
+
+  -- Move cursor to clicked line
+  local Config = require('ssns.config')
+  local smart_positioning = Config.get_ui().smart_cursor_positioning
+  local col = smart_positioning and Buffer.get_name_column(line_num) or 0
+  Buffer.set_cursor(line_num, col)
+
+  -- Update indent tracking for smart positioning
+  if smart_positioning then
+    Buffer.last_indent_info = {
+      line = line_num,
+      indent_level = Buffer.get_indent_level(line_num),
+      column = col,
+    }
+  end
+
+  -- On double-click, toggle expand/collapse or execute action
+  if double_click then
+    -- Handle action nodes - execute them
+    if obj.object_type == "action" then
+      UiTree.execute_action(obj)
+      return
+    end
+
+    -- Handle "+ Add Server" action
+    if obj.object_type == "add_server_action" then
+      local AddServerUI = require('ssns.ui.add_server')
+      AddServerUI.open()
+      return
+    end
+
+    -- Otherwise toggle expand/collapse
+    UiTree.toggle_node()
+    return
+  end
+
+  -- On single-click, check if clicked on expand icon to toggle
+  -- Get line content
+  local lines = vim.api.nvim_buf_get_lines(Buffer.bufnr, line_num - 1, line_num, false)
+  if not lines or not lines[1] then
+    return
+  end
+
+  local line = lines[1]
+  local click_col = mouse.column
+
+  -- Check if object is expandable
+  local has_children = obj.object_type == "server"
+    or obj.object_type == "database"
+    or obj.object_type == "schema"
+    or obj.object_type == "table"
+    or obj.object_type == "view"
+    or obj.object_type == "procedure"
+    or obj.object_type == "function"
+    or (obj.object_type and obj.object_type:match("_group$"))
+    or (obj.has_children and obj:has_children())
+
+  if has_children then
+    -- Find expand icon position (after leading spaces)
+    local indent_spaces = line:match("^(%s*)")
+    local indent_len = indent_spaces and #indent_spaces or 0
+
+    -- Expand icon is typically at indent_len + 1 to indent_len + 4 (accounting for UTF-8)
+    -- Icons like ▸ or ▾ are 3 bytes in UTF-8
+    if click_col >= indent_len + 1 and click_col <= indent_len + 4 then
+      UiTree.toggle_node()
+    end
+  end
+end
+
+---Handle double-click on tree (expand/collapse)
+function UiTree.handle_double_click()
+  UiTree.handle_mouse_click(true)
+end
+
 return UiTree
