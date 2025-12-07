@@ -102,6 +102,23 @@ local function needs_space_before(prev, curr, config)
     end
   end
 
+  -- Space before opening paren after keyword (IN (, EXISTS (, AS (, etc.)
+  -- But NOT for function calls (COUNT(, SUM(, etc.) or table/column names
+  if curr.type == "paren_open" then
+    if prev.type == "keyword" then
+      -- No space for SQL functions (COUNT, SUM, AVG, etc.)
+      if prev.keyword_category == "function" then
+        return false
+      end
+      -- Space for keywords like IN, EXISTS, AS
+      return true
+    end
+    -- No space for function calls or table names
+    if prev.type == "identifier" or prev.type == "bracket_id" then
+      return false
+    end
+  end
+
   -- No space after dot (for qualified names)
   if prev.type == "dot" then
     return false
@@ -402,7 +419,9 @@ function Output.generate(tokens, config)
     table.insert(current_line, text)
 
     -- Handle trailing comma newline in SELECT list
-    if token.type == "comma" and in_select_list and config.comma_position == "trailing" then
+    -- Only at paren_depth 0 (not inside function calls like COUNT(*), COALESCE(a, b), etc.)
+    local paren_depth = token.paren_depth or 0
+    if token.type == "comma" and in_select_list and config.comma_position == "trailing" and paren_depth == 0 then
       local line_text = table.concat(current_line, "")
       if line_text:match("%S") then
         table.insert(result, line_text)

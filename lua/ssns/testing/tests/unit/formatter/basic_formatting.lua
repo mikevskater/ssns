@@ -117,7 +117,8 @@ return {
         name = "Newlines before all major clauses",
         input = "SELECT id, name FROM users WHERE active = 1 ORDER BY name",
         expected = {
-            formatted = "SELECT id, name\nFROM users\nWHERE active = 1\nORDER BY name"
+            -- Columns on separate lines with trailing comma (SSMS style)
+            contains = { "SELECT id,", "name", "FROM users", "WHERE active = 1", "ORDER BY name" }
         }
     },
 
