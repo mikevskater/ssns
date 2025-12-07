@@ -29,6 +29,15 @@ local function create_state()
     last_token = nil,
     current_clause = nil,
     join_modifier = nil,
+    -- CTE tracking
+    in_cte = false,            -- Currently inside WITH clause
+    cte_name_expected = false, -- Expecting CTE name
+    cte_as_expected = false,   -- Expecting AS keyword
+    cte_body_start = false,    -- Next paren starts CTE body
+    cte_stack = {},            -- Stack for CTE body tracking
+    -- CASE expression tracking
+    case_stack = {},           -- Stack for nested CASE expressions {indent_level}
+    in_case = false,           -- Currently inside CASE expression
   }
 end
 
@@ -85,6 +94,7 @@ local function is_major_clause(text)
     SET = true,
     VALUES = true,
     ON = true,
+    WITH = true,  -- CTE clause
   }
   return major_clauses[upper] == true
 end
@@ -227,6 +237,24 @@ function Engine.format(sql, config, opts)
           end
         end
 
+        -- Handle CTE (WITH clause) tracking
+        if upper == "WITH" then
+          state.in_cte = true
+          state.cte_name_expected = true
+          processed.is_cte_start = true
+        elseif upper == "RECURSIVE" and state.in_cte and state.cte_name_expected then
+          -- RECURSIVE stays with WITH
+          processed.is_cte_recursive = true
+        elseif upper == "AS" and state.cte_as_expected then
+          -- AS keyword in CTE context
+          processed.is_cte_as = true
+          state.cte_as_expected = false
+          state.cte_body_start = true
+        elseif (upper == "SELECT" or upper == "INSERT" or upper == "UPDATE" or upper == "DELETE") and state.in_cte and not state.cte_body_start and state.paren_depth == 0 then
+          -- Main query after CTE - CTE section is done
+          state.in_cte = false
+        end
+
         -- Apply keyword casing
         processed.text = apply_keyword_case(token.text, config.keyword_case)
       elseif token.type == "go" then
@@ -236,6 +264,13 @@ function Engine.format(sql, config, opts)
       -- Track clause context
       if token.type == "keyword" and is_major_clause(token.text) then
         state.current_clause = string.upper(token.text)
+      end
+
+      -- Handle CTE name identifier
+      if (token.type == "identifier" or token.type == "bracket_id") and state.cte_name_expected then
+        processed.is_cte_name = true
+        state.cte_name_expected = false
+        state.cte_as_expected = true
       end
 
       -- Preserve comments - pass through with metadata
@@ -249,27 +284,50 @@ function Engine.format(sql, config, opts)
         end
       end
 
-      -- Track parenthesis depth and subqueries
+      -- Track parenthesis depth and subqueries/CTEs
       if token.type == "paren_open" then
         state.paren_depth = state.paren_depth + 1
-        -- Check if this might be a subquery (next significant token is SELECT)
-        local next_idx = i + 1
-        while next_idx <= #tokens and
-              (tokens[next_idx].type == "comment" or tokens[next_idx].type == "line_comment") do
-          next_idx = next_idx + 1
-        end
-        if next_idx <= #tokens and tokens[next_idx].type == "keyword" and
-           string.upper(tokens[next_idx].text) == "SELECT" then
-          -- Push current state onto subquery stack before entering subquery
-          table.insert(state.subquery_stack, {
+
+        -- Check if this is a CTE body start
+        if state.cte_body_start then
+          -- Push CTE body onto stack (similar to subquery)
+          table.insert(state.cte_stack, {
             paren_depth = state.paren_depth,
             indent_level = state.indent_level,
           })
-          state.in_subquery = true
           state.indent_level = state.indent_level + config.subquery_indent
-          processed.starts_subquery = true
+          processed.starts_cte_body = true
+          state.cte_body_start = false
+        else
+          -- Check if this might be a subquery (next significant token is SELECT)
+          local next_idx = i + 1
+          while next_idx <= #tokens and
+                (tokens[next_idx].type == "comment" or tokens[next_idx].type == "line_comment") do
+            next_idx = next_idx + 1
+          end
+          if next_idx <= #tokens and tokens[next_idx].type == "keyword" and
+             string.upper(tokens[next_idx].text) == "SELECT" then
+            -- Push current state onto subquery stack before entering subquery
+            table.insert(state.subquery_stack, {
+              paren_depth = state.paren_depth,
+              indent_level = state.indent_level,
+            })
+            state.in_subquery = true
+            state.indent_level = state.indent_level + config.subquery_indent
+            processed.starts_subquery = true
+          end
         end
       elseif token.type == "paren_close" then
+        -- Check if we're closing a CTE body
+        if #state.cte_stack > 0 then
+          local top = state.cte_stack[#state.cte_stack]
+          if state.paren_depth == top.paren_depth then
+            -- Pop from CTE stack
+            table.remove(state.cte_stack)
+            state.indent_level = top.indent_level
+            processed.ends_cte_body = true
+          end
+        end
         -- Check if we're closing a subquery
         if #state.subquery_stack > 0 then
           local top = state.subquery_stack[#state.subquery_stack]
@@ -282,6 +340,10 @@ function Engine.format(sql, config, opts)
           end
         end
         state.paren_depth = math.max(0, state.paren_depth - 1)
+      elseif token.type == "comma" and state.in_cte and state.paren_depth == 0 then
+        -- Comma between CTEs - expect another CTE name
+        state.cte_name_expected = true
+        processed.is_cte_separator = true
       end
 
       processed.indent_level = state.indent_level

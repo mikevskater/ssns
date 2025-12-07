@@ -35,6 +35,7 @@ local function is_major_clause(text)
     DELETE = true,
     SET = true,
     VALUES = true,
+    WITH = true,   -- CTE clause
   }
   return major_clauses[upper] == true
 end
@@ -171,6 +172,7 @@ function Output.generate(tokens, config)
   local in_where_clause = false
   local in_set_clause = false
   local in_values_clause = false
+  local in_cte = false  -- Track if we're in CTE section
   local prev_token = nil
   local pending_join = false -- Track if we're building a compound JOIN keyword
 
@@ -234,7 +236,18 @@ function Output.generate(tokens, config)
     -- Track clause context
     if token.type == "keyword" then
       local upper = string.upper(token.text)
-      if upper == "SELECT" then
+      if upper == "WITH" then
+        in_cte = true
+        in_select_list = false
+        in_where_clause = false
+        in_set_clause = false
+        in_values_clause = false
+        pending_join = false
+      elseif upper == "SELECT" then
+        -- SELECT ends CTE section at top level
+        if in_cte and (token.paren_depth or 0) == 0 then
+          in_cte = false
+        end
         in_select_list = true
         in_where_clause = false
         in_set_clause = false
@@ -264,6 +277,9 @@ function Output.generate(tokens, config)
         in_values_clause = true
         pending_join = false
       elseif upper == "UPDATE" or upper == "INSERT" or upper == "DELETE" then
+        if in_cte and (token.paren_depth or 0) == 0 then
+          in_cte = false
+        end
         in_select_list = false
         in_where_clause = false
         in_set_clause = false
@@ -338,6 +354,9 @@ function Output.generate(tokens, config)
       -- We handle this after adding the token
     end
 
+    -- Handle CTE separator comma (newline after)
+    -- This will be handled after adding the token
+
     -- Apply newline if needed
     if needs_newline and #current_line > 0 then
       -- Finish current line
@@ -393,6 +412,16 @@ function Output.generate(tokens, config)
       end
     end
 
+    -- Handle CTE separator comma (between CTE definitions)
+    if token.is_cte_separator then
+      local line_text = table.concat(current_line, "")
+      if line_text:match("%S") then
+        table.insert(result, line_text)
+      end
+      current_line = {}
+      -- No indent for next CTE definition (starts at base level)
+    end
+
     -- Handle semicolon - end of statement
     if token.type == "semicolon" then
       local line_text = table.concat(current_line, "")
@@ -405,6 +434,7 @@ function Output.generate(tokens, config)
       in_where_clause = false
       in_set_clause = false
       in_values_clause = false
+      in_cte = false
       pending_join = false
     end
 
@@ -432,6 +462,7 @@ function Output.generate(tokens, config)
       in_where_clause = false
       in_set_clause = false
       in_values_clause = false
+      in_cte = false
       pending_join = false
     end
 
