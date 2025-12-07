@@ -664,11 +664,45 @@ function Tokenizer.tokenize(text)
           i = i + 1
         end
 
-      -- Check for single-character operators
+      -- Check for multi-character and single-character operators
       elseif SINGLE_CHAR_OPERATORS[char] then
-        emit_single_char_token(char, TOKEN_TYPE.OPERATOR)
-        col = col + 1
-        i = i + 1
+        -- Check for multi-character operators: <>, <=, >=, !=, ::
+        if char == '<' and next_char then
+          if next_char == '>' then
+            -- <> (not equal)
+            emit_single_char_token('<>', TOKEN_TYPE.OPERATOR)
+            col = col + 2
+            i = i + 2
+          elseif next_char == '=' then
+            -- <=
+            emit_single_char_token('<=', TOKEN_TYPE.OPERATOR)
+            col = col + 2
+            i = i + 2
+          else
+            emit_single_char_token(char, TOKEN_TYPE.OPERATOR)
+            col = col + 1
+            i = i + 1
+          end
+        elseif char == '>' and next_char and next_char == '=' then
+          -- >=
+          emit_single_char_token('>=', TOKEN_TYPE.OPERATOR)
+          col = col + 2
+          i = i + 2
+        elseif char == '!' and next_char and next_char == '=' then
+          -- !=
+          emit_single_char_token('!=', TOKEN_TYPE.OPERATOR)
+          col = col + 2
+          i = i + 2
+        elseif char == ':' and next_char and next_char == ':' then
+          -- :: (PostgreSQL cast operator)
+          emit_single_char_token('::', TOKEN_TYPE.OPERATOR)
+          col = col + 2
+          i = i + 2
+        else
+          emit_single_char_token(char, TOKEN_TYPE.OPERATOR)
+          col = col + 1
+          i = i + 1
+        end
 
       -- Check for single-character special tokens
       elseif char == '(' then
