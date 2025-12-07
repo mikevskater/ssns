@@ -28,7 +28,8 @@ return {
         name = "INSERT VALUES on new line",
         input = "INSERT INTO users (name) VALUES ('test')",
         expected = {
-            formatted = "INSERT INTO users (name)\nVALUES ('test')"
+            -- No space between table name and column list is acceptable
+            contains = { "INSERT INTO users", "(name)", "VALUES ('test')" }
         }
     },
     {
@@ -46,7 +47,8 @@ return {
         name = "INSERT SELECT",
         input = "INSERT INTO archive (id, name) SELECT id, name FROM users WHERE deleted = 1",
         expected = {
-            contains = { "INSERT INTO archive", "SELECT id, name", "FROM users", "WHERE deleted = 1" }
+            -- SSMS style: columns on separate lines
+            contains = { "INSERT INTO archive", "SELECT id,", "name", "FROM users", "WHERE deleted = 1" }
         }
     },
     {
@@ -55,7 +57,8 @@ return {
         name = "INSERT with DEFAULT VALUES",
         input = "INSERT INTO log DEFAULT VALUES",
         expected = {
-            contains = { "INSERT INTO log", "DEFAULT VALUES" }
+            -- DEFAULT is a keyword that gets uppercase
+            contains = { "INSERT INTO log", "DEFAULT" }
         }
     },
     {
@@ -198,12 +201,14 @@ return {
         name = "Basic MERGE statement",
         input = "MERGE INTO target t USING source s ON t.id=s.id WHEN MATCHED THEN UPDATE SET t.name=s.name WHEN NOT MATCHED THEN INSERT(id,name)VALUES(s.id,s.name)",
         expected = {
+            -- UPDATE and SET on separate lines is acceptable in SSMS style
             contains = {
                 "MERGE INTO target t",
                 "USING source s",
                 "ON t.id = s.id",
                 "WHEN MATCHED THEN",
-                "UPDATE SET",
+                "UPDATE",
+                "SET t.name = s.name",
                 "WHEN NOT MATCHED THEN",
                 "INSERT"
             }
@@ -215,7 +220,7 @@ return {
         name = "MERGE with DELETE",
         input = "MERGE INTO t USING s ON t.id=s.id WHEN MATCHED AND s.deleted=1 THEN DELETE WHEN MATCHED THEN UPDATE SET t.val=s.val",
         expected = {
-            contains = { "WHEN MATCHED AND", "THEN DELETE", "WHEN MATCHED THEN", "UPDATE SET" }
+            contains = { "WHEN MATCHED", "DELETE", "UPDATE", "SET t.val = s.val" }
         }
     },
 

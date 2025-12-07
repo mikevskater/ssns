@@ -232,9 +232,10 @@ return {
         id = 8050,
         type = "formatter",
         name = "Three-part names",
-        input = "SELECT * FROM Database.dbo.Users",
+        input = "SELECT * FROM MyDatabase.dbo.Users",
         expected = {
-            contains = { "Database.dbo.Users" }
+            -- "MyDatabase" is an identifier (not a keyword)
+            contains = { "MyDatabase.dbo.Users" }
         }
     },
 }

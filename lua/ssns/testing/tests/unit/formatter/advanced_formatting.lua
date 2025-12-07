@@ -64,7 +64,8 @@ return {
         name = "Nested subqueries",
         input = "SELECT * FROM users WHERE dept_id IN (SELECT id FROM depts WHERE company_id IN (SELECT id FROM companies WHERE active=1))",
         expected = {
-            contains = { "dept_id IN (", "company_id IN (", "SELECT id FROM companies" }
+            -- SSMS style: each SELECT in subquery is on its own line
+            contains = { "dept_id IN (", "company_id IN (", "SELECT id", "FROM companies", "active = 1" }
         }
     },
     {
