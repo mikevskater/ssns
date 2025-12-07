@@ -128,8 +128,22 @@ function GoTo.resolve_object(bufnr, object_name, schema_name, database_name)
     return nil, "No database selected"
   end
 
-  -- TODO: Handle cross-database references if database_name is provided
-  -- For now, we only navigate within the connected database
+  -- Handle cross-database references if database_name is provided
+  if database_name then
+    local server = connection.server or (database and database.parent)
+    if server then
+      local target_db = server:get_database(database_name)
+      if target_db then
+        database = target_db
+        -- Load the database if needed
+        if not target_db.is_loaded then
+          target_db:load()
+        end
+      else
+        return nil, string.format("Database '%s' not found", database_name)
+      end
+    end
+  end
 
   -- Get adapter to check for schema support
   local adapter = database:get_adapter()

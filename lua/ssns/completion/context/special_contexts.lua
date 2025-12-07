@@ -46,7 +46,8 @@ function SpecialContexts.detect_other(tokens, line, col)
   if kw == "USE" then
     -- Check if there's a qualified name (db.schema)
     local is_after_dot, qualified = QualifiedNames.is_dot_triggered(tokens, line, col)
-    if is_after_dot and qualified and qualified.database then
+    -- Use qualified info for filtering when available (even when typing partial identifier)
+    if qualified and qualified.database then
       extra.database = qualified.database
       return "schema", "cross_db", extra
     end

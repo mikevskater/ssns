@@ -69,7 +69,8 @@ function TableContext.detect(tokens, line, col)
 
   -- FROM detection
   if kw == "FROM" then
-    if is_after_dot and qualified then
+    -- Use qualified info for filtering when available (even when typing partial identifier)
+    if qualified and (qualified.database or qualified.schema) then
       set_qualified_extra(qualified)
       if qualified.database then
         return "table", "from_cross_db_qualified", extra
@@ -83,7 +84,8 @@ function TableContext.detect(tokens, line, col)
   -- JOIN detection (including modifiers)
   -- Patterns: JOIN, INNER JOIN, LEFT JOIN, LEFT OUTER JOIN, RIGHT JOIN, etc.
   if kw == "JOIN" then
-    if is_after_dot and qualified then
+    -- Use qualified info for filtering when available (even when typing partial identifier)
+    if qualified and (qualified.database or qualified.schema) then
       set_qualified_extra(qualified)
       if qualified.database then
         return "table", "join_cross_db_qualified", extra
@@ -117,7 +119,8 @@ function TableContext.detect(tokens, line, col)
 
   -- UPDATE detection
   if kw == "UPDATE" then
-    if is_after_dot and qualified then
+    -- Use qualified info for filtering when available (even when typing partial identifier)
+    if qualified and (qualified.database or qualified.schema) then
       set_qualified_extra(qualified)
     end
     return "table", "update", extra
@@ -144,7 +147,8 @@ function TableContext.detect(tokens, line, col)
 
   -- INSERT INTO detection
   if kw == "INTO" and second_kw == "INSERT" then
-    if is_after_dot and qualified then
+    -- Use qualified info for filtering when available (even when typing partial identifier)
+    if qualified and (qualified.database or qualified.schema) then
       set_qualified_extra(qualified)
     end
     return "table", "insert", extra
@@ -152,7 +156,8 @@ function TableContext.detect(tokens, line, col)
 
   -- MERGE INTO detection
   if kw == "INTO" and second_kw == "MERGE" then
-    if is_after_dot and qualified then
+    -- Use qualified info for filtering when available (even when typing partial identifier)
+    if qualified and (qualified.database or qualified.schema) then
       set_qualified_extra(qualified)
     end
     return "table", "merge", extra
@@ -160,7 +165,8 @@ function TableContext.detect(tokens, line, col)
 
   -- MERGE USING detection
   if kw == "USING" then
-    if is_after_dot and qualified then
+    -- Use qualified info for filtering when available (even when typing partial identifier)
+    if qualified and (qualified.database or qualified.schema) then
       set_qualified_extra(qualified)
       if qualified.database then
         return "table", "merge_cross_db_qualified", extra

@@ -56,11 +56,35 @@ function Resolver.resolve_table(reference, connection, context)
     end
   end
 
-  -- Step 2: Parse schema-qualified name if present
-  local schema, table_name = Resolver._parse_qualified_name(reference)
+  -- Step 2: Parse schema-qualified name if present (now returns database, schema, table)
+  local db_name, schema, table_name = Resolver._parse_qualified_name(reference)
 
-  -- Step 3: Search for table in database
+  -- Step 3: Determine which database to search in
   local database = connection.database
+  local server = connection.server
+
+  -- If reference specifies a different database, switch to it
+  if db_name and server then
+    local target_db = server:get_database(db_name)
+    if target_db then
+      database = target_db
+      debug_log(string.format("[RESOLVER] Cross-database reference: switching to database '%s'", db_name))
+      -- Ensure cross-database is loaded
+      if not target_db.is_loaded then
+        debug_log(string.format("[RESOLVER] Loading cross-database '%s'", db_name))
+        local load_success = pcall(function()
+          target_db:load()
+        end)
+        if not load_success then
+          debug_log(string.format("[RESOLVER] Failed to load cross-database '%s'", db_name))
+          return nil
+        end
+      end
+    else
+      debug_log(string.format("[RESOLVER] Cross-database reference: database '%s' not found on server", db_name))
+      return nil
+    end
+  end
 
   -- Ensure database is loaded
   if not database.is_loaded then
@@ -414,17 +438,19 @@ function Resolver._clean_identifier(identifier)
 end
 
 ---Helper: Parse schema-qualified name
----@param reference string Could be "schema.table" or just "table"
+---@param reference string Could be "database.schema.table", "schema.table" or just "table"
+---@return string? database Database name or nil
 ---@return string? schema Schema name or nil
 ---@return string table Table name
 function Resolver._parse_qualified_name(reference)
   if not reference then
-    return nil, ""
+    return nil, nil, ""
   end
 
-  -- Handle: dbo.Employees -> ("dbo", "Employees")
-  -- Handle: [dbo].[Employees] -> ("dbo", "Employees")
-  -- Handle: Employees -> (nil, "Employees")
+  -- Handle: TEST.dbo.Employees -> ("TEST", "dbo", "Employees")
+  -- Handle: dbo.Employees -> (nil, "dbo", "Employees")
+  -- Handle: [dbo].[Employees] -> (nil, "dbo", "Employees")
+  -- Handle: Employees -> (nil, nil, "Employees")
 
   local parts = {}
   for part in reference:gmatch("[^%.]+") do
@@ -434,17 +460,19 @@ function Resolver._parse_qualified_name(reference)
 
   if #parts == 1 then
     -- Just table name
-    return nil, parts[1]
+    return nil, nil, parts[1]
   elseif #parts == 2 then
     -- schema.table
-    return parts[1], parts[2]
-  elseif #parts >= 3 then
-    -- database.schema.table or server.database.schema.table
-    -- Return last two parts (schema, table)
-    return parts[#parts - 1], parts[#parts]
+    return nil, parts[1], parts[2]
+  elseif #parts == 3 then
+    -- database.schema.table
+    return parts[1], parts[2], parts[3]
+  elseif #parts >= 4 then
+    -- server.database.schema.table - use last 3 parts
+    return parts[#parts - 2], parts[#parts - 1], parts[#parts]
   end
 
-  return nil, reference
+  return nil, nil, reference
 end
 
 ---Helper: Get default schema for database type

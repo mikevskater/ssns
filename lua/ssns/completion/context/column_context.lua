@@ -24,14 +24,15 @@ function ColumnContext.detect(tokens, line, col)
 
   -- First check for qualified column reference (alias.column pattern)
   local is_after_dot, qualified = QualifiedNames.is_dot_triggered(tokens, line, col)
-  if is_after_dot and qualified then
+  -- Use qualified info for filtering when available (even when typing partial identifier)
+  if qualified then
     -- Check if this is a table qualifier (for column completion)
     -- vs a schema qualifier (for table completion) - handled by TABLE detection
     local ref = QualifiedNames.get_reference_before_dot(tokens, line, col)
     if ref then
       extra.table_ref = ref
       extra.filter_table = ref
-      extra.omit_table = true
+      extra.omit_table = is_after_dot  -- Only omit table if cursor is directly after dot
       return "column", "qualified", extra
     end
   end
