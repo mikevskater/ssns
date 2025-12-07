@@ -552,14 +552,17 @@ function UnitRunner._run_formatter_test(test)
   -- Get test options (config overrides)
   local opts = test.opts or {}
 
-  -- Format the input SQL
+  -- Format the input SQL with timing
+  local start_time = vim.loop.hrtime()
   local format_ok, actual = pcall(Formatter.format, test.input, opts)
+  local duration_ms = (vim.loop.hrtime() - start_time) / 1000000
+
   if not format_ok then
     return nil, false, "Formatter.format() failed: " .. tostring(actual)
   end
 
-  -- Compare with expected
-  local passed, error_msg = UnitRunner._compare_formatter_output(actual, test.expected, test)
+  -- Compare with expected (including performance check)
+  local passed, error_msg = UnitRunner._compare_formatter_output(actual, test.expected, test, duration_ms)
   return actual, passed, error_msg
 end
 
@@ -567,9 +570,20 @@ end
 ---@param actual string Actual formatted output
 ---@param expected table Expected structure
 ---@param test table Full test definition for context
+---@param duration_ms number? Duration of the format operation in milliseconds
 ---@return boolean passed
 ---@return string? error Error message if failed
-function UnitRunner._compare_formatter_output(actual, expected, test)
+function UnitRunner._compare_formatter_output(actual, expected, test, duration_ms)
+  -- Check max_duration_ms constraint first (if specified)
+  if expected.max_duration_ms and duration_ms then
+    if duration_ms > expected.max_duration_ms then
+      return false, string.format(
+        "Performance: took %.2fms, expected <= %.2fms",
+        duration_ms, expected.max_duration_ms
+      )
+    end
+  end
+
   -- If expected.formatted is specified, do exact string comparison
   if expected.formatted then
     -- Normalize line endings for comparison
