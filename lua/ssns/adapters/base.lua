@@ -284,16 +284,49 @@ function BaseAdapter:get_quote_char()
   error("BaseAdapter:get_quote_char() must be implemented by subclass")
 end
 
----Quote an identifier (table name, column name, etc.)
+
+---Check if an identifier needs quoting
+---@param identifier string The identifier to check
+---@return boolean needs_quoting True if the identifier needs to be quoted
+function BaseAdapter:needs_quoting(identifier)
+  if not identifier or identifier == "" then
+    return false
+  end
+
+  -- Check if it starts with a digit
+  if identifier:match("^%d") then
+    return true
+  end
+
+  -- Check if it contains anything other than alphanumeric and underscore
+  -- Pattern: if it contains characters NOT in [a-zA-Z0-9_], it needs quoting
+  if identifier:match("[^%w_]") then
+    return true
+  end
+
+  return false
+end
+
+---Quote an identifier (table name, column name, etc.) only if needed
 ---@param identifier string
----@return string quoted
-function BaseAdapter:quote_identifier(identifier)
+---@param force boolean? Force quoting even if not needed (default: false)
+---@return string quoted_or_plain
+function BaseAdapter:quote_identifier(identifier, force)
+  -- Check config setting for always quoting
+  local Config = require('ssns.config')
+  local always_quote = Config.get_completion().always_quote_identifiers
+
+  -- Only quote if needed (or forced, or always_quote is enabled)
+  if not force and not always_quote and not self:needs_quoting(identifier) then
+    return identifier
+  end
+
   local quote = self:get_quote_char()
   if quote == "[" then
     -- SQL Server style [name]
     return "[" .. identifier .. "]"
   else
-    -- Standard SQL style "name"
+    -- Standard SQL style "name" or `name`
     return quote .. identifier .. quote
   end
 end

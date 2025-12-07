@@ -307,6 +307,9 @@ function TablesProvider._collect_tables(database, show_schema_prefix, omit_schem
   local Utils = require('ssns.completion.utils')
   local items = {}
 
+  -- Get adapter for proper identifier quoting
+  local adapter = database:get_adapter()
+
   -- Use database accessor method (handles schema-based vs non-schema servers)
   local tables = database:get_tables(filter_schema)
 
@@ -315,6 +318,7 @@ function TablesProvider._collect_tables(database, show_schema_prefix, omit_schem
     local item = Utils.format_table(table_obj, {
       show_schema = show_schema_prefix,
       omit_schema = omit_schema,
+      adapter = adapter,
     })
     table.insert(items, item)
   end
@@ -332,6 +336,9 @@ function TablesProvider._collect_views(database, show_schema_prefix, omit_schema
   local Utils = require('ssns.completion.utils')
   local items = {}
 
+  -- Get adapter for proper identifier quoting
+  local adapter = database:get_adapter()
+
   -- Use database accessor method (handles schema-based vs non-schema servers)
   local views = database:get_views(filter_schema)
 
@@ -340,6 +347,7 @@ function TablesProvider._collect_views(database, show_schema_prefix, omit_schema
     local item = Utils.format_view(view_obj, {
       show_schema = show_schema_prefix,
       omit_schema = omit_schema,
+      adapter = adapter,
     })
     table.insert(items, item)
   end
@@ -357,6 +365,9 @@ function TablesProvider._collect_synonyms(database, show_schema_prefix, omit_sch
   local Utils = require('ssns.completion.utils')
   local items = {}
 
+  -- Get adapter for proper identifier quoting
+  local adapter = database:get_adapter()
+
   -- Use database accessor method (handles schema-based vs non-schema servers)
   local synonyms = database:get_synonyms(filter_schema)
 
@@ -365,6 +376,7 @@ function TablesProvider._collect_synonyms(database, show_schema_prefix, omit_sch
     local item = Utils.format_synonym(synonym_obj, {
       show_schema = show_schema_prefix,
       omit_schema = omit_schema,
+      adapter = adapter,
     })
     table.insert(items, item)
   end
@@ -386,6 +398,9 @@ function TablesProvider._collect_functions(database, show_schema_prefix, omit_sc
     return items
   end
 
+  -- Get adapter for proper identifier quoting
+  local adapter = database:get_adapter()
+
   -- Use database accessor method (handles schema-based vs non-schema servers)
   local functions = database:get_functions(filter_schema)
 
@@ -400,6 +415,7 @@ function TablesProvider._collect_functions(database, show_schema_prefix, omit_sc
       omit_schema = omit_schema,
       priority = 3,  -- Lower priority than tables/views
       with_params = true,
+      adapter = adapter,
     })
     table.insert(items, item)
 

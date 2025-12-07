@@ -186,6 +186,7 @@
 ---@field usage_auto_save boolean Auto-save usage data (default: true)
 ---@field usage_save_interval number Auto-save interval in seconds (default: 30)
 ---@field usage_max_items number Maximum items to track per type (default: 10000, 0 = unlimited)
+---@field always_quote_identifiers boolean Always quote identifiers regardless of special characters (default: false)
 
 ---@class SemanticHighlightingConfig
 ---@field enabled boolean Enable/disable semantic highlighting (default: true)
@@ -558,6 +559,7 @@ local default_config = {
     usage_auto_save = true,      -- Auto-save usage data to file
     usage_save_interval = 30,    -- Auto-save interval in seconds
     usage_max_items = 10000,     -- Maximum items to track per type (0 = unlimited)
+    always_quote_identifiers = false, -- Always quote identifiers (true) or only when needed (false)
   },
 
   -- Semantic highlighting for SQL query buffers

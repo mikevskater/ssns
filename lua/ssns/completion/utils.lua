@@ -59,12 +59,13 @@ end
 
 ---Format a table/view as an LSP CompletionItem
 ---@param table_obj table Table object { name: string, schema: string, type?: string }
----@param opts table? Options { show_schema: boolean?, omit_schema: boolean? }
+---@param opts table? Options { show_schema: boolean?, omit_schema: boolean?, adapter: BaseAdapter? }
 ---@return table completion_item LSP CompletionItem
 function Utils.format_table(table_obj, opts)
   opts = opts or {}
   local show_schema = opts.show_schema ~= false -- Default true
   local omit_schema = opts.omit_schema or false -- Context override: if true, never include schema in insertText
+  local adapter = opts.adapter -- Optional: used for proper identifier quoting
 
   local label = table_obj.name or table_obj.table_name
   local schema = table_obj.schema or table_obj.schema_name
@@ -89,10 +90,22 @@ function Utils.format_table(table_obj, opts)
   end
 
   -- Build insertText with schema if configured
-  -- IMPORTANT: omit_schema takes precedence (context-aware)
-  local insertText = label
-  if not omit_schema and show_schema and schema and schema ~= "" then
-    insertText = schema .. "." .. label
+  -- Use adapter quoting if available (only quotes when needed)
+  local insertText
+  if adapter then
+    local quoted_label = adapter:quote_identifier(label)
+    if not omit_schema and show_schema and schema and schema ~= "" then
+      local quoted_schema = adapter:quote_identifier(schema)
+      insertText = quoted_schema .. "." .. quoted_label
+    else
+      insertText = quoted_label
+    end
+  else
+    -- Fallback: no quoting
+    insertText = label
+    if not omit_schema and show_schema and schema and schema ~= "" then
+      insertText = schema .. "." .. label
+    end
   end
 
   return {
@@ -114,12 +127,13 @@ end
 
 ---Format a column as an LSP CompletionItem
 ---@param column_obj table Column object { name: string, data_type: string, nullable?: boolean, is_primary_key?: boolean, is_foreign_key?: boolean, default_value?: string, ordinal_position?: number }
----@param opts table? Options { show_type: boolean?, show_nullable: boolean? }
+---@param opts table? Options { show_type: boolean?, show_nullable: boolean?, adapter: BaseAdapter? }
 ---@return table completion_item LSP CompletionItem
 function Utils.format_column(column_obj, opts)
   opts = opts or {}
   local show_type = opts.show_type ~= false -- Default true
   local show_nullable = opts.show_nullable ~= false -- Default true
+  local adapter = opts.adapter -- Optional: used for proper identifier quoting
 
   local name = column_obj.name or column_obj.column_name
   local data_type = column_obj.data_type or column_obj.type or "unknown"
@@ -211,12 +225,15 @@ function Utils.format_column(column_obj, opts)
     priority = 2
   end
 
+  -- Use adapter quoting if available (only quotes when needed)
+  local insertText = adapter and adapter:quote_identifier(name) or name
+
   return {
     label = name,
     kind = Utils.CompletionItemKind.Field,
     detail = detail,
     documentation = documentation,
-    insertText = name,
+    insertText = insertText,
     filterText = name,
     sortText = Utils.generate_sort_text(priority, string.format("%04d_%s", ordinal, name)),
     data = {
@@ -231,12 +248,13 @@ end
 
 ---Format a stored procedure/function as an LSP CompletionItem
 ---@param proc_obj table Procedure object { name: string, type?: string, return_type?: string, schema?: string }
----@param opts table? Options { show_schema: boolean?, omit_schema: boolean?, priority: number? }
+---@param opts table? Options { show_schema: boolean?, omit_schema: boolean?, priority: number?, adapter: BaseAdapter? }
 ---@return table completion_item LSP CompletionItem
 function Utils.format_procedure(proc_obj, opts)
   opts = opts or {}
   local show_schema = opts.show_schema ~= false -- Default true
   local omit_schema = opts.omit_schema or false -- Context override: if true, never include schema in insertText
+  local adapter = opts.adapter -- Optional: used for proper identifier quoting
 
   local name = proc_obj.name or proc_obj.procedure_name or proc_obj.function_name
   local schema = proc_obj.schema or proc_obj.schema_name
@@ -281,10 +299,22 @@ function Utils.format_procedure(proc_obj, opts)
   local priority = opts.priority or 2
 
   -- Build insertText with schema if configured
-  -- IMPORTANT: omit_schema takes precedence (context-aware)
-  local insertText = name
-  if not omit_schema and show_schema and schema and schema ~= "" then
-    insertText = schema .. "." .. name
+  -- Use adapter quoting if available (only quotes when needed)
+  local insertText
+  if adapter then
+    local quoted_name = adapter:quote_identifier(name)
+    if not omit_schema and show_schema and schema and schema ~= "" then
+      local quoted_schema = adapter:quote_identifier(schema)
+      insertText = quoted_schema .. "." .. quoted_name
+    else
+      insertText = quoted_name
+    end
+  else
+    -- Fallback: no quoting
+    insertText = name
+    if not omit_schema and show_schema and schema and schema ~= "" then
+      insertText = schema .. "." .. name
+    end
   end
 
   -- Generate snippet with parameters if requested
@@ -499,12 +529,13 @@ end
 
 ---Format a view as an LSP CompletionItem
 ---@param view_obj table View object { name: string, schema: string, view_name?: string, schema_name?: string }
----@param opts table? Options { show_schema: boolean? }
+---@param opts table? Options { show_schema: boolean?, omit_schema: boolean?, adapter: BaseAdapter? }
 ---@return table completion_item LSP CompletionItem
 function Utils.format_view(view_obj, opts)
   opts = opts or {}
   local show_schema = opts.show_schema ~= false -- Default true
   local omit_schema = opts.omit_schema or false -- Context override: if true, never include schema in insertText
+  local adapter = opts.adapter -- Optional: used for proper identifier quoting
 
   local label = view_obj.name or view_obj.view_name
   local schema = view_obj.schema or view_obj.schema_name
@@ -535,10 +566,22 @@ function Utils.format_view(view_obj, opts)
   local priority = 2
 
   -- Build insertText with schema if configured
-  -- IMPORTANT: omit_schema takes precedence (context-aware)
-  local insertText = label
-  if not omit_schema and show_schema and schema and schema ~= "" then
-    insertText = schema .. "." .. label
+  -- Use adapter quoting if available (only quotes when needed)
+  local insertText
+  if adapter then
+    local quoted_label = adapter:quote_identifier(label)
+    if not omit_schema and show_schema and schema and schema ~= "" then
+      local quoted_schema = adapter:quote_identifier(schema)
+      insertText = quoted_schema .. "." .. quoted_label
+    else
+      insertText = quoted_label
+    end
+  else
+    -- Fallback: no quoting
+    insertText = label
+    if not omit_schema and show_schema and schema and schema ~= "" then
+      insertText = schema .. "." .. label
+    end
   end
 
   return {
@@ -559,12 +602,13 @@ end
 
 ---Format a synonym as an LSP CompletionItem
 ---@param synonym_obj table Synonym object { name: string, schema: string, synonym_name?: string, schema_name?: string, base_object_name?: string }
----@param opts table? Options { show_schema: boolean?, omit_schema: boolean? }
+---@param opts table? Options { show_schema: boolean?, omit_schema: boolean?, adapter: BaseAdapter? }
 ---@return table completion_item LSP CompletionItem
 function Utils.format_synonym(synonym_obj, opts)
   opts = opts or {}
   local show_schema = opts.show_schema ~= false -- Default true
   local omit_schema = opts.omit_schema or false -- Context override: if true, never include schema in insertText
+  local adapter = opts.adapter -- Optional: used for proper identifier quoting
 
   local label = synonym_obj.name or synonym_obj.synonym_name
   local schema = synonym_obj.schema or synonym_obj.schema_name
@@ -608,10 +652,22 @@ function Utils.format_synonym(synonym_obj, opts)
   local priority = 3
 
   -- Build insertText with schema if configured
-  -- IMPORTANT: omit_schema takes precedence (context-aware)
-  local insertText = label
-  if not omit_schema and show_schema and schema and schema ~= "" then
-    insertText = schema .. "." .. label
+  -- Use adapter quoting if available (only quotes when needed)
+  local insertText
+  if adapter then
+    local quoted_label = adapter:quote_identifier(label)
+    if not omit_schema and show_schema and schema and schema ~= "" then
+      local quoted_schema = adapter:quote_identifier(schema)
+      insertText = quoted_schema .. "." .. quoted_label
+    else
+      insertText = quoted_label
+    end
+  else
+    -- Fallback: no quoting
+    insertText = label
+    if not omit_schema and show_schema and schema and schema ~= "" then
+      insertText = schema .. "." .. label
+    end
   end
 
   return {
