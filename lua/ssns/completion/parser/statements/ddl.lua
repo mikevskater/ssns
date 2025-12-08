@@ -59,6 +59,12 @@ function DdlStatement.parse_create(state, scope, temp_tables)
   -- Consume rest of CREATE statement
   state:consume_until_statement_end()
 
+  -- Set token_end_idx and extract parameters
+  if chunk.token_start_idx then
+    chunk.token_end_idx = state.pos > 1 and state.pos - 1 or state.pos
+    state:extract_all_parameters_from_tokens(chunk.token_start_idx, chunk.token_end_idx, chunk.parameters)
+  end
+
   return chunk
 end
 
@@ -96,6 +102,12 @@ function DdlStatement.parse_alter(state, scope, temp_tables)
   end
 
   state:consume_until_statement_end()
+
+  -- Set token_end_idx and extract parameters
+  if chunk.token_start_idx then
+    chunk.token_end_idx = state.pos > 1 and state.pos - 1 or state.pos
+    state:extract_all_parameters_from_tokens(chunk.token_start_idx, chunk.token_end_idx, chunk.parameters)
+  end
 
   return chunk
 end
@@ -138,6 +150,12 @@ function DdlStatement.parse_drop(state, scope, temp_tables)
 
   state:consume_until_statement_end()
 
+  -- Set token_end_idx and extract parameters
+  if chunk.token_start_idx then
+    chunk.token_end_idx = state.pos > 1 and state.pos - 1 or state.pos
+    state:extract_all_parameters_from_tokens(chunk.token_start_idx, chunk.token_end_idx, chunk.parameters)
+  end
+
   return chunk
 end
 
@@ -156,10 +174,16 @@ function DdlStatement.parse_declare(state, scope, temp_tables)
   state:advance()  -- consume DECLARE
 
   -- Check for table variable declaration: DECLARE @var TABLE (col1 type, ...)
-  -- Note: Tokenizer splits @var into two tokens: @ (type=at) and var (type=identifier)
+  -- Handle both unified "variable" token (@var as single token) and legacy "at" + "identifier"
   local token = state:current()
   local var_name = nil
-  if token and token.type == "at" then
+
+  -- New unified variable token type
+  if token and token.type == "variable" then
+    var_name = token.text  -- Already includes @
+    state:advance()
+  -- Legacy handling: @ (type=at) followed by identifier
+  elseif token and token.type == "at" then
     state:advance()  -- consume @
     local name_token = state:current()
     if name_token and name_token.type == "identifier" then
@@ -190,6 +214,12 @@ function DdlStatement.parse_declare(state, scope, temp_tables)
 
   state:consume_until_statement_end()
 
+  -- Set token_end_idx and extract parameters
+  if chunk.token_start_idx then
+    chunk.token_end_idx = state.pos > 1 and state.pos - 1 or state.pos
+    state:extract_all_parameters_from_tokens(chunk.token_start_idx, chunk.token_end_idx, chunk.parameters)
+  end
+
   return chunk
 end
 
@@ -219,6 +249,12 @@ function DdlStatement.parse_truncate(state, scope, temp_tables)
   local table_ref = state:parse_table_reference(known_ctes)
   if table_ref then
     table.insert(chunk.tables, table_ref)
+  end
+
+  -- Set token_end_idx and extract parameters
+  if chunk.token_start_idx then
+    chunk.token_end_idx = state.pos > 1 and state.pos - 1 or state.pos
+    state:extract_all_parameters_from_tokens(chunk.token_start_idx, chunk.token_end_idx, chunk.parameters)
   end
 
   return chunk
