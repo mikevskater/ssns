@@ -8,11 +8,12 @@ local Formatter = {}
 
 ---Format SQL text with current configuration
 ---@param sql string The SQL text to format
+---@param config_override? FormatterConfig Optional config override (uses global config if nil)
 ---@param opts? {dialect?: string} Optional formatting options
 ---@return string formatted The formatted SQL text
-function Formatter.format(sql, opts)
+function Formatter.format(sql, config_override, opts)
   local Engine = require('ssns.formatter.engine')
-  local config = require('ssns.config').get_formatter()
+  local config = config_override or require('ssns.config').get_formatter()
   return Engine.format(sql, config, opts)
 end
 
