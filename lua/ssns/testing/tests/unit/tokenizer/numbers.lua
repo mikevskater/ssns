@@ -59,16 +59,14 @@ return {
         }
     },
 
-    -- Decimals
+    -- Decimals (emitted as single number tokens)
     {
         id = 1457,
         type = "tokenizer",
         name = "Simple decimal",
         input = "12.34",
         expected = {
-            {type = "number", text = "12", line = 1, col = 1},
-            {type = "dot", text = ".", line = 1, col = 3},
-            {type = "number", text = "34", line = 1, col = 4}
+            {type = "number", text = "12.34", line = 1, col = 1}
         }
     },
     {
@@ -77,9 +75,7 @@ return {
         name = "Decimal with zero integer part",
         input = "0.5",
         expected = {
-            {type = "number", text = "0", line = 1, col = 1},
-            {type = "dot", text = ".", line = 1, col = 2},
-            {type = "number", text = "5", line = 1, col = 3}
+            {type = "number", text = "0.5", line = 1, col = 1}
         }
     },
     {
@@ -88,8 +84,7 @@ return {
         name = "Decimal starting with dot",
         input = ".5",
         expected = {
-            {type = "dot", text = ".", line = 1, col = 1},
-            {type = "number", text = "5", line = 1, col = 2}
+            {type = "number", text = ".5", line = 1, col = 1}
         }
     },
     {
@@ -98,9 +93,7 @@ return {
         name = "Decimal with multiple digits",
         input = "123.456",
         expected = {
-            {type = "number", text = "123", line = 1, col = 1},
-            {type = "dot", text = ".", line = 1, col = 4},
-            {type = "number", text = "456", line = 1, col = 5}
+            {type = "number", text = "123.456", line = 1, col = 1}
         }
     },
     {
@@ -109,9 +102,7 @@ return {
         name = "Decimal ending in zero",
         input = "5.0",
         expected = {
-            {type = "number", text = "5", line = 1, col = 1},
-            {type = "dot", text = ".", line = 1, col = 2},
-            {type = "number", text = "0", line = 1, col = 3}
+            {type = "number", text = "5.0", line = 1, col = 1}
         }
     },
     {
@@ -120,9 +111,7 @@ return {
         name = "Decimal with many decimal places",
         input = "3.141592653589793",
         expected = {
-            {type = "number", text = "3", line = 1, col = 1},
-            {type = "dot", text = ".", line = 1, col = 2},
-            {type = "number", text = "141592653589793", line = 1, col = 3}
+            {type = "number", text = "3.141592653589793", line = 1, col = 1}
         }
     },
     {
@@ -131,33 +120,27 @@ return {
         name = "Zero point zero",
         input = "0.0",
         expected = {
-            {type = "number", text = "0", line = 1, col = 1},
-            {type = "dot", text = ".", line = 1, col = 2},
-            {type = "number", text = "0", line = 1, col = 3}
+            {type = "number", text = "0.0", line = 1, col = 1}
         }
     },
 
-    -- Negative numbers (minus is operator, number is separate)
+    -- Negative numbers (emitted as single number tokens at start of input/after operators)
     {
         id = 1464,
         type = "tokenizer",
-        name = "Negative integer (minus + number)",
+        name = "Negative integer",
         input = "-5",
         expected = {
-            {type = "operator", text = "-", line = 1, col = 1},
-            {type = "number", text = "5", line = 1, col = 2}
+            {type = "number", text = "-5", line = 1, col = 1}
         }
     },
     {
         id = 1465,
         type = "tokenizer",
-        name = "Negative decimal (minus + number)",
+        name = "Negative decimal",
         input = "-12.34",
         expected = {
-            {type = "operator", text = "-", line = 1, col = 1},
-            {type = "number", text = "12", line = 1, col = 2},
-            {type = "dot", text = ".", line = 1, col = 4},
-            {type = "number", text = "34", line = 1, col = 5}
+            {type = "number", text = "-12.34", line = 1, col = 1}
         }
     },
     {
@@ -166,12 +149,11 @@ return {
         name = "Negative zero",
         input = "-0",
         expected = {
-            {type = "operator", text = "-", line = 1, col = 1},
-            {type = "number", text = "0", line = 1, col = 2}
+            {type = "number", text = "-0", line = 1, col = 1}
         }
     },
 
-    -- Positive numbers (plus is operator)
+    -- Positive numbers (plus is still an operator, number is a single token)
     {
         id = 1467,
         type = "tokenizer",
@@ -189,9 +171,7 @@ return {
         input = "+12.34",
         expected = {
             {type = "operator", text = "+", line = 1, col = 1},
-            {type = "number", text = "12", line = 1, col = 2},
-            {type = "dot", text = ".", line = 1, col = 4},
-            {type = "number", text = "34", line = 1, col = 5}
+            {type = "number", text = "12.34", line = 1, col = 2}
         }
     },
 
@@ -274,13 +254,9 @@ return {
         name = "Decimal in arithmetic",
         input = "10.5 - 2.3",
         expected = {
-            {type = "number", text = "10", line = 1, col = 1},
-            {type = "dot", text = ".", line = 1, col = 3},
-            {type = "number", text = "5", line = 1, col = 4},
+            {type = "number", text = "10.5", line = 1, col = 1},
             {type = "operator", text = "-", line = 1, col = 6},
-            {type = "number", text = "2", line = 1, col = 8},
-            {type = "dot", text = ".", line = 1, col = 9},
-            {type = "number", text = "3", line = 1, col = 10}
+            {type = "number", text = "2.3", line = 1, col = 8}
         }
     },
 
@@ -316,12 +292,10 @@ return {
     {
         id = 1479,
         type = "tokenizer",
-        name = "Multiple decimals (second is identifier)",
+        name = "Multiple decimals (second dot is member access)",
         input = "3.14.159",
         expected = {
-            {type = "number", text = "3", line = 1, col = 1},
-            {type = "dot", text = ".", line = 1, col = 2},
-            {type = "number", text = "14", line = 1, col = 3},
+            {type = "number", text = "3.14", line = 1, col = 1},
             {type = "dot", text = ".", line = 1, col = 5},
             {type = "number", text = "159", line = 1, col = 6}
         }

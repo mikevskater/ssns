@@ -86,15 +86,14 @@ return {
         }
     },
 
-    -- Multi-character comparison operators (now emit as separate chars)
+    -- Multi-character comparison operators (emitted as single tokens)
     {
         id = 1310,
         type = "tokenizer",
         name = "Greater than or equal",
         input = ">=",
         expected = {
-            {type = "operator", text = ">", line = 1, col = 1},
-            {type = "operator", text = "=", line = 1, col = 2}
+            {type = "operator", text = ">=", line = 1, col = 1}
         }
     },
     {
@@ -103,8 +102,7 @@ return {
         name = "Less than or equal",
         input = "<=",
         expected = {
-            {type = "operator", text = "<", line = 1, col = 1},
-            {type = "operator", text = "=", line = 1, col = 2}
+            {type = "operator", text = "<=", line = 1, col = 1}
         }
     },
     {
@@ -113,8 +111,7 @@ return {
         name = "Not equal (angle brackets)",
         input = "<>",
         expected = {
-            {type = "operator", text = "<", line = 1, col = 1},
-            {type = "operator", text = ">", line = 1, col = 2}
+            {type = "operator", text = "<>", line = 1, col = 1}
         }
     },
     {
@@ -123,8 +120,7 @@ return {
         name = "Not equal (exclamation)",
         input = "!=",
         expected = {
-            {type = "operator", text = "!", line = 1, col = 1},
-            {type = "operator", text = "=", line = 1, col = 2}
+            {type = "operator", text = "!=", line = 1, col = 1}
         }
     },
     {
@@ -230,15 +226,14 @@ return {
         }
     },
 
-    -- Scope resolution operator
+    -- Scope resolution operator (emitted as single token)
     {
         id = 1324,
         type = "tokenizer",
         name = "Scope resolution (double colon)",
         input = "::",
         expected = {
-            {type = "operator", text = ":", line = 1, col = 1},
-            {type = "operator", text = ":", line = 1, col = 2}
+            {type = "operator", text = "::", line = 1, col = 1}
         }
     },
 
@@ -299,8 +294,7 @@ return {
         input = "a <> b",
         expected = {
             {type = "identifier", text = "a", line = 1, col = 1},
-            {type = "operator", text = "<", line = 1, col = 3},
-            {type = "operator", text = ">", line = 1, col = 4},
+            {type = "operator", text = "<>", line = 1, col = 3},
             {type = "identifier", text = "b", line = 1, col = 6}
         }
     },
@@ -311,8 +305,7 @@ return {
         input = "x >= 5",
         expected = {
             {type = "identifier", text = "x", line = 1, col = 1},
-            {type = "operator", text = ">", line = 1, col = 3},
-            {type = "operator", text = "=", line = 1, col = 4},
+            {type = "operator", text = ">=", line = 1, col = 3},
             {type = "number", text = "5", line = 1, col = 6}
         }
     },
@@ -323,8 +316,7 @@ return {
         input = "y <= 10",
         expected = {
             {type = "identifier", text = "y", line = 1, col = 1},
-            {type = "operator", text = "<", line = 1, col = 3},
-            {type = "operator", text = "=", line = 1, col = 4},
+            {type = "operator", text = "<=", line = 1, col = 3},
             {type = "number", text = "10", line = 1, col = 6}
         }
     },
@@ -433,8 +425,7 @@ return {
         input = "a<>b",
         expected = {
             {type = "identifier", text = "a", line = 1, col = 1},
-            {type = "operator", text = "<", line = 1, col = 2},
-            {type = "operator", text = ">", line = 1, col = 3},
+            {type = "operator", text = "<>", line = 1, col = 2},
             {type = "identifier", text = "b", line = 1, col = 4}
         }
     },
@@ -516,8 +507,7 @@ return {
         input = "dbo::table",
         expected = {
             {type = "identifier", text = "dbo", line = 1, col = 1},
-            {type = "operator", text = ":", line = 1, col = 4},
-            {type = "operator", text = ":", line = 1, col = 5},
+            {type = "operator", text = "::", line = 1, col = 4},
             {type = "keyword", text = "table", line = 1, col = 6}
         }
     },
@@ -549,14 +539,10 @@ return {
             {type = "operator", text = "/", line = 1, col = 13},
             {type = "operator", text = "%", line = 1, col = 15},
             {type = "operator", text = "!", line = 1, col = 17},
-            {type = "operator", text = ">", line = 1, col = 19},
-            {type = "operator", text = "=", line = 1, col = 20},
-            {type = "operator", text = "<", line = 1, col = 22},
-            {type = "operator", text = "=", line = 1, col = 23},
-            {type = "operator", text = "<", line = 1, col = 25},
-            {type = "operator", text = ">", line = 1, col = 26},
-            {type = "operator", text = "!", line = 1, col = 28},
-            {type = "operator", text = "=", line = 1, col = 29},
+            {type = "operator", text = ">=", line = 1, col = 19},
+            {type = "operator", text = "<=", line = 1, col = 22},
+            {type = "operator", text = "<>", line = 1, col = 25},
+            {type = "operator", text = "!=", line = 1, col = 28},
             {type = "operator", text = "!", line = 1, col = 31},
             {type = "operator", text = "<", line = 1, col = 32},
             {type = "operator", text = "!", line = 1, col = 34},
@@ -571,8 +557,7 @@ return {
             {type = "operator", text = "=", line = 1, col = 47},
             {type = "operator", text = "%", line = 1, col = 49},
             {type = "operator", text = "=", line = 1, col = 50},
-            {type = "operator", text = ":", line = 1, col = 52},
-            {type = "operator", text = ":", line = 1, col = 53},
+            {type = "operator", text = "::", line = 1, col = 52},
             {type = "operator", text = "&", line = 1, col = 55},
             {type = "operator", text = "|", line = 1, col = 57},
             {type = "operator", text = "^", line = 1, col = 59},

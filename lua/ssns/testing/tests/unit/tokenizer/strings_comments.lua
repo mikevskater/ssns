@@ -191,14 +191,15 @@ return {
         }
     },
 
-    -- Line comments (stripped)
+    -- Line comments (emitted as line_comment tokens)
     {
         id = 1221,
         type = "tokenizer",
         name = "Line comment at end - SELECT with comment",
         input = "SELECT -- comment",
         expected = {
-            {type = "keyword", text = "SELECT", line = 1, col = 1}
+            {type = "keyword", text = "SELECT", line = 1, col = 1},
+            {type = "line_comment", text = "-- comment", line = 1, col = 8}
         }
     },
     {
@@ -208,6 +209,7 @@ return {
         input = "SELECT -- comment\nFROM",
         expected = {
             {type = "keyword", text = "SELECT", line = 1, col = 1},
+            {type = "line_comment", text = "-- comment", line = 1, col = 8},
             {type = "keyword", text = "FROM", line = 2, col = 1}
         }
     },
@@ -216,7 +218,9 @@ return {
         type = "tokenizer",
         name = "Line comment only",
         input = "-- this is a comment",
-        expected = {}
+        expected = {
+            {type = "line_comment", text = "-- this is a comment", line = 1, col = 1}
+        }
     },
     {
         id = 1224,
@@ -224,6 +228,8 @@ return {
         name = "Multiple line comments",
         input = "-- comment 1\n-- comment 2\nSELECT",
         expected = {
+            {type = "line_comment", text = "-- comment 1", line = 1, col = 1},
+            {type = "line_comment", text = "-- comment 2", line = 2, col = 1},
             {type = "keyword", text = "SELECT", line = 3, col = 1}
         }
     },
@@ -234,17 +240,20 @@ return {
         input = "SELECT * -- get all",
         expected = {
             {type = "keyword", text = "SELECT", line = 1, col = 1},
-            {type = "star", text = "*", line = 1, col = 8}
+            {type = "star", text = "*", line = 1, col = 8},
+            {type = "line_comment", text = "-- get all", line = 1, col = 10}
         }
     },
 
-    -- Block comments (stripped)
+    -- Block comments (emitted as comment tokens)
     {
         id = 1226,
         type = "tokenizer",
         name = "Simple block comment",
         input = "/* comment */",
-        expected = {}
+        expected = {
+            {type = "comment", text = "/* comment */", line = 1, col = 1}
+        }
     },
     {
         id = 1227,
@@ -253,6 +262,7 @@ return {
         input = "SELECT /* comment */ FROM",
         expected = {
             {type = "keyword", text = "SELECT", line = 1, col = 1},
+            {type = "comment", text = "/* comment */", line = 1, col = 8},
             {type = "keyword", text = "FROM", line = 1, col = 22}
         }
     },
@@ -263,6 +273,7 @@ return {
         input = "SELECT /*\ncomment\nhere\n*/ FROM",
         expected = {
             {type = "keyword", text = "SELECT", line = 1, col = 1},
+            {type = "comment", text = "/*\ncomment\nhere\n*/", line = 1, col = 8},
             {type = "keyword", text = "FROM", line = 4, col = 4}
         }
     },
@@ -273,7 +284,9 @@ return {
         input = "SELECT /* c1 */ * /* c2 */ FROM",
         expected = {
             {type = "keyword", text = "SELECT", line = 1, col = 1},
+            {type = "comment", text = "/* c1 */", line = 1, col = 8},
             {type = "star", text = "*", line = 1, col = 17},
+            {type = "comment", text = "/* c2 */", line = 1, col = 19},
             {type = "keyword", text = "FROM", line = 1, col = 28}
         }
     },
@@ -284,6 +297,7 @@ return {
         input = "SELECT /**/ FROM",
         expected = {
             {type = "keyword", text = "SELECT", line = 1, col = 1},
+            {type = "comment", text = "/**/", line = 1, col = 8},
             {type = "keyword", text = "FROM", line = 1, col = 13}
         }
     },
@@ -296,6 +310,7 @@ return {
         input = "SELECT /* outer /* inner */ still outer */ FROM",
         expected = {
             {type = "keyword", text = "SELECT", line = 1, col = 1},
+            {type = "comment", text = "/* outer /* inner */ still outer */", line = 1, col = 8},
             {type = "keyword", text = "FROM", line = 1, col = 44}
         }
     },
@@ -307,7 +322,8 @@ return {
         name = "Line comment with SQL",
         input = "SELECT -- SELECT FROM WHERE",
         expected = {
-            {type = "keyword", text = "SELECT", line = 1, col = 1}
+            {type = "keyword", text = "SELECT", line = 1, col = 1},
+            {type = "line_comment", text = "-- SELECT FROM WHERE", line = 1, col = 8}
         }
     },
     {
@@ -317,6 +333,7 @@ return {
         input = "SELECT /* SELECT FROM WHERE */ *",
         expected = {
             {type = "keyword", text = "SELECT", line = 1, col = 1},
+            {type = "comment", text = "/* SELECT FROM WHERE */", line = 1, col = 8},
             {type = "star", text = "*", line = 1, col = 32}
         }
     },
@@ -327,6 +344,7 @@ return {
         input = "SELECT /* !@#$%^&*() */ FROM",
         expected = {
             {type = "keyword", text = "SELECT", line = 1, col = 1},
+            {type = "comment", text = "/* !@#$%^&*() */", line = 1, col = 8},
             {type = "keyword", text = "FROM", line = 1, col = 25}
         }
     },
@@ -338,7 +356,8 @@ return {
         name = "String before comment",
         input = "'hello' -- comment",
         expected = {
-            {type = "string", text = "'hello'", line = 1, col = 1}
+            {type = "string", text = "'hello'", line = 1, col = 1},
+            {type = "line_comment", text = "-- comment", line = 1, col = 9}
         }
     },
     {
@@ -347,6 +366,7 @@ return {
         name = "String after comment on new line",
         input = "-- comment\n'hello'",
         expected = {
+            {type = "line_comment", text = "-- comment", line = 1, col = 1},
             {type = "string", text = "'hello'", line = 2, col = 1}
         }
     },
@@ -374,7 +394,9 @@ return {
         name = "String between block comments",
         input = "/* c1 */ 'hello' /* c2 */",
         expected = {
-            {type = "string", text = "'hello'", line = 1, col = 10}
+            {type = "comment", text = "/* c1 */", line = 1, col = 1},
+            {type = "string", text = "'hello'", line = 1, col = 10},
+            {type = "comment", text = "/* c2 */", line = 1, col = 18}
         }
     },
 
@@ -385,7 +407,8 @@ return {
         name = "Line comment with no text after --",
         input = "SELECT --",
         expected = {
-            {type = "keyword", text = "SELECT", line = 1, col = 1}
+            {type = "keyword", text = "SELECT", line = 1, col = 1},
+            {type = "line_comment", text = "--", line = 1, col = 8}
         }
     },
     {
@@ -395,6 +418,7 @@ return {
         input = "SELECT --   \nFROM",
         expected = {
             {type = "keyword", text = "SELECT", line = 1, col = 1},
+            {type = "line_comment", text = "--   ", line = 1, col = 8},
             {type = "keyword", text = "FROM", line = 2, col = 1}
         }
     },
@@ -405,6 +429,7 @@ return {
         input = "SELECT /*   */ FROM",
         expected = {
             {type = "keyword", text = "SELECT", line = 1, col = 1},
+            {type = "comment", text = "/*   */", line = 1, col = 8},
             {type = "keyword", text = "FROM", line = 1, col = 16}
         }
     },
@@ -413,7 +438,9 @@ return {
         type = "tokenizer",
         name = "Multiple consecutive line comments",
         input = "----",
-        expected = {}
+        expected = {
+            {type = "line_comment", text = "----", line = 1, col = 1}
+        }
     },
     {
         id = 1244,
@@ -458,6 +485,7 @@ return {
             {type = "star", text = "*", line = 1, col = 8},
             {type = "keyword", text = "FROM", line = 1, col = 10},
             {type = "identifier", text = "Users", line = 1, col = 15},
+            {type = "comment", text = "/* get all users */", line = 1, col = 21},
             {type = "keyword", text = "WHERE", line = 1, col = 41},
             {type = "identifier", text = "Active", line = 1, col = 47},
             {type = "operator", text = "=", line = 1, col = 54},
@@ -473,7 +501,9 @@ return {
             {type = "keyword", text = "SELECT", line = 1, col = 1},
             {type = "identifier", text = "Id", line = 1, col = 8},
             {type = "comma", text = ",", line = 1, col = 10},
-            {type = "identifier", text = "Name", line = 2, col = 8}
+            {type = "line_comment", text = "-- primary key", line = 1, col = 12},
+            {type = "identifier", text = "Name", line = 2, col = 8},
+            {type = "line_comment", text = "-- user name", line = 2, col = 13}
         }
     },
     {

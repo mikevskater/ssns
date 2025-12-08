@@ -133,15 +133,14 @@ return {
         }
     },
 
-    -- Temp tables
+    -- Temp tables (emitted as single temp_table token)
     {
         id = 1115,
         type = "tokenizer",
         name = "Temp table - local",
         input = "#TempTable",
         expected = {
-            {type = "hash", text = "#", line = 1, col = 1},
-            {type = "identifier", text = "TempTable", line = 1, col = 2}
+            {type = "temp_table", text = "#TempTable", line = 1, col = 1}
         }
     },
     {
@@ -150,8 +149,7 @@ return {
         name = "Temp table - local lowercase",
         input = "#temp",
         expected = {
-            {type = "hash", text = "#", line = 1, col = 1},
-            {type = "keyword", text = "temp", line = 1, col = 2}
+            {type = "temp_table", text = "#temp", line = 1, col = 1}
         }
     },
     {
@@ -160,9 +158,7 @@ return {
         name = "Temp table - global",
         input = "##GlobalTemp",
         expected = {
-            {type = "hash", text = "#", line = 1, col = 1},
-            {type = "hash", text = "#", line = 1, col = 2},
-            {type = "identifier", text = "GlobalTemp", line = 1, col = 3}
+            {type = "temp_table", text = "##GlobalTemp", line = 1, col = 1}
         }
     },
     {
@@ -171,9 +167,7 @@ return {
         name = "Temp table - global lowercase",
         input = "##global",
         expected = {
-            {type = "hash", text = "#", line = 1, col = 1},
-            {type = "hash", text = "#", line = 1, col = 2},
-            {type = "identifier", text = "global", line = 1, col = 3}
+            {type = "temp_table", text = "##global", line = 1, col = 1}
         }
     },
     {
@@ -182,8 +176,7 @@ return {
         name = "Temp table - with numbers",
         input = "#Temp123",
         expected = {
-            {type = "hash", text = "#", line = 1, col = 1},
-            {type = "identifier", text = "Temp123", line = 1, col = 2}
+            {type = "temp_table", text = "#Temp123", line = 1, col = 1}
         }
     },
     {
@@ -192,8 +185,7 @@ return {
         name = "Temp table - with underscore",
         input = "#Temp_Data",
         expected = {
-            {type = "hash", text = "#", line = 1, col = 1},
-            {type = "identifier", text = "Temp_Data", line = 1, col = 2}
+            {type = "temp_table", text = "#Temp_Data", line = 1, col = 1}
         }
     },
 
@@ -430,11 +422,11 @@ return {
     {
         id = 1145,
         type = "tokenizer",
-        name = "Identifier with @ prefix (variable)",
+        name = "User variable with @ prefix",
         input = "@variable",
         expected = {
-            {type = "at", text = "@", line = 1, col = 1},
-            {type = "identifier", text = "variable", line = 1, col = 2}
+            -- User variables are emitted as single variable tokens
+            {type = "variable", text = "@variable", line = 1, col = 1}
         }
     },
     {
@@ -443,9 +435,8 @@ return {
         name = "Identifier with @@ prefix (global variable)",
         input = "@@IDENTITY",
         expected = {
-            {type = "at", text = "@", line = 1, col = 1},
-            {type = "at", text = "@", line = 1, col = 2},
-            {type = "identifier", text = "IDENTITY", line = 1, col = 3}
+            -- Global variables are emitted as a single token
+            {type = "global_variable", text = "@@IDENTITY", line = 1, col = 1}
         }
     },
 
