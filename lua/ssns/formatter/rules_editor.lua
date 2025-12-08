@@ -1,5 +1,8 @@
 ---@class FormatterRulesEditor
----Interactive formatter rules editor with live preview
+---Interactive formatter rules editor with three-panel layout:
+---  Left: Preset list (built-in + user)
+---  Middle: Settings for selected preset
+---  Right: Live SQL preview
 local RulesEditor = {}
 
 local Config = require('ssns.config')
@@ -19,22 +22,27 @@ local Formatter = require('ssns.formatter')
 ---@field category string Category for grouping
 
 ---@class RulesEditorState
+---@field presets_buf number Presets list buffer
+---@field presets_win number Presets list window
 ---@field rules_buf number Rules list buffer
 ---@field rules_win number Rules list window
 ---@field preview_buf number Preview buffer
 ---@field preview_win number Preview window
 ---@field footer_buf number Footer buffer
 ---@field footer_win number Footer window
----@field selected_idx number Currently selected rule index
+---@field available_presets FormatterPreset[] All available presets
+---@field selected_preset_idx number Currently selected preset index
+---@field selected_rule_idx number Currently selected rule index
 ---@field current_config table Working copy of formatter config
 ---@field original_config table Original config for cancel/reset
----@field current_preset string? Current preset name
----@field original_preset string? Original preset when opened
 ---@field is_dirty boolean Whether config has been modified
----@field focused_panel string Which panel is focused
+---@field active_panel string Which panel is focused ("presets", "rules", "preview")
 ---@field rule_definitions RuleDefinition[] All rule definitions
 ---@field rule_line_map table<number, number> Rule index to line number map
 ---@field line_to_rule table<number, number> Line number to rule index map
+---@field preset_line_map table<number, number> Preset index to line number map
+---@field line_to_preset table<number, number> Line number to preset index map
+---@field editing_user_copy boolean Whether we auto-created a user copy
 
 ---@type RulesEditorState?
 local state = nil
@@ -70,9 +78,6 @@ local RULE_DEFINITIONS = {
   { key = "operator_spacing", name = "Operator Spacing", description = "Add spaces around operators (=, +, etc.)", type = "boolean", category = "Spacing" },
   { key = "parenthesis_spacing", name = "Parenthesis Spacing", description = "Add spaces inside parentheses", type = "boolean", category = "Spacing" },
 }
-
--- Get categories in display order
-local CATEGORIES = { "General", "Indentation", "Clauses", "Joins", "Alignment", "Spacing" }
 
 -- Sample SQL for live preview
 local PREVIEW_SQL = [[
@@ -114,7 +119,7 @@ ORDER BY total_spent DESC, u.username ASC;
 -- Internal Helpers
 -- ============================================================================
 
----Create custom borders for unified appearance
+---Create custom borders for 3-panel horizontal layout
 ---@return table borders
 local function create_borders()
   local chars = {
@@ -129,60 +134,97 @@ local function create_borders()
   }
 
   return {
-    rules = {
-      chars.top_left,
-      chars.horizontal,
-      chars.t_down,
-      chars.vertical,
-      chars.t_up,
-      chars.horizontal,
-      chars.bottom_left,
-      chars.vertical,
+    -- Left panel (presets): rounded left, T-junction right
+    presets = {
+      chars.top_left,      -- top-left
+      chars.horizontal,    -- top
+      chars.t_down,        -- top-right (T-junction)
+      chars.vertical,      -- right
+      chars.t_up,          -- bottom-right (T-junction)
+      chars.horizontal,    -- bottom
+      chars.bottom_left,   -- bottom-left
+      chars.vertical,      -- left
     },
+    -- Middle panel (rules): T-junction both sides
+    rules = {
+      chars.t_down,        -- top-left (T-junction)
+      chars.horizontal,    -- top
+      chars.t_down,        -- top-right (T-junction)
+      chars.vertical,      -- right
+      chars.t_up,          -- bottom-right (T-junction)
+      chars.horizontal,    -- bottom
+      chars.t_up,          -- bottom-left (T-junction)
+      chars.vertical,      -- left
+    },
+    -- Right panel (preview): T-junction left, rounded right
     preview = {
-      chars.t_down,
-      chars.horizontal,
-      chars.top_right,
-      chars.vertical,
-      chars.bottom_right,
-      chars.horizontal,
-      chars.t_up,
-      chars.vertical,
+      chars.t_down,        -- top-left (T-junction)
+      chars.horizontal,    -- top
+      chars.top_right,     -- top-right
+      chars.vertical,      -- right
+      chars.bottom_right,  -- bottom-right
+      chars.horizontal,    -- bottom
+      chars.t_up,          -- bottom-left (T-junction)
+      chars.vertical,      -- left
     },
   }
 end
 
----Calculate layout for 2-panel floating windows
+---Calculate layout for 3-panel floating windows (horizontal)
 ---@param cols number Terminal columns
 ---@param lines number Terminal lines
 ---@return table layout
 local function calculate_layout(cols, lines)
-  -- Overall dimensions: 85% width x 85% height, centered
-  local total_width = math.floor(cols * 0.85)
+  -- Overall dimensions: 90% width x 85% height, centered
+  local total_width = math.floor(cols * 0.90)
   local total_height = math.floor(lines * 0.85)
   local start_row = math.floor((lines - total_height) / 2)
   local start_col = math.floor((cols - total_width) / 2)
 
-  -- Left panel (rules): 35% of total width
-  -- Right panel (preview): 65% of total width
+  -- Panel widths: 20% presets, 35% rules, 45% preview
+  local presets_width = math.floor(total_width * 0.18)
   local rules_width = math.floor(total_width * 0.35)
-  local preview_width = total_width - rules_width - 1
+  local preview_width = total_width - presets_width - rules_width - 2  -- -2 for shared borders
 
   local borders = create_borders()
 
-  local preset_name = state and state.current_preset or "SSMS Style"
-  local dirty_indicator = state and state.is_dirty and " *" or ""
+  -- Get current preset info for title
+  local preset_name = "None"
+  local dirty_indicator = ""
+  if state then
+    local preset = state.available_presets[state.selected_preset_idx]
+    if preset then
+      preset_name = preset.name
+      if preset.is_user then
+        preset_name = preset_name .. " (user)"
+      end
+    end
+    dirty_indicator = state.is_dirty and " *" or ""
+  end
 
   return {
+    presets = {
+      relative = "editor",
+      width = presets_width,
+      height = total_height,
+      row = start_row,
+      col = start_col,
+      style = "minimal",
+      border = borders.presets,
+      title = " Presets ",
+      title_pos = "center",
+      zindex = 50,
+      focusable = true,
+    },
     rules = {
       relative = "editor",
       width = rules_width,
       height = total_height,
       row = start_row,
-      col = start_col,
+      col = start_col + presets_width + 1,
       style = "minimal",
       border = borders.rules,
-      title = string.format(" Formatter Rules [%s]%s ", preset_name, dirty_indicator),
+      title = string.format(" Settings [%s]%s ", preset_name, dirty_indicator),
       title_pos = "center",
       zindex = 50,
       focusable = true,
@@ -192,16 +234,16 @@ local function calculate_layout(cols, lines)
       width = preview_width,
       height = total_height,
       row = start_row,
-      col = start_col + rules_width + 1,
+      col = start_col + presets_width + rules_width + 2,
       style = "minimal",
       border = borders.preview,
-      title = " Live Preview ",
+      title = " Preview ",
       title_pos = "center",
       zindex = 50,
       focusable = true,
     },
     footer = {
-      text = " h/l=Change  j/k=Navigate  p=Presets  s=Save  a=Apply  q=Cancel  <Tab>=Switch ",
+      text = " j/k=Nav  h/l=Change  <Tab>=Panel  s=Save  a=Apply  R=Reset  q=Cancel ",
       row = start_row + total_height + 2,
       col = start_col,
       width = total_width,
@@ -210,9 +252,9 @@ local function calculate_layout(cols, lines)
 end
 
 ---Get value from config by key path
----@param config table Config table
----@param key string Key path (e.g., "indent_size" or "rules.select.one_column_per_line")
----@return any value
+---@param config table
+---@param key string
+---@return any
 local function get_config_value(config, key)
   local parts = vim.split(key, ".", { plain = true })
   local current = config
@@ -224,9 +266,9 @@ local function get_config_value(config, key)
 end
 
 ---Set value in config by key path
----@param config table Config table
----@param key string Key path
----@param value any Value to set
+---@param config table
+---@param key string
+---@param value any
 local function set_config_value(config, key, value)
   local parts = vim.split(key, ".", { plain = true })
   local current = config
@@ -242,7 +284,7 @@ end
 ---Cycle value forward
 ---@param rule RuleDefinition
 ---@param current_value any
----@return any new_value
+---@return any
 local function cycle_forward(rule, current_value)
   if rule.type == "boolean" then
     return not current_value
@@ -255,8 +297,7 @@ local function cycle_forward(rule, current_value)
         break
       end
     end
-    local next_idx = current_idx % #options + 1
-    return options[next_idx]
+    return options[current_idx % #options + 1]
   elseif rule.type == "number" then
     local step = rule.step or 1
     local new_val = (current_value or 0) + step
@@ -271,7 +312,7 @@ end
 ---Cycle value backward
 ---@param rule RuleDefinition
 ---@param current_value any
----@return any new_value
+---@return any
 local function cycle_backward(rule, current_value)
   if rule.type == "boolean" then
     return not current_value
@@ -301,7 +342,7 @@ end
 ---Format value for display
 ---@param rule RuleDefinition
 ---@param value any
----@return string formatted
+---@return string
 local function format_value(rule, value)
   if value == nil then
     return "nil"
@@ -323,14 +364,15 @@ function RulesEditor.show()
   -- Close existing editor if open
   RulesEditor.close()
 
+  -- Load all presets
+  local available_presets = Presets.list()
+
   -- Get current formatter config
   local current_config = vim.deepcopy(Config.get_formatter())
 
-  -- Determine current preset (if any matches)
-  local current_preset = nil
-  local presets = Presets.list()
-  for _, preset in ipairs(presets) do
-    -- Simple heuristic: check if all preset values match current config
+  -- Find which preset matches current config (if any)
+  local selected_preset_idx = 1
+  for i, preset in ipairs(available_presets) do
     local matches = true
     for key, val in pairs(preset.config) do
       if current_config[key] ~= val then
@@ -339,29 +381,33 @@ function RulesEditor.show()
       end
     end
     if matches then
-      current_preset = preset.name
+      selected_preset_idx = i
       break
     end
   end
 
   -- Initialize state
   state = {
-    selected_idx = 1,
+    available_presets = available_presets,
+    selected_preset_idx = selected_preset_idx,
+    selected_rule_idx = 1,
     current_config = current_config,
     original_config = vim.deepcopy(current_config),
-    current_preset = current_preset or "Custom",
-    original_preset = current_preset,
     is_dirty = false,
-    focused_panel = "rules",
+    active_panel = "presets",
     rule_definitions = RULE_DEFINITIONS,
     rule_line_map = {},
     line_to_rule = {},
+    preset_line_map = {},
+    line_to_preset = {},
+    editing_user_copy = false,
   }
 
   -- Create layout
   RulesEditor._create_layout()
 
-  -- Render content
+  -- Render all panels
+  RulesEditor._render_presets()
   RulesEditor._render_rules()
   RulesEditor._render_preview()
 
@@ -383,7 +429,7 @@ function RulesEditor.close()
   end
 
   -- Close windows
-  local windows = { state.rules_win, state.preview_win, state.footer_win }
+  local windows = { state.presets_win, state.rules_win, state.preview_win, state.footer_win }
   for _, winid in ipairs(windows) do
     if winid and vim.api.nvim_win_is_valid(winid) then
       pcall(vim.api.nvim_win_close, winid, true)
@@ -396,16 +442,17 @@ function RulesEditor.close()
   state = nil
 end
 
----Create the layout
+---Create the 3-panel layout
 function RulesEditor._create_layout()
   local layout = calculate_layout(vim.o.columns, vim.o.lines)
 
   -- Create buffers
+  state.presets_buf = vim.api.nvim_create_buf(false, true)
   state.rules_buf = vim.api.nvim_create_buf(false, true)
   state.preview_buf = vim.api.nvim_create_buf(false, true)
 
   -- Configure buffers
-  for _, bufnr in ipairs({state.rules_buf, state.preview_buf}) do
+  for _, bufnr in ipairs({state.presets_buf, state.rules_buf, state.preview_buf}) do
     vim.api.nvim_buf_set_option(bufnr, 'buftype', 'nofile')
     vim.api.nvim_buf_set_option(bufnr, 'swapfile', false)
     vim.api.nvim_buf_set_option(bufnr, 'bufhidden', 'wipe')
@@ -416,11 +463,12 @@ function RulesEditor._create_layout()
   vim.api.nvim_buf_set_option(state.preview_buf, 'filetype', 'sql')
 
   -- Create floating windows
-  state.rules_win = vim.api.nvim_open_win(state.rules_buf, true, layout.rules)
+  state.presets_win = vim.api.nvim_open_win(state.presets_buf, true, layout.presets)
+  state.rules_win = vim.api.nvim_open_win(state.rules_buf, false, layout.rules)
   state.preview_win = vim.api.nvim_open_win(state.preview_buf, false, layout.preview)
 
   -- Configure windows
-  for _, winid in ipairs({state.rules_win, state.preview_win}) do
+  for _, winid in ipairs({state.presets_win, state.rules_win, state.preview_win}) do
     vim.api.nvim_set_option_value('number', false, { win = winid })
     vim.api.nvim_set_option_value('relativenumber', false, { win = winid })
     vim.api.nvim_set_option_value('cursorline', true, { win = winid })
@@ -429,7 +477,8 @@ function RulesEditor._create_layout()
     vim.api.nvim_set_option_value('winhighlight', 'FloatBorder:FloatBorder,FloatTitle:FloatTitle', { win = winid })
   end
 
-  -- Disable cursorline on preview
+  -- Disable cursorline on inactive panels
+  vim.api.nvim_set_option_value('cursorline', false, { win = state.rules_win })
   vim.api.nvim_set_option_value('cursorline', false, { win = state.preview_win })
 
   -- Create footer
@@ -455,8 +504,72 @@ function RulesEditor._create_layout()
 
   vim.api.nvim_set_option_value('winhighlight', 'Normal:Comment', { win = state.footer_win })
 
-  -- Focus rules list
-  vim.api.nvim_set_current_win(state.rules_win)
+  -- Focus presets list
+  vim.api.nvim_set_current_win(state.presets_win)
+end
+
+---Render the presets list
+function RulesEditor._render_presets()
+  local lines = {}
+  local ns_id = vim.api.nvim_create_namespace("ssns_formatter_presets")
+
+  state.preset_line_map = {}
+  state.line_to_preset = {}
+
+  -- Header
+  table.insert(lines, "")
+
+  local builtin_added = false
+  local user_added = false
+
+  for i, preset in ipairs(state.available_presets) do
+    -- Add section headers
+    if not preset.is_user and not builtin_added then
+      table.insert(lines, " ─── Built-in ───")
+      table.insert(lines, "")
+      builtin_added = true
+    elseif preset.is_user and not user_added then
+      if builtin_added then
+        table.insert(lines, "")
+      end
+      table.insert(lines, " ─── User ───")
+      table.insert(lines, "")
+      user_added = true
+    end
+
+    local prefix = i == state.selected_preset_idx and " ▶ " or "   "
+    local line = string.format("%s%s", prefix, preset.name)
+
+    state.preset_line_map[i] = #lines
+    state.line_to_preset[#lines] = i
+    table.insert(lines, line)
+  end
+
+  table.insert(lines, "")
+
+  -- Set content
+  vim.api.nvim_buf_set_option(state.presets_buf, 'modifiable', true)
+  vim.api.nvim_buf_set_lines(state.presets_buf, 0, -1, false, lines)
+  vim.api.nvim_buf_set_option(state.presets_buf, 'modifiable', false)
+
+  -- Apply highlights
+  vim.api.nvim_buf_clear_namespace(state.presets_buf, ns_id, 0, -1)
+
+  for line_idx, line in ipairs(lines) do
+    local idx = line_idx - 1
+    if line:match("───") then
+      vim.api.nvim_buf_add_highlight(state.presets_buf, ns_id, "Comment", idx, 0, -1)
+    elseif line:match("▶") then
+      vim.api.nvim_buf_add_highlight(state.presets_buf, ns_id, "CursorLine", idx, 0, -1)
+      vim.api.nvim_buf_add_highlight(state.presets_buf, ns_id, "Special", idx, 1, 4)
+    end
+  end
+
+  -- Position cursor
+  local cursor_line = state.preset_line_map[state.selected_preset_idx]
+  if cursor_line then
+    pcall(vim.api.nvim_win_set_cursor, state.presets_win, {cursor_line + 1, 0})
+  end
 end
 
 ---Render the rules list
@@ -471,30 +584,23 @@ function RulesEditor._render_rules()
   table.insert(lines, "")
 
   local current_category = nil
-  local rule_idx = 0
 
   for i, rule in ipairs(state.rule_definitions) do
     -- Add category header if new category
     if rule.category ~= current_category then
       if current_category ~= nil then
-        table.insert(lines, "")  -- Blank line between categories
+        table.insert(lines, "")
       end
       table.insert(lines, string.format(" ─── %s ───", rule.category))
       table.insert(lines, "")
       current_category = rule.category
     end
 
-    rule_idx = i
     local value = get_config_value(state.current_config, rule.key)
     local display_value = format_value(rule, value)
 
-    -- Check if value differs from original (for dirty indicator)
-    local original_value = get_config_value(state.original_config, rule.key)
-    local is_modified = value ~= original_value
-    local modified_indicator = is_modified and "*" or " "
-
-    local prefix = i == state.selected_idx and " ▶ " or "   "
-    local line = string.format("%s%s%-22s %s[%s]", prefix, modified_indicator, rule.name, string.rep(" ", 1), display_value)
+    local prefix = i == state.selected_rule_idx and " ▶ " or "   "
+    local line = string.format("%s%-20s [%s]", prefix, rule.name, display_value)
 
     state.rule_line_map[i] = #lines
     state.line_to_rule[#lines] = i
@@ -512,34 +618,26 @@ function RulesEditor._render_rules()
   vim.api.nvim_buf_clear_namespace(state.rules_buf, ns_id, 0, -1)
 
   for line_idx, line in ipairs(lines) do
-    local idx = line_idx - 1  -- 0-based for API
+    local idx = line_idx - 1
     if line:match("───") then
-      -- Category header
       vim.api.nvim_buf_add_highlight(state.rules_buf, ns_id, "Comment", idx, 0, -1)
     elseif line:match("▶") then
-      -- Selected row
       vim.api.nvim_buf_add_highlight(state.rules_buf, ns_id, "CursorLine", idx, 0, -1)
       vim.api.nvim_buf_add_highlight(state.rules_buf, ns_id, "Special", idx, 1, 4)
-      -- Highlight value
       local bracket_start = line:find("%[")
       if bracket_start then
         vim.api.nvim_buf_add_highlight(state.rules_buf, ns_id, "String", idx, bracket_start - 1, -1)
       end
     elseif state.line_to_rule[line_idx - 1] then
-      -- Regular rule row
       local bracket_start = line:find("%[")
       if bracket_start then
         vim.api.nvim_buf_add_highlight(state.rules_buf, ns_id, "Number", idx, bracket_start - 1, -1)
-      end
-      -- Modified indicator
-      if line:sub(4, 4) == "*" then
-        vim.api.nvim_buf_add_highlight(state.rules_buf, ns_id, "WarningMsg", idx, 3, 4)
       end
     end
   end
 
   -- Position cursor
-  local cursor_line = state.rule_line_map[state.selected_idx]
+  local cursor_line = state.rule_line_map[state.selected_rule_idx]
   if cursor_line then
     pcall(vim.api.nvim_win_set_cursor, state.rules_win, {cursor_line + 1, 0})
   end
@@ -572,54 +670,55 @@ function RulesEditor._apply_preview_highlights()
   end
 end
 
----Setup keymaps
+---Setup keymaps for all panels
 function RulesEditor._setup_keymaps()
   local km = KeymapManager.get_group("common")
 
-  local rules_keymaps = {
-    -- Navigation
-    { lhs = km.nav_down or "j", rhs = function() RulesEditor._navigate(1) end, desc = "Next rule" },
-    { lhs = km.nav_up or "k", rhs = function() RulesEditor._navigate(-1) end, desc = "Previous rule" },
-    { lhs = km.nav_down_alt or "<Down>", rhs = function() RulesEditor._navigate(1) end, desc = "Next rule" },
-    { lhs = km.nav_up_alt or "<Up>", rhs = function() RulesEditor._navigate(-1) end, desc = "Previous rule" },
-
-    -- Value cycling
-    { lhs = "l", rhs = function() RulesEditor._cycle_value(1) end, desc = "Cycle value forward" },
-    { lhs = "h", rhs = function() RulesEditor._cycle_value(-1) end, desc = "Cycle value backward" },
-    { lhs = "+", rhs = function() RulesEditor._cycle_value(1) end, desc = "Cycle value forward" },
-    { lhs = "-", rhs = function() RulesEditor._cycle_value(-1) end, desc = "Cycle value backward" },
-    { lhs = "<Right>", rhs = function() RulesEditor._cycle_value(1) end, desc = "Cycle value forward" },
-    { lhs = "<Left>", rhs = function() RulesEditor._cycle_value(-1) end, desc = "Cycle value backward" },
-
-    -- Preset management
-    { lhs = "p", rhs = function() RulesEditor._show_preset_picker() end, desc = "Select preset" },
-    { lhs = "s", rhs = function() RulesEditor._save_preset() end, desc = "Save as preset" },
-    { lhs = "c", rhs = function() RulesEditor._copy_preset() end, desc = "Copy preset" },
-    { lhs = "r", rhs = function() RulesEditor._rename_preset() end, desc = "Rename preset" },
-    { lhs = "d", rhs = function() RulesEditor._delete_preset() end, desc = "Delete preset" },
-
-    -- Apply/Cancel
-    { lhs = "a", rhs = function() RulesEditor._apply() end, desc = "Apply changes" },
-    { lhs = km.confirm or "<CR>", rhs = function() RulesEditor._apply() end, desc = "Apply changes" },
+  -- Common keymaps for all panels
+  local common_keymaps = {
     { lhs = km.cancel or "<Esc>", rhs = function() RulesEditor._cancel() end, desc = "Cancel" },
     { lhs = km.close or "q", rhs = function() RulesEditor._cancel() end, desc = "Cancel" },
-
-    -- Panel switching
-    { lhs = km.next_field or "<Tab>", rhs = function() RulesEditor._swap_focus() end, desc = "Switch panel" },
-
-    -- Reset to original
-    { lhs = "R", rhs = function() RulesEditor._reset() end, desc = "Reset to original" },
+    { lhs = "a", rhs = function() RulesEditor._apply() end, desc = "Apply changes" },
+    { lhs = km.next_field or "<Tab>", rhs = function() RulesEditor._next_panel() end, desc = "Next panel" },
+    { lhs = km.prev_field or "<S-Tab>", rhs = function() RulesEditor._prev_panel() end, desc = "Previous panel" },
   }
+
+  -- Presets panel keymaps
+  local presets_keymaps = vim.list_extend(vim.deepcopy(common_keymaps), {
+    { lhs = km.nav_down or "j", rhs = function() RulesEditor._navigate_presets(1) end, desc = "Next preset" },
+    { lhs = km.nav_up or "k", rhs = function() RulesEditor._navigate_presets(-1) end, desc = "Previous preset" },
+    { lhs = km.nav_down_alt or "<Down>", rhs = function() RulesEditor._navigate_presets(1) end, desc = "Next preset" },
+    { lhs = km.nav_up_alt or "<Up>", rhs = function() RulesEditor._navigate_presets(-1) end, desc = "Previous preset" },
+    { lhs = km.confirm or "<CR>", rhs = function() RulesEditor._select_preset() end, desc = "Select preset" },
+    { lhs = "d", rhs = function() RulesEditor._delete_preset() end, desc = "Delete preset" },
+    { lhs = "r", rhs = function() RulesEditor._rename_preset() end, desc = "Rename preset" },
+  })
+
+  -- Rules panel keymaps
+  local rules_keymaps = vim.list_extend(vim.deepcopy(common_keymaps), {
+    { lhs = km.nav_down or "j", rhs = function() RulesEditor._navigate_rules(1) end, desc = "Next rule" },
+    { lhs = km.nav_up or "k", rhs = function() RulesEditor._navigate_rules(-1) end, desc = "Previous rule" },
+    { lhs = km.nav_down_alt or "<Down>", rhs = function() RulesEditor._navigate_rules(1) end, desc = "Next rule" },
+    { lhs = km.nav_up_alt or "<Up>", rhs = function() RulesEditor._navigate_rules(-1) end, desc = "Previous rule" },
+    { lhs = "l", rhs = function() RulesEditor._cycle_value(1) end, desc = "Cycle forward" },
+    { lhs = "h", rhs = function() RulesEditor._cycle_value(-1) end, desc = "Cycle backward" },
+    { lhs = "+", rhs = function() RulesEditor._cycle_value(1) end, desc = "Cycle forward" },
+    { lhs = "-", rhs = function() RulesEditor._cycle_value(-1) end, desc = "Cycle backward" },
+    { lhs = "<Right>", rhs = function() RulesEditor._cycle_value(1) end, desc = "Cycle forward" },
+    { lhs = "<Left>", rhs = function() RulesEditor._cycle_value(-1) end, desc = "Cycle backward" },
+    { lhs = "s", rhs = function() RulesEditor._save_preset() end, desc = "Save preset" },
+    { lhs = "R", rhs = function() RulesEditor._reset() end, desc = "Reset" },
+  })
+
+  -- Preview panel keymaps (just navigation)
+  local preview_keymaps = vim.deepcopy(common_keymaps)
+
+  -- Set keymaps
+  KeymapManager.set_multiple(state.presets_buf, presets_keymaps, true)
+  KeymapManager.mark_group_active(state.presets_buf, "formatter_rules_editor")
 
   KeymapManager.set_multiple(state.rules_buf, rules_keymaps, true)
   KeymapManager.mark_group_active(state.rules_buf, "formatter_rules_editor")
-
-  local preview_keymaps = {
-    { lhs = km.cancel or "<Esc>", rhs = function() RulesEditor._cancel() end, desc = "Cancel" },
-    { lhs = km.close or "q", rhs = function() RulesEditor._cancel() end, desc = "Cancel" },
-    { lhs = km.next_field or "<Tab>", rhs = function() RulesEditor._swap_focus() end, desc = "Switch panel" },
-    { lhs = km.prev_field or "<S-Tab>", rhs = function() RulesEditor._swap_focus() end, desc = "Switch panel" },
-  }
 
   KeymapManager.set_multiple(state.preview_buf, preview_keymaps, true)
   KeymapManager.mark_group_active(state.preview_buf, "formatter_rules_editor")
@@ -633,6 +732,7 @@ function RulesEditor._setup_autocmds()
     group = group,
     callback = function(ev)
       if state and (
+        ev.match == tostring(state.presets_win) or
         ev.match == tostring(state.rules_win) or
         ev.match == tostring(state.preview_win)
       ) then
@@ -645,31 +745,152 @@ function RulesEditor._setup_autocmds()
     group = group,
     callback = function()
       if state then
+        local saved_state = {
+          selected_preset_idx = state.selected_preset_idx,
+          selected_rule_idx = state.selected_rule_idx,
+          current_config = state.current_config,
+          is_dirty = state.is_dirty,
+          active_panel = state.active_panel,
+        }
         RulesEditor.close()
         vim.defer_fn(function()
           RulesEditor.show()
+          if state then
+            state.selected_preset_idx = saved_state.selected_preset_idx
+            state.selected_rule_idx = saved_state.selected_rule_idx
+            state.current_config = saved_state.current_config
+            state.is_dirty = saved_state.is_dirty
+            state.active_panel = saved_state.active_panel
+            RulesEditor._render_presets()
+            RulesEditor._render_rules()
+            RulesEditor._render_preview()
+            RulesEditor._focus_panel(saved_state.active_panel)
+          end
         end, 50)
       end
     end,
   })
 end
 
----Navigate through rules
----@param direction number 1 for down, -1 for up
-function RulesEditor._navigate(direction)
+---Navigate to next panel
+function RulesEditor._next_panel()
   if not state then return end
 
-  state.selected_idx = state.selected_idx + direction
+  local panels = {"presets", "rules", "preview"}
+  local current_idx = 1
+  for i, p in ipairs(panels) do
+    if p == state.active_panel then
+      current_idx = i
+      break
+    end
+  end
 
-  -- Wrap around
-  if state.selected_idx < 1 then
-    state.selected_idx = #state.rule_definitions
-  elseif state.selected_idx > #state.rule_definitions then
-    state.selected_idx = 1
+  local next_idx = current_idx % #panels + 1
+  RulesEditor._focus_panel(panels[next_idx])
+end
+
+---Navigate to previous panel
+function RulesEditor._prev_panel()
+  if not state then return end
+
+  local panels = {"presets", "rules", "preview"}
+  local current_idx = 1
+  for i, p in ipairs(panels) do
+    if p == state.active_panel then
+      current_idx = i
+      break
+    end
+  end
+
+  local prev_idx = current_idx - 1
+  if prev_idx < 1 then prev_idx = #panels end
+  RulesEditor._focus_panel(panels[prev_idx])
+end
+
+---Focus a specific panel
+---@param panel string "presets", "rules", or "preview"
+function RulesEditor._focus_panel(panel)
+  if not state then return end
+
+  state.active_panel = panel
+
+  -- Update cursorline for all panels
+  vim.api.nvim_set_option_value('cursorline', panel == "presets", { win = state.presets_win })
+  vim.api.nvim_set_option_value('cursorline', panel == "rules", { win = state.rules_win })
+  vim.api.nvim_set_option_value('cursorline', panel == "preview", { win = state.preview_win })
+
+  -- Focus the window
+  local win_map = {
+    presets = state.presets_win,
+    rules = state.rules_win,
+    preview = state.preview_win,
+  }
+
+  if win_map[panel] and vim.api.nvim_win_is_valid(win_map[panel]) then
+    vim.api.nvim_set_current_win(win_map[panel])
+  end
+end
+
+---Navigate through presets
+---@param direction number 1 for down, -1 for up
+function RulesEditor._navigate_presets(direction)
+  if not state then return end
+
+  state.selected_preset_idx = state.selected_preset_idx + direction
+
+  if state.selected_preset_idx < 1 then
+    state.selected_preset_idx = #state.available_presets
+  elseif state.selected_preset_idx > #state.available_presets then
+    state.selected_preset_idx = 1
+  end
+
+  -- Load the preset config
+  local preset = state.available_presets[state.selected_preset_idx]
+  if preset then
+    state.current_config = vim.tbl_deep_extend("force", Config.get_formatter(), preset.config)
+    state.is_dirty = false
+    state.editing_user_copy = false
+  end
+
+  RulesEditor._render_presets()
+  RulesEditor._render_rules()
+  RulesEditor._render_preview()
+  RulesEditor._update_title()
+end
+
+---Select current preset (same as navigate but explicit)
+function RulesEditor._select_preset()
+  if not state then return end
+
+  local preset = state.available_presets[state.selected_preset_idx]
+  if preset then
+    state.current_config = vim.tbl_deep_extend("force", Config.get_formatter(), preset.config)
+    state.is_dirty = false
+    state.editing_user_copy = false
+
+    RulesEditor._render_rules()
+    RulesEditor._render_preview()
+    RulesEditor._update_title()
+
+    -- Move to rules panel
+    RulesEditor._focus_panel("rules")
+  end
+end
+
+---Navigate through rules
+---@param direction number 1 for down, -1 for up
+function RulesEditor._navigate_rules(direction)
+  if not state then return end
+
+  state.selected_rule_idx = state.selected_rule_idx + direction
+
+  if state.selected_rule_idx < 1 then
+    state.selected_rule_idx = #state.rule_definitions
+  elseif state.selected_rule_idx > #state.rule_definitions then
+    state.selected_rule_idx = 1
   end
 
   RulesEditor._render_rules()
-  RulesEditor._update_footer_description()
 end
 
 ---Cycle the value of current rule
@@ -677,7 +898,38 @@ end
 function RulesEditor._cycle_value(direction)
   if not state then return end
 
-  local rule = state.rule_definitions[state.selected_idx]
+  -- Check if we need to create a user copy first
+  local preset = state.available_presets[state.selected_preset_idx]
+  if preset and not preset.is_user and not state.editing_user_copy then
+    -- Auto-create a user copy
+    local copy_name = preset.name .. " - COPY"
+    local file_name = (preset.file_name or preset.name:lower():gsub("%s+", "_")) .. "_copy"
+    file_name = Presets.generate_unique_name(file_name, true)
+
+    local ok, err = Presets.save(file_name, copy_name, state.current_config, "Auto-created copy of " .. preset.name)
+    if ok then
+      -- Reload presets and select the new copy
+      Presets.clear_cache()
+      state.available_presets = Presets.list()
+
+      -- Find the new copy
+      for i, p in ipairs(state.available_presets) do
+        if p.name == copy_name or p.file_name == file_name then
+          state.selected_preset_idx = i
+          break
+        end
+      end
+
+      state.editing_user_copy = true
+      vim.notify("Created user copy: " .. copy_name, vim.log.levels.INFO)
+      RulesEditor._render_presets()
+    else
+      vim.notify("Failed to create copy: " .. (err or "unknown"), vim.log.levels.ERROR)
+      return
+    end
+  end
+
+  local rule = state.rule_definitions[state.selected_rule_idx]
   if not rule then return end
 
   local current_value = get_config_value(state.current_config, rule.key)
@@ -690,12 +942,8 @@ function RulesEditor._cycle_value(direction)
   end
 
   set_config_value(state.current_config, rule.key, new_value)
-
-  -- Mark as dirty
   state.is_dirty = true
-  state.current_preset = "Custom"
 
-  -- Update UI
   RulesEditor._render_rules()
   RulesEditor._update_title()
 
@@ -707,176 +955,150 @@ function RulesEditor._cycle_value(direction)
   end, 50)
 end
 
----Swap focus between panels
-function RulesEditor._swap_focus()
-  if not state then return end
-
-  if state.focused_panel == "rules" then
-    state.focused_panel = "preview"
-    if vim.api.nvim_win_is_valid(state.preview_win) then
-      vim.api.nvim_set_current_win(state.preview_win)
-      vim.api.nvim_set_option_value('cursorline', true, { win = state.preview_win })
-      vim.api.nvim_set_option_value('cursorline', false, { win = state.rules_win })
-    end
-  else
-    state.focused_panel = "rules"
-    if vim.api.nvim_win_is_valid(state.rules_win) then
-      vim.api.nvim_set_current_win(state.rules_win)
-      vim.api.nvim_set_option_value('cursorline', true, { win = state.rules_win })
-      vim.api.nvim_set_option_value('cursorline', false, { win = state.preview_win })
-      -- Restore cursor position
-      local cursor_line = state.rule_line_map[state.selected_idx]
-      if cursor_line then
-        pcall(vim.api.nvim_win_set_cursor, state.rules_win, {cursor_line + 1, 0})
-      end
-    end
-  end
-end
-
----Update window title to show preset and dirty state
+---Update the rules panel title
 function RulesEditor._update_title()
   if not state or not vim.api.nvim_win_is_valid(state.rules_win) then return end
 
+  local preset = state.available_presets[state.selected_preset_idx]
+  local preset_name = preset and preset.name or "Custom"
+  if preset and preset.is_user then
+    preset_name = preset_name .. " (user)"
+  end
   local dirty_indicator = state.is_dirty and " *" or ""
-  local new_title = string.format(" Formatter Rules [%s]%s ", state.current_preset, dirty_indicator)
 
   vim.api.nvim_win_set_config(state.rules_win, {
-    title = new_title,
+    title = string.format(" Settings [%s]%s ", preset_name, dirty_indicator),
     title_pos = "center",
   })
-end
-
----Update footer to show current rule description
-function RulesEditor._update_footer_description()
-  if not state or not vim.api.nvim_win_is_valid(state.footer_win) then return end
-
-  local rule = state.rule_definitions[state.selected_idx]
-  if not rule then return end
-
-  -- For now, keep the keybindings footer - could show description on hover
 end
 
 ---Apply changes
 function RulesEditor._apply()
   if not state then return end
 
-  -- Apply config changes
   Config.current.formatter = state.current_config
+
+  -- If dirty, save to preset if it's a user preset
+  if state.is_dirty then
+    local preset = state.available_presets[state.selected_preset_idx]
+    if preset and preset.is_user then
+      Presets.save(preset.file_name, preset.name, state.current_config, preset.description)
+    end
+  end
 
   vim.notify("Formatter config applied", vim.log.levels.INFO)
   RulesEditor.close()
 end
 
----Cancel and restore original
+---Cancel and close
 function RulesEditor._cancel()
-  if not state then return end
-
-  if state.is_dirty then
-    -- Could prompt for confirmation here
-  end
-
   RulesEditor.close()
 end
 
----Reset to original config
+---Reset current preset to its original values
 function RulesEditor._reset()
   if not state then return end
 
-  state.current_config = vim.deepcopy(state.original_config)
-  state.current_preset = state.original_preset or "Custom"
-  state.is_dirty = false
-
-  RulesEditor._render_rules()
-  RulesEditor._render_preview()
-  RulesEditor._update_title()
-
-  vim.notify("Reset to original config", vim.log.levels.INFO)
-end
-
----Show preset picker
-function RulesEditor._show_preset_picker()
-  if not state then return end
-
-  local presets = Presets.list()
-  local items = {}
-
-  for _, preset in ipairs(presets) do
-    local label = preset.name
-    if preset.is_user then
-      label = label .. " (user)"
-    end
-    table.insert(items, { name = preset.name, label = label, file_name = preset.file_name, is_user = preset.is_user })
-  end
-
-  vim.ui.select(items, {
-    prompt = "Select Preset:",
-    format_item = function(item)
-      return item.label
-    end,
-  }, function(choice)
-    if not choice then return end
-
-    local preset = Presets.load(choice.file_name or choice.name)
-    if preset then
-      -- Apply preset config
-      state.current_config = vim.tbl_deep_extend("force", state.current_config, preset.config)
-      state.current_preset = preset.name
-      state.is_dirty = true
+  local preset = state.available_presets[state.selected_preset_idx]
+  if preset then
+    -- Reload preset from disk
+    Presets.clear_cache()
+    local fresh_preset = Presets.load(preset.file_name or preset.name)
+    if fresh_preset then
+      state.current_config = vim.tbl_deep_extend("force", Config.get_formatter(), fresh_preset.config)
+      state.is_dirty = false
 
       RulesEditor._render_rules()
       RulesEditor._render_preview()
       RulesEditor._update_title()
+
+      vim.notify("Reset to preset defaults", vim.log.levels.INFO)
     end
-  end)
+  end
 end
 
----Save current config as new preset
+---Save current config as a new preset
 function RulesEditor._save_preset()
   if not state then return end
 
-  vim.ui.input({ prompt = "Preset name: " }, function(name)
+  local current_preset = state.available_presets[state.selected_preset_idx]
+  local default_name = current_preset and current_preset.is_user and current_preset.name or Presets.generate_unique_name("Custom")
+
+  vim.ui.input({ prompt = "Save preset as: ", default = default_name }, function(name)
     if not name or name == "" then return end
 
     local file_name = name:gsub("[^%w_%-]", "_")
     local ok, err = Presets.save(file_name, name, state.current_config, "User-defined preset")
 
     if ok then
-      state.current_preset = name
+      -- Reload presets
+      Presets.clear_cache()
+      state.available_presets = Presets.list()
+
+      -- Find and select the new preset
+      for i, p in ipairs(state.available_presets) do
+        if p.name == name then
+          state.selected_preset_idx = i
+          break
+        end
+      end
+
       state.is_dirty = false
+      RulesEditor._render_presets()
       RulesEditor._update_title()
+
       vim.notify("Preset saved: " .. name, vim.log.levels.INFO)
     else
-      vim.notify("Failed to save preset: " .. (err or "unknown error"), vim.log.levels.ERROR)
+      vim.notify("Failed to save: " .. (err or "unknown"), vim.log.levels.ERROR)
     end
   end)
 end
 
----Copy current preset
-function RulesEditor._copy_preset()
+---Delete selected preset (user only)
+function RulesEditor._delete_preset()
   if not state then return end
 
-  -- If current is a known preset, copy it
-  local preset = Presets.load(state.current_preset)
-  if preset and not preset.is_user then
-    -- Copy built-in preset to user folder
-    local ok, err = Presets.copy(preset.file_name or state.current_preset)
-    if ok then
-      vim.notify("Preset copied to user folder", vim.log.levels.INFO)
-      Presets.clear_cache()
-    else
-      vim.notify("Failed to copy: " .. (err or "unknown error"), vim.log.levels.ERROR)
-    end
-  else
-    -- Save current config as new preset
-    RulesEditor._save_preset()
+  local preset = state.available_presets[state.selected_preset_idx]
+  if not preset or not preset.is_user then
+    vim.notify("Can only delete user presets", vim.log.levels.WARN)
+    return
   end
+
+  vim.ui.select({ "Yes", "No" }, {
+    prompt = string.format("Delete '%s'?", preset.name),
+  }, function(choice)
+    if choice ~= "Yes" then return end
+
+    local ok, err = Presets.delete(preset.file_name)
+    if ok then
+      Presets.clear_cache()
+      state.available_presets = Presets.list()
+      state.selected_preset_idx = math.min(state.selected_preset_idx, #state.available_presets)
+
+      -- Load the now-selected preset
+      local new_preset = state.available_presets[state.selected_preset_idx]
+      if new_preset then
+        state.current_config = vim.tbl_deep_extend("force", Config.get_formatter(), new_preset.config)
+      end
+
+      state.is_dirty = false
+      RulesEditor._render_presets()
+      RulesEditor._render_rules()
+      RulesEditor._render_preview()
+      RulesEditor._update_title()
+
+      vim.notify("Preset deleted", vim.log.levels.INFO)
+    else
+      vim.notify("Failed to delete: " .. (err or "unknown"), vim.log.levels.ERROR)
+    end
+  end)
 end
 
----Rename current preset (user only)
+---Rename selected preset (user only)
 function RulesEditor._rename_preset()
   if not state then return end
 
-  local preset = Presets.load(state.current_preset)
+  local preset = state.available_presets[state.selected_preset_idx]
   if not preset or not preset.is_user then
     vim.notify("Can only rename user presets", vim.log.levels.WARN)
     return
@@ -887,39 +1109,23 @@ function RulesEditor._rename_preset()
 
     local ok, err = Presets.rename(preset.file_name, new_name)
     if ok then
-      state.current_preset = new_name
-      RulesEditor._update_title()
       Presets.clear_cache()
+      state.available_presets = Presets.list()
+
+      -- Find the renamed preset
+      for i, p in ipairs(state.available_presets) do
+        if p.name == new_name then
+          state.selected_preset_idx = i
+          break
+        end
+      end
+
+      RulesEditor._render_presets()
+      RulesEditor._update_title()
+
       vim.notify("Preset renamed", vim.log.levels.INFO)
     else
-      vim.notify("Failed to rename: " .. (err or "unknown error"), vim.log.levels.ERROR)
-    end
-  end)
-end
-
----Delete current preset (user only)
-function RulesEditor._delete_preset()
-  if not state then return end
-
-  local preset = Presets.load(state.current_preset)
-  if not preset or not preset.is_user then
-    vim.notify("Can only delete user presets", vim.log.levels.WARN)
-    return
-  end
-
-  vim.ui.select({ "Yes", "No" }, {
-    prompt = string.format("Delete preset '%s'?", preset.name),
-  }, function(choice)
-    if choice ~= "Yes" then return end
-
-    local ok, err = Presets.delete(preset.file_name)
-    if ok then
-      state.current_preset = "Custom"
-      RulesEditor._update_title()
-      Presets.clear_cache()
-      vim.notify("Preset deleted", vim.log.levels.INFO)
-    else
-      vim.notify("Failed to delete: " .. (err or "unknown error"), vim.log.levels.ERROR)
+      vim.notify("Failed to rename: " .. (err or "unknown"), vim.log.levels.ERROR)
     end
   end)
 end
