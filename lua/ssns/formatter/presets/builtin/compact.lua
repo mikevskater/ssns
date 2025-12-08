@@ -84,5 +84,32 @@ return {
     cte_parenthesis_style = "same_line",
     cte_columns_style = "inline",
     cte_separator_newline = false,
+
+    -- Casing (Phase 3) - uppercase keywords, preserve identifiers
+    function_case = "upper",
+    datatype_case = "upper",
+    identifier_case = "preserve",
+    alias_case = "preserve",
+
+    -- Spacing (Phase 3) - minimal spacing
+    comma_spacing = "after",
+    semicolon_spacing = false,
+    bracket_spacing = false,
+    equals_spacing = true,
+    concatenation_spacing = false,
+    comparison_spacing = true,
+
+    -- Blank lines (Phase 3) - minimal blank lines
+    blank_line_before_clause = false,
+    blank_line_after_go = 0,
+    blank_line_between_statements = 0,
+    blank_line_before_comment = false,
+    collapse_blank_lines = true,
+    max_consecutive_blank_lines = 1,
+
+    -- Comments (Phase 3) - preserve comments
+    comment_position = "preserve",
+    block_comment_style = "preserve",
+    inline_comment_align = false,
   },
 }
