@@ -10,3 +10,6 @@ nul
 
 # User themes (custom themes created by user)
 lua/ssns/ui/themes/user_themes/*.lua
+
+# User formatter presets (custom presets created by user)
+lua/ssns/formatter/presets/user/*.lua
