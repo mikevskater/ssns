@@ -166,6 +166,12 @@ function FormatterCommands.clear_cache()
   vim.notify("SSNS: Formatter cache cleared", vim.log.levels.INFO)
 end
 
+---Open formatter configuration UI
+function FormatterCommands.open_config()
+  local RulesEditor = require('ssns.formatter.rules_editor')
+  RulesEditor.show()
+end
+
 ---Register formatter commands
 function FormatterCommands.register_commands()
   -- :SSNSFormat - Format entire buffer
@@ -173,6 +179,13 @@ function FormatterCommands.register_commands()
     FormatterCommands.format_buffer()
   end, {
     desc = "Format entire SQL buffer",
+  })
+
+  -- :SSNSFormatterConfig - Open formatter configuration UI
+  vim.api.nvim_create_user_command("SSNSFormatterConfig", function()
+    FormatterCommands.open_config()
+  end, {
+    desc = "Open formatter configuration UI",
   })
 
   -- :SSNSFormatRange - Format visual selection
@@ -252,6 +265,7 @@ function FormatterCommands.setup_keymaps(bufnr)
   -- Get keymaps using KeymapManager
   local format_buffer_key = KeymapManager.get('formatter', 'format_buffer')
   local format_statement_key = KeymapManager.get('formatter', 'format_statement')
+  local open_config_key = KeymapManager.get('formatter', 'open_config')
 
   -- Build keymap definitions
   local keymaps = {}
@@ -297,6 +311,18 @@ function FormatterCommands.setup_keymaps(bufnr)
         FormatterCommands.format_statement()
       end,
       desc = 'SSNS: Format statement under cursor',
+    })
+  end
+
+  -- Open config UI keymap
+  if open_config_key and open_config_key ~= "" then
+    table.insert(keymaps, {
+      mode = 'n',
+      lhs = open_config_key,
+      rhs = function()
+        FormatterCommands.open_config()
+      end,
+      desc = 'SSNS: Open formatter config',
     })
   end
 

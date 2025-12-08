@@ -159,6 +159,7 @@
 ---@class FormatterKeymaps SQL formatter keymaps
 ---@field format_buffer string Format entire buffer (default: "<Leader>sf")
 ---@field format_statement string Format statement under cursor (default: "<Leader>ss")
+---@field open_config string Open formatter config UI (default: "<Leader>sc")
 
 ---@class TableHelpersConfig
 ---@field sqlserver table<string, string>? SQL Server helper templates
@@ -532,6 +533,7 @@ local default_config = {
     formatter = {
       format_buffer = "<Leader>sf",     -- Format entire buffer (also works for visual selection)
       format_statement = "<Leader>ss",  -- Format statement under cursor
+      open_config = "<Leader>sc",       -- Open formatter configuration UI
     },
   },
 
