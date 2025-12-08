@@ -9,6 +9,7 @@ return {
 
   {
     id = 8301,
+    type = "formatter",
     name = "format_simple_select_under_10ms",
     description = "Simple SELECT should format in under 10ms",
     input = "select id, name, email from users where active = 1",
@@ -21,6 +22,7 @@ return {
 
   {
     id = 8302,
+    type = "formatter",
     name = "format_medium_query_under_20ms",
     description = "Medium complexity query should format in under 20ms",
     input = [[
@@ -39,6 +41,7 @@ return {
 
   {
     id = 8303,
+    type = "formatter",
     name = "format_cte_query_under_25ms",
     description = "CTE query should format in under 25ms",
     input = [[
@@ -64,6 +67,7 @@ return {
 
   {
     id = 8304,
+    type = "formatter",
     name = "format_window_functions_under_20ms",
     description = "Window functions should format in under 20ms",
     input = [[
@@ -81,6 +85,7 @@ return {
 
   {
     id = 8305,
+    type = "formatter",
     name = "format_case_expressions_under_15ms",
     description = "CASE expressions should format in under 15ms",
     input = [[
@@ -106,6 +111,7 @@ return {
 
   {
     id = 8311,
+    type = "formatter",
     name = "format_20_column_select_under_20ms",
     description = "SELECT with 20 columns should format in under 20ms",
     input = "select col1, col2, col3, col4, col5, col6, col7, col8, col9, col10, " ..
@@ -119,6 +125,7 @@ return {
 
   {
     id = 8312,
+    type = "formatter",
     name = "format_10_join_query_under_30ms",
     description = "Query with 10 JOINs should format in under 30ms",
     input = [[
@@ -142,6 +149,7 @@ return {
 
   {
     id = 8313,
+    type = "formatter",
     name = "format_15_where_conditions_under_25ms",
     description = "Query with 15 WHERE conditions should format in under 25ms",
     input = [[
@@ -161,6 +169,7 @@ return {
 
   {
     id = 8314,
+    type = "formatter",
     name = "format_nested_subqueries_under_30ms",
     description = "Nested subqueries (4 levels) should format in under 30ms",
     input = [[
@@ -182,6 +191,7 @@ return {
 
   {
     id = 8315,
+    type = "formatter",
     name = "format_5_cte_query_under_35ms",
     description = "Query with 5 CTEs should format in under 35ms",
     input = [[
@@ -209,6 +219,7 @@ return {
 
   {
     id = 8321,
+    type = "formatter",
     name = "cache_hit_faster_than_cold",
     description = "Second format call should be faster due to caching",
     input = "select id, name from users where active = 1",
@@ -221,6 +232,7 @@ return {
 
   {
     id = 8322,
+    type = "formatter",
     name = "different_queries_no_false_cache_hit",
     description = "Different queries should not share cache entries",
     input = "select a from table1",
@@ -236,6 +248,7 @@ return {
 
   {
     id = 8331,
+    type = "formatter",
     name = "format_5_statements_under_40ms",
     description = "5 sequential statements should format in under 40ms",
     input = [[
@@ -253,6 +266,7 @@ return {
 
   {
     id = 8332,
+    type = "formatter",
     name = "format_dml_batch_under_30ms",
     description = "Mixed DML batch should format in under 30ms",
     input = [[
@@ -269,6 +283,7 @@ return {
 
   {
     id = 8333,
+    type = "formatter",
     name = "format_go_separated_batch_under_35ms",
     description = "GO-separated batch should format in under 35ms",
     input = [[
@@ -290,6 +305,7 @@ return {
 
   {
     id = 8341,
+    type = "formatter",
     name = "format_1000_char_query_under_50ms",
     description = "1000+ character query should format in under 50ms",
     input = "select " .. string.rep("col, ", 100) .. "final_col from very_long_table " ..
@@ -302,17 +318,20 @@ return {
 
   {
     id = 8342,
+    type = "formatter",
     name = "format_deep_expression_under_30ms",
     description = "Deeply nested expressions should format in under 30ms",
-    input = "select (((((a + b) * c) - d) / e) + f) as result from calc_table",
+    input = "select (((((a + b) * c) - d) / e) + f) as calc_result from calc_table",
     expected = {
-      contains = { "SELECT", "FROM", "result" },
+      -- Use calc_result instead of result to avoid keyword confusion
+      contains = { "SELECT", "FROM", "calc_result" },
       max_duration_ms = 30,
     },
   },
 
   {
     id = 8343,
+    type = "formatter",
     name = "format_many_in_values_under_25ms",
     description = "IN clause with many values should format in under 25ms",
     input = "select * from items where id in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, " ..
@@ -325,6 +344,7 @@ return {
 
   {
     id = 8344,
+    type = "formatter",
     name = "format_complex_production_query_under_60ms",
     description = "Complex production-style query should format in under 60ms",
     input = [[
@@ -370,6 +390,7 @@ return {
 
   {
     id = 8345,
+    type = "formatter",
     name = "format_empty_input_instant",
     description = "Empty input should return instantly",
     input = "",
@@ -381,6 +402,7 @@ return {
 
   {
     id = 8346,
+    type = "formatter",
     name = "format_whitespace_only_fast",
     description = "Whitespace-only input should handle quickly",
     input = "   \n\t  \n   ",
@@ -391,6 +413,7 @@ return {
 
   {
     id = 8347,
+    type = "formatter",
     name = "format_single_keyword_fast",
     description = "Single keyword should format instantly",
     input = "SELECT",
@@ -402,6 +425,7 @@ return {
 
   {
     id = 8348,
+    type = "formatter",
     name = "format_comments_only_fast",
     description = "Comment-only input should handle quickly",
     input = "-- This is a comment\n/* Block comment */",
@@ -413,6 +437,7 @@ return {
 
   {
     id = 8349,
+    type = "formatter",
     name = "format_unicode_identifiers_under_15ms",
     description = "Unicode identifiers should format correctly and quickly",
     input = "select [Имя], [名前], [שם] from [Таблица] where [Колонка] = 'значение'",
@@ -424,6 +449,7 @@ return {
 
   {
     id = 8350,
+    type = "formatter",
     name = "format_mixed_case_keywords_under_10ms",
     description = "Mixed case keywords should normalize quickly",
     input = "SeLeCt Id, NaMe FrOm UsErS wHeRe AcTiVe = 1",
