@@ -594,6 +594,11 @@ function parse_exec_statement(state, scope)
     chunk.token_end_idx = state.pos > 1 and state.pos - 1 or state.pos
   end
 
+  -- Extract parameters from token range
+  if chunk.token_start_idx and chunk.token_end_idx then
+    state:extract_all_parameters_from_tokens(chunk.token_start_idx, chunk.token_end_idx, chunk.parameters)
+  end
+
   return chunk
 end
 
@@ -613,6 +618,11 @@ function parse_set_statement(state, scope)
   -- Set token_end_idx manually since we don't call finalize_chunk
   if chunk.token_start_idx then
     chunk.token_end_idx = state.pos > 1 and state.pos - 1 or state.pos
+  end
+
+  -- Extract parameters from token range
+  if chunk.token_start_idx and chunk.token_end_idx then
+    state:extract_all_parameters_from_tokens(chunk.token_start_idx, chunk.token_end_idx, chunk.parameters)
   end
 
   return chunk
@@ -652,6 +662,10 @@ function StatementParser.parse(text)
       -- Create fresh scope for each statement
       local scope = ScopeContext.new(nil)
 
+      -- Save the start position (important for WITH...SELECT where WITH starts the statement)
+      local stmt_start_line = token.line
+      local stmt_start_col = token.col
+
       -- Handle WITH clause (CTEs) - capture the ordered array
       local parsed_ctes = nil
       if token.text:upper() == "WITH" then
@@ -670,6 +684,9 @@ function StatementParser.parse(text)
               table.insert(chunk.ctes, cte)
             end
           end
+          -- Fix start position to be at WITH, not SELECT
+          chunk.start_line = stmt_start_line
+          chunk.start_col = stmt_start_col
         end
 
         -- Extract parameters from entire statement (done by handlers)

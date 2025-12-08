@@ -163,7 +163,8 @@ function ParserState:consume_until_statement_end(paren_depth)
     end
 
     -- Stop at new statement starter (only at paren_depth 0)
-    if paren_depth == 0 and Keywords.is_statement_starter(token.text) then
+    -- Must check token type is keyword first, otherwise non-keywords might match
+    if paren_depth == 0 and token.type == "keyword" and Keywords.is_statement_starter(token.text) then
       break
     end
 
@@ -265,7 +266,63 @@ function ParserState:extract_all_parameters_from_tokens(start_idx, end_idx, targ
   local i = start_idx
   while i <= end_idx and i <= #self.tokens do
     local token = self.tokens[i]
-    if token.type == "at" then
+
+    -- Handle new unified variable token type (@var as single token)
+    if token.type == "variable" then
+      local full_name = token.text  -- Already includes @
+      local name = full_name:sub(2)  -- Remove @ prefix
+      local key = full_name:lower()
+
+      -- Check if this is a table variable (in FROM/JOIN context)
+      local is_table_ref = false
+      if i > 1 then
+        local prev_idx = i - 1
+        while prev_idx > 0 and self.tokens[prev_idx].type == "whitespace" do
+          prev_idx = prev_idx - 1
+        end
+        if prev_idx > 0 then
+          local prev = self.tokens[prev_idx]
+          if prev.type == "keyword" then
+            local kw = prev.text:upper()
+            if kw == "FROM" or kw == "JOIN" or kw == "INTO" then
+              is_table_ref = true
+            end
+          end
+        end
+      end
+
+      if not seen[key] and not is_table_ref then
+        seen[key] = true
+        table.insert(target_array, {
+          name = name,
+          full_name = full_name,
+          is_system = false,
+          line = token.line,
+          col = token.col,
+        })
+      end
+      i = i + 1
+
+    -- Handle new unified global_variable token type (@@var as single token)
+    elseif token.type == "global_variable" then
+      local full_name = token.text  -- Already includes @@
+      local name = full_name:sub(3)  -- Remove @@ prefix
+      local key = full_name:lower()
+
+      if not seen[key] then
+        seen[key] = true
+        table.insert(target_array, {
+          name = name,
+          full_name = full_name,
+          is_system = true,
+          line = token.line,
+          col = token.col,
+        })
+      end
+      i = i + 1
+
+    -- Legacy handling for at token (@) - keep for compatibility
+    elseif token.type == "at" then
       -- Look at next token(s) to build parameter
       local is_system = false
       local name_idx = i + 1
