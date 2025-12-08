@@ -21,7 +21,27 @@ function QualifiedName.parse(state)
   local parts = {}
   local prefix = ""  -- For # or ## temp table prefixes, or @ for table variables
 
-  -- Check for temp table prefix (# or ##)
+  -- Check for temp_table token (#temp or ##temp as single token)
+  if state:is_type("temp_table") then
+    local token = state:current()
+    -- The token text already includes the # or ## prefix
+    table.insert(parts, token.text)
+    state:advance()
+    -- Temp tables don't have additional qualified parts, return directly
+    return { server = nil, database = nil, schema = nil, name = token.text }
+  end
+
+  -- Check for variable token (@var as single token) - for table variables
+  if state:is_type("variable") then
+    local token = state:current()
+    -- The token text already includes the @ prefix
+    table.insert(parts, token.text)
+    state:advance()
+    -- Table variables don't have additional qualified parts, return directly
+    return { server = nil, database = nil, schema = nil, name = token.text }
+  end
+
+  -- Legacy handling for hash token (# or ##) - keep for compatibility
   if state:is_type("hash") then
     prefix = "#"
     state:advance()
@@ -30,7 +50,7 @@ function QualifiedName.parse(state)
       prefix = "##"
       state:advance()
     end
-  -- Check for table variable prefix (@)
+  -- Legacy handling for at token (@) - keep for compatibility
   elseif state:is_type("at") then
     prefix = "@"
     state:advance()
@@ -42,7 +62,7 @@ function QualifiedName.parse(state)
     return nil
   end
 
-  if token.type == "identifier" or token.type == "bracket_id" then
+  if token.type == "identifier" or token.type == "bracket_id" or token.type == "keyword" then
     local name = Helpers.strip_brackets(token.text)
     -- Prepend prefix if present (temp table or table variable)
     if prefix ~= "" then
