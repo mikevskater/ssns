@@ -181,14 +181,32 @@ local function needs_space_before(prev, curr, config)
     end
   end
 
-  -- No space between @ and identifier for variables
+  -- No space between @ and identifier for variables (legacy handling)
   if prev.type == "at" then
     return false
   end
 
-  -- Space before @ for variables (DECLARE @id, SET @var, etc.)
+  -- Space before @ for variables (DECLARE @id, SET @var, etc.) (legacy handling)
   if curr.type == "at" then
     if prev.type == "keyword" or prev.type == "identifier" then
+      return true
+    end
+  end
+
+  -- Space before variable (@var, @id) - new unified variable token type
+  if curr.type == "variable" then
+    if prev.type == "keyword" or prev.type == "identifier" or prev.type == "bracket_id" then
+      return true
+    end
+    -- Space after comma, paren_close, operator
+    if prev.type == "comma" or prev.type == "paren_close" or prev.type == "operator" then
+      return true
+    end
+  end
+
+  -- Space after variable (@var) before keywords/identifiers
+  if prev.type == "variable" then
+    if curr.type == "keyword" or curr.type == "identifier" or curr.type == "bracket_id" then
       return true
     end
   end
@@ -200,11 +218,11 @@ local function needs_space_before(prev, curr, config)
     end
   end
 
-  -- Space between keywords/identifiers
+  -- Space between keywords/identifiers (including variable tokens)
   if prev.type == "keyword" or prev.type == "identifier" or prev.type == "bracket_id" or
-     prev.type == "number" or prev.type == "string" then
+     prev.type == "number" or prev.type == "string" or prev.type == "variable" then
     if curr.type == "keyword" or curr.type == "identifier" or curr.type == "bracket_id" or
-       curr.type == "number" or curr.type == "string" or curr.type == "star" then
+       curr.type == "number" or curr.type == "string" or curr.type == "star" or curr.type == "variable" then
       return true
     end
   end
