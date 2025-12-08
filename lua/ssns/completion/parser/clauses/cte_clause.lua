@@ -54,7 +54,8 @@ function CteClauseParser.parse(state, scope)
     state:advance()
 
     -- Parse optional column list: WITH cte (col1, col2) AS (...)
-    local column_list = ColumnListParser.parse(state)
+    -- CTE column lists can include keywords as column names (e.g., Level in recursive CTEs)
+    local column_list = ColumnListParser.parse(state, { accept_keywords = true })
 
     -- Expect AS
     if not state:consume_keyword("AS") then
