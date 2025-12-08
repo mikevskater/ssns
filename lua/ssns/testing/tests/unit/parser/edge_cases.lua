@@ -693,7 +693,8 @@ return {
                 {
                     statement_type = "SELECT",
                     tables = {
-                        { name = "Employees", alias = "e" }
+                        { name = "Employees", alias = "e" },
+                        { name = "fn_GetOrders", alias = "o", is_tvf = true }
                     }
                 }
             }
@@ -709,7 +710,8 @@ return {
                 {
                     statement_type = "SELECT",
                     tables = {
-                        { name = "Employees", alias = "e" }
+                        { name = "Employees", alias = "e" },
+                        { name = "fn_GetOrders", alias = "o", is_tvf = true }
                     }
                 }
             }
