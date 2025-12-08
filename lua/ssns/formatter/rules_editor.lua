@@ -170,6 +170,26 @@ local RULE_DEFINITIONS = {
   { key = "comment_position", name = "Position", description = "Comment placement", type = "enum", options = {"preserve", "above", "inline"}, category = "Comments" },
   { key = "block_comment_style", name = "Block Style", description = "Block comment formatting", type = "enum", options = {"preserve", "reformat"}, category = "Comments" },
   { key = "inline_comment_align", name = "Align Inline", description = "Align inline comments", type = "boolean", category = "Comments" },
+
+  -- DDL rules (Phase 4)
+  { key = "create_table_column_newline", name = "Column Newline", description = "Each column definition on new line", type = "boolean", category = "DDL" },
+  { key = "create_table_constraint_newline", name = "Constraint Newline", description = "Constraints on new lines", type = "boolean", category = "DDL" },
+  { key = "alter_table_style", name = "ALTER Style", description = "ALTER TABLE statement layout", type = "enum", options = {"compact", "expanded"}, category = "DDL" },
+  { key = "drop_if_exists_style", name = "DROP IF EXISTS", description = "DROP IF EXISTS style", type = "enum", options = {"inline", "separate"}, category = "DDL" },
+  { key = "index_column_style", name = "Index Columns", description = "Index column list layout", type = "enum", options = {"inline", "stacked"}, category = "DDL" },
+  { key = "view_body_indent", name = "View Body Indent", description = "Indent level for view body", type = "number", min = 0, max = 4, step = 1, category = "DDL" },
+  { key = "procedure_param_style", name = "Proc Params", description = "Procedure parameter layout", type = "enum", options = {"inline", "stacked"}, category = "DDL" },
+  { key = "function_param_style", name = "Func Params", description = "Function parameter layout", type = "enum", options = {"inline", "stacked"}, category = "DDL" },
+
+  -- Expression rules (Phase 4)
+  { key = "case_style", name = "CASE Style", description = "CASE expression layout", type = "enum", options = {"inline", "stacked"}, category = "Expressions" },
+  { key = "case_when_indent", name = "WHEN Indent", description = "WHEN clause indent level", type = "number", min = 0, max = 4, step = 1, category = "Expressions" },
+  { key = "case_then_position", name = "THEN Position", description = "THEN position relative to WHEN", type = "enum", options = {"same_line", "new_line"}, category = "Expressions" },
+  { key = "subquery_paren_style", name = "Subquery Paren", description = "Subquery opening paren position", type = "enum", options = {"same_line", "new_line"}, category = "Expressions" },
+  { key = "function_arg_style", name = "Function Args", description = "Function argument layout", type = "enum", options = {"inline", "stacked"}, category = "Expressions" },
+  { key = "in_list_style", name = "IN List Style", description = "IN clause value list layout", type = "enum", options = {"inline", "stacked"}, category = "Expressions" },
+  { key = "expression_wrap_length", name = "Expr Wrap", description = "Wrap expressions at N chars (0=disable)", type = "number", min = 0, max = 200, step = 10, category = "Expressions" },
+  { key = "boolean_operator_newline", name = "Bool Op Newline", description = "Put AND/OR on new lines in expressions", type = "boolean", category = "Expressions" },
 }
 
 -- Sample SQL for live preview

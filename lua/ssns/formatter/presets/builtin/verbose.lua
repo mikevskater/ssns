@@ -111,5 +111,25 @@ return {
     comment_position = "preserve",
     block_comment_style = "preserve",
     inline_comment_align = true,
+
+    -- DDL (Phase 4) - expanded/stacked
+    create_table_column_newline = true,
+    create_table_constraint_newline = true,
+    alter_table_style = "expanded",
+    drop_if_exists_style = "separate",
+    index_column_style = "stacked",
+    view_body_indent = 2,
+    procedure_param_style = "stacked",
+    function_param_style = "stacked",
+
+    -- Expressions (Phase 4) - stacked/expanded
+    case_style = "stacked",
+    case_when_indent = 2,
+    case_then_position = "same_line",
+    subquery_paren_style = "new_line",
+    function_arg_style = "stacked",
+    in_list_style = "stacked",
+    expression_wrap_length = 60,
+    boolean_operator_newline = true,
   },
 }

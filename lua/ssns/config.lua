@@ -301,6 +301,24 @@
 ---@field comment_position string "preserve"|"above"|"inline" - Comment placement (default: "preserve")
 ---@field block_comment_style string "preserve"|"reformat" - Block comment formatting (default: "preserve")
 ---@field inline_comment_align boolean Align inline comments (default: false)
+-- DDL rules (Phase 4)
+---@field create_table_column_newline boolean Each column definition on new line (default: true)
+---@field create_table_constraint_newline boolean Constraints on new lines (default: true)
+---@field alter_table_style string "compact"|"expanded" - ALTER TABLE layout (default: "expanded")
+---@field drop_if_exists_style string "inline"|"separate" - DROP IF EXISTS style (default: "inline")
+---@field index_column_style string "inline"|"stacked" - Index column list layout (default: "inline")
+---@field view_body_indent number Indent level for view body (default: 1)
+---@field procedure_param_style string "inline"|"stacked" - Procedure parameter layout (default: "stacked")
+---@field function_param_style string "inline"|"stacked" - Function parameter layout (default: "stacked")
+-- Expression rules (Phase 4)
+---@field case_style string "inline"|"stacked" - CASE expression layout (default: "stacked")
+---@field case_when_indent number WHEN clause indent level (default: 1)
+---@field case_then_position string "same_line"|"new_line" - THEN position relative to WHEN (default: "same_line")
+---@field subquery_paren_style string "same_line"|"new_line" - Subquery opening paren position (default: "same_line")
+---@field function_arg_style string "inline"|"stacked" - Function argument layout (default: "inline")
+---@field in_list_style string "inline"|"stacked" - IN clause value list layout (default: "inline")
+---@field expression_wrap_length number Wrap long expressions at this length, 0=disable (default: 0)
+---@field boolean_operator_newline boolean Put AND/OR on new lines in expressions (default: false)
 ---@field rules FormatterRulesConfig Per-clause rule overrides
 
 ---@class FormatterRulesConfig
@@ -816,6 +834,26 @@ local default_config = {
     comment_position = "preserve",       -- "preserve"|"above"|"inline"
     block_comment_style = "preserve",    -- "preserve"|"reformat"
     inline_comment_align = false,        -- Align inline comments
+
+    -- DDL rules (Phase 4)
+    create_table_column_newline = true,  -- Each column on new line
+    create_table_constraint_newline = true, -- Constraints on new lines
+    alter_table_style = "expanded",      -- "compact"|"expanded"
+    drop_if_exists_style = "inline",     -- "inline"|"separate"
+    index_column_style = "inline",       -- "inline"|"stacked"
+    view_body_indent = 1,                -- Indent level for view body
+    procedure_param_style = "stacked",   -- "inline"|"stacked"
+    function_param_style = "stacked",    -- "inline"|"stacked"
+
+    -- Expression rules (Phase 4)
+    case_style = "stacked",              -- "inline"|"stacked"
+    case_when_indent = 1,                -- WHEN indent level
+    case_then_position = "same_line",    -- "same_line"|"new_line"
+    subquery_paren_style = "same_line",  -- "same_line"|"new_line"
+    function_arg_style = "inline",       -- "inline"|"stacked"
+    in_list_style = "inline",            -- "inline"|"stacked"
+    expression_wrap_length = 0,          -- Wrap at N chars (0=disable)
+    boolean_operator_newline = false,    -- AND/OR on new lines
 
     rules = {
       -- Per-clause rule overrides (optional)
