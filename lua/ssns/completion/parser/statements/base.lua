@@ -37,7 +37,7 @@ function BaseStatement.create_chunk(statement_type, start_token, go_batch_index,
   }
 end
 
----Finalize chunk after parsing (build aliases, resolve columns, copy subqueries)
+---Finalize chunk after parsing (build aliases, resolve columns, copy subqueries, extract parameters)
 ---@param chunk StatementChunk The chunk to finalize
 ---@param scope ScopeContext The scope context with parsed data
 ---@param state? ParserState Optional parser state for token index tracking
@@ -73,6 +73,11 @@ function BaseStatement.finalize_chunk(chunk, scope, state)
   -- Resolve column parent tables using aliases
   local Helpers = require('ssns.completion.parser.utils.helpers')
   Helpers.resolve_column_parents(chunk.columns, chunk.aliases, chunk.tables)
+
+  -- Extract parameters from token range
+  if state and chunk.token_start_idx and chunk.token_end_idx then
+    state:extract_all_parameters_from_tokens(chunk.token_start_idx, chunk.token_end_idx, chunk.parameters)
+  end
 end
 
 ---Update chunk end position from a token
