@@ -95,13 +95,13 @@ local function needs_space_before(prev, curr, config)
     return config.parenthesis_spacing
   end
 
-  -- Space after closing paren before keyword/identifier/operator (e.g., COUNT(*) AS, (a+b) * c)
+  -- Space after closing paren before keyword/identifier/operator/star (e.g., COUNT(*) AS, (a+b) * c)
   if prev.type == "paren_close" then
     if curr.type == "keyword" or curr.type == "identifier" or curr.type == "bracket_id" then
       return true
     end
     -- Space before operator after closing paren
-    if curr.type == "operator" then
+    if curr.type == "operator" or curr.type == "star" then
       return true
     end
   end
@@ -158,6 +158,26 @@ local function needs_space_before(prev, curr, config)
     end
     if config.operator_spacing then
       return true
+    end
+  end
+
+  -- Space around star when used as multiplication operator (between expressions)
+  -- e.g., "price * quantity", "(a + b) * c"
+  -- But NOT for SELECT * or table.* or function(*) patterns
+  if prev.type == "star" or curr.type == "star" then
+    -- After star: space if followed by identifier/keyword (price * quantity)
+    if prev.type == "star" then
+      if curr.type == "identifier" or curr.type == "keyword" or curr.type == "bracket_id" or
+         curr.type == "number" or curr.type == "paren_open" then
+        return true
+      end
+    end
+    -- Before star: space if preceded by identifier/number/closing paren (quantity *, 5 *, ) *)
+    if curr.type == "star" then
+      if prev.type == "identifier" or prev.type == "number" or
+         prev.type == "bracket_id" or prev.type == "paren_close" then
+        return true
+      end
     end
   end
 

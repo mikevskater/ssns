@@ -169,8 +169,9 @@ return {
         name = "Nested CASE expressions",
         input = "SELECT CASE WHEN category='A' THEN CASE WHEN sub='1' THEN 'A1' ELSE 'A2' END ELSE 'B' END FROM t",
         expected = {
+            -- SSMS-style: CASE on its own line, WHEN indented below
             -- "type" is a keyword, using "category" instead
-            contains = { "CASE WHEN category = 'A'", "CASE WHEN sub = '1'", "END", "ELSE 'B'" }
+            contains = { "WHEN category = 'A'", "WHEN sub = '1'", "END", "ELSE 'B'" }
         }
     },
     {

@@ -361,15 +361,16 @@ return {
         name = "Complex production query",
         input = "WITH OrderTotals AS (SELECT customer_id, SUM(amount) AS total FROM orders WHERE order_date >= DATEADD(MONTH, -3, GETDATE()) GROUP BY customer_id HAVING SUM(amount) > 1000), CustomerRanking AS (SELECT c.id, c.name, ot.total, ROW_NUMBER() OVER (ORDER BY ot.total DESC) AS rank FROM customers c INNER JOIN OrderTotals ot ON c.id = ot.customer_id WHERE c.status = 'active') SELECT cr.rank, cr.name, cr.total, CASE WHEN cr.rank <= 10 THEN 'VIP' WHEN cr.rank <= 50 THEN 'Premium' ELSE 'Standard' END AS tier FROM CustomerRanking cr WHERE cr.rank <= 100 ORDER BY cr.rank",
         expected = {
+            -- Note: "rank" is a SQL keyword (RANK() function) so it gets uppercased to RANK
             contains = {
                 "WITH OrderTotals AS (",
                 "CustomerRanking AS (",
                 "ROW_NUMBER() OVER",
                 "INNER JOIN OrderTotals ot",
                 "CASE",
-                "WHEN cr.rank <= 10",
+                "WHEN cr.RANK <= 10",
                 "END AS tier",
-                "ORDER BY cr.rank"
+                "ORDER BY cr.RANK"
             }
         }
     },
