@@ -243,7 +243,7 @@
 ---@field where_newline boolean WHERE on new line (default: true)
 ---@field where_condition_style string "inline"|"stacked"|"stacked_indent" - Conditions layout: inline=all on one line, stacked=AND/OR on new lines, stacked_indent=first condition on new line after WHERE (default: "stacked")
 ---@field where_and_or_indent number AND/OR indent level (default: 1)
----@field where_in_list_style string "inline"|"stacked" - IN list layout (default: "inline")
+---@field where_in_list_style string "inline"|"stacked"|"stacked_indent" - IN list layout (default: "inline")
 ---@field where_between_style string "inline"|"stacked" - BETWEEN values layout (default: "inline")
 ---@field where_exists_style string "inline"|"newline" - EXISTS subquery layout (default: "newline")
 -- JOIN clause rules (Phase 1)
@@ -316,7 +316,7 @@
 ---@field case_then_position string "same_line"|"new_line" - THEN position relative to WHEN (default: "same_line")
 ---@field subquery_paren_style string "same_line"|"new_line" - Subquery opening paren position (default: "same_line")
 ---@field function_arg_style string "inline"|"stacked" - Function argument layout (default: "inline")
----@field in_list_style string "inline"|"stacked" - IN clause value list layout (default: "inline")
+---@field in_list_style string "inline"|"stacked"|"stacked_indent" - IN clause value list layout (default: "inline")
 ---@field expression_wrap_length number Wrap long expressions at this length, 0=disable (default: 0)
 ---@field boolean_operator_newline boolean Put AND/OR on new lines in expressions (default: false)
 -- Indentation expansion (Phase 5)
@@ -779,7 +779,7 @@ local default_config = {
     where_newline = true,                -- WHERE on new line
     where_condition_style = "stacked",   -- "inline"|"stacked" - Conditions layout
     where_and_or_indent = 1,             -- AND/OR indent level
-    where_in_list_style = "inline",      -- "inline"|"stacked" - IN list layout
+    where_in_list_style = "inline",      -- "inline"|"stacked"|"stacked_indent" - IN list layout
     where_between_style = "inline",      -- "inline"|"stacked" - BETWEEN layout
     where_exists_style = "newline",      -- "inline"|"newline" - EXISTS subquery
 
@@ -862,7 +862,7 @@ local default_config = {
     case_then_position = "same_line",    -- "same_line"|"new_line"
     subquery_paren_style = "same_line",  -- "same_line"|"new_line"
     function_arg_style = "inline",       -- "inline"|"stacked"
-    in_list_style = "inline",            -- "inline"|"stacked"
+    in_list_style = "inline",            -- "inline"|"stacked"|"stacked_indent"
     expression_wrap_length = 0,          -- Wrap at N chars (0=disable)
     boolean_operator_newline = false,    -- AND/OR on new lines
 

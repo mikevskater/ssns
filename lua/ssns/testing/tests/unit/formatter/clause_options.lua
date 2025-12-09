@@ -2264,4 +2264,116 @@ return {
             contains = { "AND DATE BETWEEN", "OR status" }
         }
     },
+
+    -- ============================================
+    -- where_in_list_style tests (IDs: 8760-8769)
+    -- Controls formatting of IN (...) lists in WHERE clause
+    -- where_in_list_style takes precedence over in_list_style
+    -- ============================================
+    {
+        id = 8760,
+        type = "formatter",
+        name = "where_in_list_style inline (default) - all values on one line",
+        input = "SELECT * FROM users WHERE id IN (1, 2, 3, 4, 5)",
+        opts = { where_in_list_style = "inline" },
+        expected = {
+            contains = { "IN (1, 2, 3, 4, 5)" }
+        }
+    },
+    {
+        id = 8761,
+        type = "formatter",
+        name = "where_in_list_style stacked - each value on new line",
+        input = "SELECT * FROM users WHERE id IN (1, 2, 3)",
+        opts = { where_in_list_style = "stacked" },
+        expected = {
+            matches = { "IN %(1,\n.-2,\n.-3%)" }
+        }
+    },
+    {
+        id = 8762,
+        type = "formatter",
+        name = "where_in_list_style stacked_indent - first value on new line",
+        input = "SELECT * FROM users WHERE id IN (1, 2, 3)",
+        opts = { where_in_list_style = "stacked_indent" },
+        expected = {
+            -- Opening paren, then newline, then values stacked
+            matches = { "IN %(\n.-1,\n.-2,\n.-3" }
+        }
+    },
+    {
+        id = 8763,
+        type = "formatter",
+        name = "where_in_list_style stacked with string values",
+        input = "SELECT * FROM users WHERE status IN ('active', 'pending', 'approved')",
+        opts = { where_in_list_style = "stacked" },
+        expected = {
+            matches = { "IN %('active',\n.-'pending',\n.-'approved'%)" }
+        }
+    },
+    {
+        id = 8764,
+        type = "formatter",
+        name = "where_in_list_style takes precedence over in_list_style",
+        input = "SELECT * FROM users WHERE id IN (1, 2, 3)",
+        opts = { where_in_list_style = "stacked", in_list_style = "inline" },
+        expected = {
+            -- where_in_list_style should be used (stacked), not in_list_style (inline)
+            matches = { "IN %(1,\n.-2,\n.-3%)" }
+        }
+    },
+    {
+        id = 8765,
+        type = "formatter",
+        name = "where_in_list_style - in_list_style used as fallback",
+        input = "SELECT * FROM users WHERE id IN (1, 2, 3)",
+        opts = { in_list_style = "stacked" },
+        expected = {
+            -- in_list_style used when where_in_list_style not set
+            matches = { "IN %(1,\n.-2,\n.-3%)" }
+        }
+    },
+    {
+        id = 8766,
+        type = "formatter",
+        name = "where_in_list_style stacked - NOT IN also handled",
+        input = "SELECT * FROM users WHERE id NOT IN (1, 2, 3)",
+        opts = { where_in_list_style = "stacked" },
+        expected = {
+            matches = { "NOT IN %(1,\n.-2,\n.-3%)" }
+        }
+    },
+    {
+        id = 8767,
+        type = "formatter",
+        name = "where_in_list_style stacked_indent - proper indentation",
+        input = "SELECT * FROM users WHERE id IN (100, 200, 300)",
+        opts = { where_in_list_style = "stacked_indent" },
+        expected = {
+            -- Values should be indented (8 spaces - base + 2 levels)
+            matches = { "IN %(\n        100,\n        200,\n        300" }
+        }
+    },
+    {
+        id = 8768,
+        type = "formatter",
+        name = "where_in_list_style inline - nested function calls stay inline",
+        input = "SELECT * FROM users WHERE id IN (1, GETDATE(), 3)",
+        opts = { where_in_list_style = "inline" },
+        expected = {
+            contains = { "IN (1, GETDATE(), 3)" }
+        }
+    },
+    {
+        id = 8769,
+        type = "formatter",
+        name = "where_in_list_style stacked - with AND/OR conditions",
+        input = "SELECT * FROM users WHERE id IN (1, 2, 3) AND status = 'active'",
+        opts = { where_in_list_style = "stacked", and_or_position = "leading" },
+        expected = {
+            -- IN list stacked, AND on new line
+            matches = { "IN %(1,\n.-2,\n.-3%)" },
+            matches = { "\n.-AND status" }
+        }
+    },
 }

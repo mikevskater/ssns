@@ -177,7 +177,7 @@ function StructurePass.run(tokens, config)
       if state.in_in_list and state.in_list_paren_depth == 0 then
         state.in_list_paren_depth = state.paren_depth
         -- Check for stacked_indent - first value should be on new line
-        local style = config.in_list_style or config.where_in_list_style or "inline"
+        local style = config.where_in_list_style or config.in_list_style or "inline"
         if style == "stacked_indent" then
           state.pending_in_first = true
         end
@@ -556,7 +556,7 @@ function StructurePass.run(tokens, config)
           add_newline = true
         end
       elseif state.in_in_list and state.paren_depth == state.in_list_paren_depth then
-        local style = config.in_list_style or "inline"
+        local style = config.where_in_list_style or config.in_list_style or "inline"
         if style == "stacked" or style == "stacked_indent" then
           add_newline = true
           next_indent = state.base_indent + 2
