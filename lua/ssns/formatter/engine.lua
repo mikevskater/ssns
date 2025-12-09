@@ -30,23 +30,30 @@ local TokenCache = {
   ttl_ns = 60 * 1000000000, -- 60 seconds
 }
 
----Simple hash function for cache key
+---Hash function for cache key using DJB2 algorithm
+---DJB2 is a simple, fast hash with good distribution properties.
+---It processes every character, avoiding the collision issues of sampling.
 ---@param sql string
 ---@return string
 local function hash_sql(sql)
-  -- Use a combination of length and sampled characters for fast hashing
   local len = #sql
+  -- Short strings can use themselves as the key (faster lookup)
   if len <= 64 then
     return sql
   end
-  -- Sample characters at regular intervals + length
-  local parts = { tostring(len) }
-  local step = math.floor(len / 8)
-  for i = 1, len, step do
-    table.insert(parts, sql:sub(i, i))
+
+  -- DJB2 hash algorithm (processes all characters)
+  -- Uses 32-bit arithmetic to avoid Lua number precision issues
+  local hash = 5381
+  for i = 1, len do
+    local c = string.byte(sql, i)
+    -- hash = hash * 33 + c (using bit operations for speed)
+    -- We use modulo to keep it in 32-bit range
+    hash = ((hash * 33) + c) % 0x100000000
   end
-  table.insert(parts, sql:sub(-16))
-  return table.concat(parts)
+
+  -- Return as string with length prefix for extra collision resistance
+  return string.format("%d:%x", len, hash)
 end
 
 ---Get cached tokens or nil
