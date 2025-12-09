@@ -1038,4 +1038,82 @@ return {
             matches = { "FROM\n%s*%(" }
         }
     },
+
+    -- ============================================
+    -- function_arg_style tests (IDs: 8552-8559)
+    -- ============================================
+    {
+        id = 8552,
+        type = "formatter",
+        name = "function_arg_style inline (default) - COALESCE",
+        input = "SELECT COALESCE(a, b, c) FROM users",
+        opts = { function_arg_style = "inline" },
+        expected = {
+            contains = { "COALESCE(a, b, c)" }
+        }
+    },
+    {
+        id = 8553,
+        type = "formatter",
+        name = "function_arg_style stacked - COALESCE",
+        input = "SELECT COALESCE(a, b, c) FROM users",
+        opts = { function_arg_style = "stacked" },
+        expected = {
+            -- Args separated by newlines after commas
+            matches = { "COALESCE%(a,\n%s*b,\n%s*c%)" }
+        }
+    },
+    {
+        id = 8554,
+        type = "formatter",
+        name = "function_arg_style inline - nested functions",
+        input = "SELECT CONCAT(UPPER(a), LOWER(b)) FROM users",
+        opts = { function_arg_style = "inline" },
+        expected = {
+            contains = { "CONCAT(UPPER(a), LOWER(b))" }
+        }
+    },
+    {
+        id = 8555,
+        type = "formatter",
+        name = "function_arg_style stacked - nested functions",
+        input = "SELECT CONCAT(UPPER(a), LOWER(b)) FROM users",
+        opts = { function_arg_style = "stacked" },
+        expected = {
+            -- Outer function args stacked after commas, inner stay inline
+            matches = { "CONCAT%(UPPER%(a%),\n%s*LOWER%(b%)%)" }
+        }
+    },
+    {
+        id = 8556,
+        type = "formatter",
+        name = "function_arg_style inline - aggregate with single arg",
+        input = "SELECT COUNT(id), SUM(amount) FROM orders",
+        opts = { function_arg_style = "inline" },
+        expected = {
+            contains = { "COUNT(id)", "SUM(amount)" }
+        }
+    },
+    {
+        id = 8557,
+        type = "formatter",
+        name = "function_arg_style stacked - single arg functions stay inline",
+        input = "SELECT COUNT(id), SUM(amount) FROM orders",
+        opts = { function_arg_style = "stacked" },
+        expected = {
+            -- Single arg functions should stay inline
+            contains = { "COUNT(id)", "SUM(amount)" }
+        }
+    },
+    {
+        id = 8558,
+        type = "formatter",
+        name = "function_arg_style stacked_indent - COALESCE",
+        input = "SELECT COALESCE(a, b, c) FROM users",
+        opts = { function_arg_style = "stacked_indent" },
+        expected = {
+            -- stacked_indent puts first arg on new line after (
+            matches = { "COALESCE%(\n%s+a,\n%s+b,\n%s+c%)" }
+        }
+    },
 }

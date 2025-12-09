@@ -595,6 +595,12 @@ function Output.generate(tokens, config)
   local set_align_max_col_width = 0 -- Maximum column name width in SET clause
   local in_update_statement = false -- Track if we're in UPDATE statement
 
+  -- Phase 4: function_arg_style - track function call state
+  local pending_function_call = false -- Track if we just saw a function keyword
+  local function_call_stack = {} -- Stack of {paren_depth, arg_count} for nested function calls
+  local function_paren_depth = 0 -- Current parenthesis depth within function calls
+  local pending_function_stacked_indent_newline = false -- For stacked_indent: newline after function (
+
   -- Blank line tracking (Phase 3)
   local last_line_was_blank = false
   local consecutive_blank_lines = 0
@@ -643,6 +649,17 @@ function Output.generate(tokens, config)
       current_indent = token.indent_level or 0
       extra_indent = 1
       pending_in_stacked_indent_newline = false
+    end
+
+    -- Phase 4: Handle pending function_arg_style stacked_indent newline (first arg after function ()
+    if pending_function_stacked_indent_newline and not token.is_comment and token.type ~= "paren_close" then
+      -- First arg after function ( - add newline
+      needs_newline = true
+      if #function_call_stack > 0 then
+        current_indent = function_call_stack[#function_call_stack].base_indent or 0
+      end
+      extra_indent = 1
+      pending_function_stacked_indent_newline = false
     end
 
     -- Phase 4: Handle subquery_paren_style for subquery opening parens
@@ -1449,6 +1466,68 @@ function Output.generate(tokens, config)
         table.insert(current_line, indent)
       end
       line_just_started = true  -- Skip space before next token
+    end
+
+    -- Phase 4: function_arg_style - track function calls
+    -- When we see paren_open after function keyword, push onto function call stack
+    local func_style = config.function_arg_style or "inline"
+    if pending_function_call and token.type == "paren_open" then
+      pending_function_call = false
+      table.insert(function_call_stack, {
+        paren_depth = 1,
+        arg_count = 1,  -- First arg starts
+        base_indent = token.indent_level or 0
+      })
+      -- For stacked_indent, set flag to add newline after this paren
+      if func_style == "stacked_indent" then
+        pending_function_stacked_indent_newline = true
+      end
+    elseif #function_call_stack > 0 then
+      -- Track parenthesis depth within function calls
+      local current_func = function_call_stack[#function_call_stack]
+      if token.type == "paren_open" then
+        current_func.paren_depth = current_func.paren_depth + 1
+      elseif token.type == "paren_close" then
+        current_func.paren_depth = current_func.paren_depth - 1
+        if current_func.paren_depth <= 0 then
+          -- Exit this function call
+          table.remove(function_call_stack)
+        end
+      elseif token.type == "comma" and current_func.paren_depth == 1 then
+        -- Comma at function's own paren depth - this separates arguments
+        current_func.arg_count = current_func.arg_count + 1
+      end
+    end
+
+    -- Reset pending_function_call if we see something other than paren_open
+    if pending_function_call and token.type ~= "paren_open" and token.type ~= "whitespace" then
+      pending_function_call = false
+    end
+
+    -- Detect function keyword and set pending flag (AFTER reset check so it persists to next token)
+    if token.keyword_category == "function" then
+      pending_function_call = true
+    end
+
+    -- Phase 4: function_arg_style - handle comma in function calls for stacked style
+    local func_style = config.function_arg_style or "inline"
+    if token.type == "comma" and #function_call_stack > 0 and func_style ~= "inline" then
+      local current_func = function_call_stack[#function_call_stack]
+      -- Only stack if we're at the function's direct level (paren_depth == 1)
+      -- and the function has multiple args (don't stack single arg functions)
+      if current_func.paren_depth == 1 and current_func.arg_count >= 1 then
+        local line_text = table.concat(current_line, "")
+        if line_text:match("%S") then
+          table.insert(result, line_text)
+        end
+        current_line = {}
+        local base_indent = current_func.base_indent or 0
+        local indent = get_indent(config, base_indent + 1)
+        if indent ~= "" then
+          table.insert(current_line, indent)
+        end
+        line_just_started = true
+      end
     end
 
     -- Handle semicolon - end of statement
