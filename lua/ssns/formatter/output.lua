@@ -595,6 +595,10 @@ function Output.generate(tokens, config)
   local pending_values_stacked_indent_newline = false  -- For stacked_indent: newline after VALUES (
   local in_merge_statement = false
   local in_cte = false  -- Track if we're in CTE section
+  local in_cte_columns = false  -- Track if we're in CTE column list (cte_name (...) AS)
+  local in_cte_columns_paren = false  -- Inside CTE column list parentheses
+  local cte_columns_paren_depth = 0  -- Track parenthesis depth for CTE column list
+  local pending_cte_columns_stacked_indent_newline = false  -- For stacked_indent: newline after CTE name (
   local in_create_table = false  -- Track if we're in CREATE TABLE column definitions
   local create_table_paren_depth = 0  -- Track parenthesis depth for CREATE TABLE
   local pending_create = false  -- Track if we saw CREATE (waiting for TABLE/VIEW/etc)
@@ -651,6 +655,10 @@ function Output.generate(tokens, config)
     pending_values_stacked_indent_newline = false
     in_merge_statement = false
     in_cte = false
+    in_cte_columns = false
+    in_cte_columns_paren = false
+    cte_columns_paren_depth = 0
+    pending_cte_columns_stacked_indent_newline = false
     in_create_table = false
     create_table_paren_depth = 0
     pending_create = false
@@ -749,6 +757,15 @@ function Output.generate(tokens, config)
       current_indent = token.indent_level or 0
       extra_indent = 1
       pending_values_stacked_indent_newline = false
+    end
+
+    -- Phase 2: Handle pending cte_columns_style stacked_indent newline (first column after CTE name (...))
+    if pending_cte_columns_stacked_indent_newline and not token.is_comment and token.type ~= "paren_close" then
+      -- First column after CTE name ( - add newline
+      needs_newline = true
+      current_indent = token.indent_level or 0
+      extra_indent = 1
+      pending_cte_columns_stacked_indent_newline = false
     end
 
     -- Phase 4: Handle pending function_arg_style stacked_indent newline (first arg after function ()
@@ -1822,6 +1839,61 @@ function Output.generate(tokens, config)
     -- Phase 2: insert_values_style - each value in VALUES clause on new line
     local values_style = config.insert_values_style or "inline"
     if token.type == "comma" and in_values_paren and values_paren_depth == 1 and values_style ~= "inline" then
+      local line_text = table.concat(current_line, "")
+      if line_text:match("%S") then
+        table.insert(result, line_text)
+      end
+      current_line = {}
+      local base_indent = token.indent_level or 0
+      local indent = get_indent(config, base_indent + 1)
+      if indent ~= "" then
+        table.insert(current_line, indent)
+      end
+      line_just_started = true  -- Skip space before next token
+    end
+
+    -- Phase 2: CTE column list tracking
+    -- Detect CTE name token and set up for potential column list
+    if token.is_cte_name then
+      in_cte_columns = true  -- Expecting optional column list or AS
+    end
+
+    -- AS keyword ends CTE column context (whether or not there was a column list)
+    if token.is_cte_as and in_cte_columns then
+      in_cte_columns = false
+      in_cte_columns_paren = false
+      cte_columns_paren_depth = 0
+      pending_cte_columns_stacked_indent_newline = false
+    end
+
+    -- Track when we enter CTE column list parentheses
+    if in_cte_columns and not in_cte_columns_paren and token.type == "paren_open" then
+      -- Entering CTE column list parentheses
+      in_cte_columns_paren = true
+      cte_columns_paren_depth = 1
+
+      -- Check for stacked_indent - need newline after opening paren
+      local cte_col_style = config.cte_columns_style or "inline"
+      if cte_col_style == "stacked_indent" then
+        pending_cte_columns_stacked_indent_newline = true
+      end
+    elseif in_cte_columns_paren then
+      if token.type == "paren_open" then
+        cte_columns_paren_depth = cte_columns_paren_depth + 1
+      elseif token.type == "paren_close" then
+        cte_columns_paren_depth = cte_columns_paren_depth - 1
+        if cte_columns_paren_depth <= 0 then
+          -- Exiting CTE column list (but still in_cte_columns until AS)
+          in_cte_columns_paren = false
+          cte_columns_paren_depth = 0
+          pending_cte_columns_stacked_indent_newline = false
+        end
+      end
+    end
+
+    -- Phase 2: cte_columns_style - each column in CTE column list on new line
+    local cte_col_style = config.cte_columns_style or "inline"
+    if token.type == "comma" and in_cte_columns_paren and cte_columns_paren_depth == 1 and cte_col_style ~= "inline" then
       local line_text = table.concat(current_line, "")
       if line_text:match("%S") then
         table.insert(result, line_text)

@@ -2042,4 +2042,113 @@ return {
             matches = { "VALUES %(\n.-1,\n.-'John'%)" }
         }
     },
+
+    -- ============================================
+    -- cte_columns_style tests (IDs: 8740-8749)
+    -- ============================================
+    {
+        id = 8740,
+        type = "formatter",
+        name = "cte_columns_style inline (default) - all columns on one line",
+        input = "WITH cte (col1, col2, col3) AS (SELECT a, b, c FROM t) SELECT * FROM cte",
+        opts = { cte_columns_style = "inline" },
+        expected = {
+            -- Space between cte name and ( may or may not be present
+            matches = { "cte%s*%(col1, col2, col3%)" }
+        }
+    },
+    {
+        id = 8741,
+        type = "formatter",
+        name = "cte_columns_style stacked - each column on new line",
+        input = "WITH cte (col1, col2, col3) AS (SELECT a, b, c FROM t) SELECT * FROM cte",
+        opts = { cte_columns_style = "stacked" },
+        expected = {
+            matches = { "cte%s*%(col1,\n.-col2,\n.-col3%)" }
+        }
+    },
+    {
+        id = 8742,
+        type = "formatter",
+        name = "cte_columns_style stacked_indent - first column on new line",
+        input = "WITH cte (col1, col2, col3) AS (SELECT a, b, c FROM t) SELECT * FROM cte",
+        opts = { cte_columns_style = "stacked_indent" },
+        expected = {
+            matches = { "cte%s*%(\n.-col1,\n.-col2,\n.-col3" }
+        }
+    },
+    {
+        id = 8743,
+        type = "formatter",
+        name = "cte_columns_style stacked - CTE without column list unaffected",
+        input = "WITH cte AS (SELECT a, b FROM t) SELECT * FROM cte",
+        opts = { cte_columns_style = "stacked" },
+        expected = {
+            -- CTE without column list should work normally
+            contains = { "WITH cte AS" }
+        }
+    },
+    {
+        id = 8744,
+        type = "formatter",
+        name = "cte_columns_style stacked - multiple CTEs",
+        input = "WITH cte1 (a, b) AS (SELECT 1, 2), cte2 (x, y) AS (SELECT 3, 4) SELECT * FROM cte1, cte2",
+        opts = { cte_columns_style = "stacked" },
+        expected = {
+            -- Both CTEs should have stacked columns (no space between name and paren)
+            matches = { "cte1%s*%(a,\n.-b%)", "cte2%s*%(x,\n.-y%)" }
+        }
+    },
+    {
+        id = 8745,
+        type = "formatter",
+        name = "cte_columns_style inline - many columns stay on one line",
+        input = "WITH cte (a, b, c, d, e) AS (SELECT 1, 2, 3, 4, 5) SELECT * FROM cte",
+        opts = { cte_columns_style = "inline" },
+        expected = {
+            contains = { "(a, b, c, d, e)" }
+        }
+    },
+    {
+        id = 8746,
+        type = "formatter",
+        name = "cte_columns_style stacked - bracket identifiers",
+        input = "WITH cte ([col 1], [col 2]) AS (SELECT 1, 2) SELECT * FROM cte",
+        opts = { cte_columns_style = "stacked" },
+        expected = {
+            matches = { "%[col 1%],\n.-%[col 2%]" }
+        }
+    },
+    {
+        id = 8747,
+        type = "formatter",
+        name = "cte_columns_style stacked - RECURSIVE CTE",
+        input = "WITH RECURSIVE cte (n) AS (SELECT 1 UNION ALL SELECT n+1 FROM cte WHERE n < 10) SELECT * FROM cte",
+        opts = { cte_columns_style = "stacked" },
+        expected = {
+            -- Single column CTE - no comma, just verify structure works (no space between name and paren)
+            matches = { "RECURSIVE cte%s*%(n%)" }
+        }
+    },
+    {
+        id = 8748,
+        type = "formatter",
+        name = "cte_columns_style stacked_indent - closing paren after last column",
+        input = "WITH cte (a, b) AS (SELECT 1, 2) SELECT * FROM cte",
+        opts = { cte_columns_style = "stacked_indent" },
+        expected = {
+            -- First column on new line after (, closing paren on same line as last column
+            matches = { "cte%s*%(\n.-a,\n.-b%)" }
+        }
+    },
+    {
+        id = 8749,
+        type = "formatter",
+        name = "cte_columns_style inline - preserves column order",
+        input = "WITH cte (z_col, a_col, m_col) AS (SELECT 1, 2, 3) SELECT * FROM cte",
+        opts = { cte_columns_style = "inline" },
+        expected = {
+            contains = { "(z_col, a_col, m_col)" }
+        }
+    },
 }
