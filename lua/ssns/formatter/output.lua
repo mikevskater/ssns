@@ -469,6 +469,7 @@ function Output.generate(tokens, config)
   local in_cte = false  -- Track if we're in CTE section
   local pending_join = false -- Track if we're building a compound JOIN keyword
   local pending_stacked_indent_newline = false -- For stacked_indent: newline after SELECT
+  local pending_where_stacked_indent_newline = false -- For where stacked_indent: newline after WHERE
   local line_just_started = false -- Track if we just started a new line with indent
 
   -- Blank line tracking (Phase 3)
@@ -501,6 +502,15 @@ function Output.generate(tokens, config)
         pending_stacked_indent_newline = false
       end
       -- If it's a modifier, keep the flag active for next token
+    end
+
+    -- Phase 1: Handle pending where_condition_style stacked_indent newline (first condition after WHERE)
+    if pending_where_stacked_indent_newline and not token.is_comment then
+      -- First condition after WHERE - add newline
+      needs_newline = true
+      current_indent = token.indent_level or 0
+      extra_indent = 1
+      pending_where_stacked_indent_newline = false
     end
 
     -- Handle comments specially
@@ -573,6 +583,7 @@ function Output.generate(tokens, config)
         in_values_clause = false
         in_insert_columns = false
         pending_join = false
+        pending_where_stacked_indent_newline = false
       end
 
       if upper == "WITH" then
@@ -591,6 +602,11 @@ function Output.generate(tokens, config)
       elseif upper == "WHERE" then
         reset_clauses()
         in_where_clause = true
+        -- Phase 1: where_condition_style stacked_indent - set flag for first condition
+        local where_style = config.where_condition_style or "stacked"
+        if where_style == "stacked_indent" then
+          pending_where_stacked_indent_newline = true
+        end
       elseif upper == "GROUP" then
         reset_clauses()
         in_group_by_clause = true
@@ -752,7 +768,10 @@ function Output.generate(tokens, config)
     end
 
     -- Handle AND/OR positioning in WHERE clause
-    if in_where_clause and is_and_or(token) then
+    -- Phase 1: where_condition_style controls whether conditions are stacked
+    local where_style = config.where_condition_style or "stacked"
+    if in_where_clause and is_and_or(token) and where_style ~= "inline" then
+      -- stacked and stacked_indent both stack conditions
       if config.and_or_position == "leading" then
         needs_newline = true
         current_indent = token.indent_level or 0
@@ -892,6 +911,23 @@ function Output.generate(tokens, config)
     if token.type == "keyword" and string.upper(token.text) == "SELECT" and select_list_style == "stacked_indent" then
       -- Set flag - next token (first column) will trigger newline
       pending_stacked_indent_newline = true
+    end
+
+    -- Phase 1: Handle trailing AND/OR in WHERE clause (newline after AND/OR)
+    local where_cond_style = config.where_condition_style or "stacked"
+    if in_where_clause and is_and_or(token) and where_cond_style ~= "inline" and config.and_or_position == "trailing" then
+      local line_text = table.concat(current_line, "")
+      if line_text:match("%S") then
+        table.insert(result, line_text)
+      end
+      current_line = {}
+      -- Indent the next condition
+      local base_indent = token.indent_level or 0
+      local indent = get_indent(config, base_indent + (config.where_and_or_indent or 1))
+      if indent ~= "" then
+        table.insert(current_line, indent)
+      end
+      line_just_started = true  -- Skip space before next token
     end
 
     -- Handle trailing comma newline in SELECT list

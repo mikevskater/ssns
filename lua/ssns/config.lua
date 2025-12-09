@@ -241,7 +241,7 @@
 ---@field derived_table_style string "inline"|"newline" - Derived table opening paren position (default: "newline")
 -- WHERE clause rules (Phase 1)
 ---@field where_newline boolean WHERE on new line (default: true)
----@field where_condition_style string "inline"|"stacked" - Conditions layout (default: "stacked")
+---@field where_condition_style string "inline"|"stacked"|"stacked_indent" - Conditions layout: inline=all on one line, stacked=AND/OR on new lines, stacked_indent=first condition on new line after WHERE (default: "stacked")
 ---@field where_and_or_indent number AND/OR indent level (default: 1)
 ---@field where_in_list_style string "inline"|"stacked" - IN list layout (default: "inline")
 ---@field where_between_style string "inline"|"stacked" - BETWEEN values layout (default: "inline")

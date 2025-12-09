@@ -251,6 +251,72 @@ return {
         }
     },
 
+    -- where_condition_style tests
+    {
+        id = 8473,
+        type = "formatter",
+        name = "where_condition_style stacked - AND/OR on new lines",
+        input = "SELECT * FROM users WHERE a = 1 AND b = 2 AND c = 3",
+        opts = { where_condition_style = "stacked", and_or_position = "leading" },
+        expected = {
+            matches = { "WHERE a = 1\n.-AND b = 2\n.-AND c = 3" }
+        }
+    },
+    {
+        id = 8474,
+        type = "formatter",
+        name = "where_condition_style inline - all conditions on one line",
+        input = "SELECT * FROM users WHERE a = 1 AND b = 2 AND c = 3",
+        opts = { where_condition_style = "inline" },
+        expected = {
+            contains = { "WHERE a = 1 AND b = 2 AND c = 3" }
+        }
+    },
+    {
+        id = 8475,
+        type = "formatter",
+        name = "where_condition_style stacked_indent - first condition on new line",
+        input = "SELECT * FROM users WHERE a = 1 AND b = 2",
+        opts = { where_condition_style = "stacked_indent", and_or_position = "leading" },
+        expected = {
+            -- First condition on new line after WHERE, then AND on new line
+            matches = { "WHERE\n    a = 1\n    AND b = 2" }
+        }
+    },
+    {
+        id = 8476,
+        type = "formatter",
+        name = "where_condition_style stacked_indent - proper indentation",
+        input = "SELECT * FROM users WHERE active = 1 AND deleted = 0",
+        opts = { where_condition_style = "stacked_indent", and_or_position = "leading" },
+        expected = {
+            -- Both conditions should be indented
+            matches = { "WHERE\n    active = 1\n    AND deleted = 0" }
+        }
+    },
+    {
+        id = 8477,
+        type = "formatter",
+        name = "where_condition_style stacked with trailing AND",
+        input = "SELECT * FROM users WHERE a = 1 AND b = 2",
+        opts = { where_condition_style = "stacked", and_or_position = "trailing" },
+        expected = {
+            -- AND at end of line, next condition on new line
+            matches = { "WHERE a = 1 AND\n.-b = 2" }
+        }
+    },
+    {
+        id = 8478,
+        type = "formatter",
+        name = "where_condition_style inline ignores and_or_position",
+        input = "SELECT * FROM users WHERE x = 1 AND y = 2 OR z = 3",
+        opts = { where_condition_style = "inline", and_or_position = "leading" },
+        expected = {
+            -- Even with leading position, inline keeps everything on one line
+            contains = { "WHERE x = 1 AND y = 2 OR z = 3" }
+        }
+    },
+
     -- GROUP BY options
     {
         id = 8480,
