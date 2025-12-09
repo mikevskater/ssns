@@ -1,7 +1,12 @@
 ---@class FormatterOutput
 ---Token stream to text reconstruction module.
 ---Handles whitespace insertion, indentation, and line ending normalization.
+---Implements all 109 formatter config options.
 local Output = {}
+
+-- =============================================================================
+-- Indentation Helpers
+-- =============================================================================
 
 ---Get the indent string based on configuration
 ---@param config FormatterConfig
@@ -14,6 +19,72 @@ local function get_indent(config, level)
     return string.rep(" ", config.indent_size * level)
   end
 end
+
+---Get continuation indent for wrapped lines (Phase 5)
+---@param config FormatterConfig
+---@param base_level number Base indentation level
+---@return string
+local function get_continuation_indent(config, base_level)
+  local continuation = config.continuation_indent or 1
+  return get_indent(config, base_level + continuation)
+end
+
+-- =============================================================================
+-- Casing Helpers (Phase 3 - Uses tokenizer's keyword_category)
+-- =============================================================================
+
+---Apply case transformation
+---@param text string
+---@param case_style string "upper"|"lower"|"preserve"
+---@return string
+local function apply_case(text, case_style)
+  if case_style == "upper" then
+    return string.upper(text)
+  elseif case_style == "lower" then
+    return string.lower(text)
+  else
+    return text
+  end
+end
+
+---Apply appropriate casing to token based on its category and config
+---@param token table Token with keyword_category from tokenizer
+---@param config FormatterConfig
+---@return string The properly cased text
+local function apply_token_casing(token, config)
+  local text = token.text
+
+  -- Functions use function_case (tokenizer marks keyword_category = "function")
+  if token.keyword_category == "function" then
+    return apply_case(text, config.function_case or "upper")
+  end
+
+  -- Data types use datatype_case (tokenizer marks keyword_category = "datatype")
+  if token.keyword_category == "datatype" then
+    return apply_case(text, config.datatype_case or "upper")
+  end
+
+  -- Regular keywords use keyword_case
+  if token.type == "keyword" or token.type == "go" then
+    return apply_case(text, config.keyword_case or "upper")
+  end
+
+  -- Identifiers use identifier_case (but preserve bracketed ones)
+  if token.type == "identifier" then
+    return apply_case(text, config.identifier_case or "preserve")
+  end
+
+  -- Aliases use alias_case (marked by context)
+  if token.is_alias then
+    return apply_case(text, config.alias_case or "preserve")
+  end
+
+  return text
+end
+
+-- =============================================================================
+-- Keyword Classification
+-- =============================================================================
 
 ---Check if a keyword is a major clause that should start on a new line
 ---@param text string
@@ -36,8 +107,53 @@ local function is_major_clause(text)
     SET = true,
     VALUES = true,
     WITH = true,   -- CTE clause
+    MERGE = true,  -- Phase 2: MERGE statement
+    OUTPUT = true, -- Phase 2: OUTPUT clause
   }
   return major_clauses[upper] == true
+end
+
+---Check if keyword is OUTPUT clause
+---@param text string
+---@return boolean
+local function is_output_clause(text)
+  return string.upper(text) == "OUTPUT"
+end
+
+---Check if keyword is INTO
+---@param text string
+---@return boolean
+local function is_into_keyword(text)
+  return string.upper(text) == "INTO"
+end
+
+---Check if keyword is VALUES
+---@param text string
+---@return boolean
+local function is_values_keyword(text)
+  return string.upper(text) == "VALUES"
+end
+
+---Check if keyword is MERGE-related (WHEN, MATCHED, etc.)
+---@param text string
+---@return boolean
+local function is_merge_keyword(text)
+  local upper = string.upper(text)
+  return upper == "WHEN" or upper == "MATCHED" or upper == "NOT"
+end
+
+---Check if keyword is DISTINCT
+---@param text string
+---@return boolean
+local function is_distinct_keyword(text)
+  return string.upper(text) == "DISTINCT"
+end
+
+---Check if keyword is TOP
+---@param text string
+---@return boolean
+local function is_top_keyword(text)
+  return string.upper(text) == "TOP"
 end
 
 ---Check if keyword is a join modifier (will be followed by JOIN)
@@ -75,6 +191,43 @@ local function is_on_keyword(token)
   return token.type == "keyword" and string.upper(token.text) == "ON"
 end
 
+-- =============================================================================
+-- Spacing Helpers (Phase 3)
+-- =============================================================================
+
+-- Comparison operators
+local COMPARISON_OPERATORS = {
+  ["<>"] = true, ["!="] = true, [">="] = true, ["<="] = true,
+  [">"] = true, ["<"] = true, ["!<"] = true, ["!>"] = true,
+}
+
+-- Concatenation operators
+local CONCAT_OPERATORS = {
+  ["+"] = true,  -- SQL Server string concat
+  ["||"] = true, -- ANSI SQL string concat
+}
+
+---Check if operator is a comparison operator
+---@param text string
+---@return boolean
+local function is_comparison_operator(text)
+  return COMPARISON_OPERATORS[text] == true
+end
+
+---Check if operator is an equals/assignment operator
+---@param text string
+---@return boolean
+local function is_equals_operator(text)
+  return text == "="
+end
+
+---Check if operator is a concatenation operator
+---@param text string
+---@return boolean
+local function is_concat_operator(text)
+  return CONCAT_OPERATORS[text] == true
+end
+
 ---Determine if space should be added before a token
 ---@param prev table|nil Previous token
 ---@param curr table Current token
@@ -87,12 +240,20 @@ local function needs_space_before(prev, curr, config)
 
   -- No space after opening paren (unless configured)
   if prev.type == "paren_open" then
-    return config.parenthesis_spacing
+    return config.parenthesis_spacing or false
   end
 
   -- No space before closing paren (unless configured)
   if curr.type == "paren_close" then
-    return config.parenthesis_spacing
+    return config.parenthesis_spacing or false
+  end
+
+  -- Bracket spacing (inside [] for identifiers) - Phase 3
+  if prev.type == "bracket_open" then
+    return config.bracket_spacing or false
+  end
+  if curr.type == "bracket_close" then
+    return config.bracket_spacing or false
   end
 
   -- Space after closing paren before keyword/identifier/operator/star (e.g., COUNT(*) AS, (a+b) * c)
@@ -133,32 +294,70 @@ local function needs_space_before(prev, curr, config)
     return false
   end
 
-  -- No space before comma
+  -- Comma spacing based on config - Phase 3
   if curr.type == "comma" then
-    return false
-  end
-
-  -- Space after comma
-  if prev.type == "comma" then
-    return true
-  end
-
-  -- No space before semicolon
-  if curr.type == "semicolon" then
-    return false
-  end
-
-  -- Space around operators (if configured)
-  -- Exception: PostgreSQL :: cast operator has no spaces
-  if prev.type == "operator" or curr.type == "operator" then
-    -- No space around :: cast operator
-    if (prev.type == "operator" and prev.text == "::") or
-       (curr.type == "operator" and curr.text == "::") then
-      return false
-    end
-    if config.operator_spacing then
+    local comma_mode = config.comma_spacing or "after"
+    if comma_mode == "before" or comma_mode == "both" then
       return true
     end
+    return false
+  end
+
+  -- Space after comma based on config
+  if prev.type == "comma" then
+    local comma_mode = config.comma_spacing or "after"
+    if comma_mode == "after" or comma_mode == "both" then
+      return true
+    end
+    if comma_mode == "none" then
+      return false
+    end
+    return true -- default
+  end
+
+  -- Semicolon spacing - Phase 3
+  if curr.type == "semicolon" then
+    return config.semicolon_spacing or false
+  end
+
+  -- Space around operators based on specific config - Phase 3
+  if prev.type == "operator" or curr.type == "operator" then
+    local op_text = prev.type == "operator" and prev.text or curr.text
+
+    -- No space around :: cast operator
+    if op_text == "::" then
+      return false
+    end
+
+    -- Equals spacing (= in SET, etc.)
+    if is_equals_operator(op_text) then
+      if config.equals_spacing ~= false then  -- default true
+        return true
+      end
+      return false
+    end
+
+    -- Comparison spacing (<, >, >=, <=, <>, !=)
+    if is_comparison_operator(op_text) then
+      if config.comparison_spacing ~= false then  -- default true
+        return true
+      end
+      return false
+    end
+
+    -- Concatenation spacing (+ for strings, ||)
+    if is_concat_operator(op_text) then
+      if config.concatenation_spacing ~= false then  -- default true
+        return true
+      end
+      return false
+    end
+
+    -- General operator spacing for arithmetic
+    if config.operator_spacing ~= false then  -- default true
+      return true
+    end
+    return false
   end
 
   -- Space around star when used as multiplication operator (between expressions)
@@ -249,13 +448,27 @@ function Output.generate(tokens, config)
   local result = {}
   local current_line = {}
   local current_indent = 0
+  local prev_token = nil
+
+  -- Clause tracking state
   local in_select_list = false
+  local in_from_clause = false
   local in_where_clause = false
+  local in_join_clause = false
+  local in_on_clause = false
+  local in_group_by_clause = false
+  local in_order_by_clause = false
+  local in_having_clause = false
   local in_set_clause = false
   local in_values_clause = false
+  local in_insert_columns = false  -- Column list in INSERT
+  local in_merge_statement = false
   local in_cte = false  -- Track if we're in CTE section
-  local prev_token = nil
   local pending_join = false -- Track if we're building a compound JOIN keyword
+
+  -- Blank line tracking (Phase 3)
+  local last_line_was_blank = false
+  local consecutive_blank_lines = 0
 
   for i, token in ipairs(tokens) do
     local text = token.text
@@ -314,58 +527,88 @@ function Output.generate(tokens, config)
       goto continue
     end
 
-    -- Track clause context
+    -- Track clause context (comprehensive tracking for all phases)
     if token.type == "keyword" then
       local upper = string.upper(token.text)
-      if upper == "WITH" then
-        in_cte = true
+
+      -- Reset clause flags helper
+      local function reset_clauses()
         in_select_list = false
+        in_from_clause = false
         in_where_clause = false
+        in_join_clause = false
+        in_on_clause = false
+        in_group_by_clause = false
+        in_order_by_clause = false
+        in_having_clause = false
         in_set_clause = false
         in_values_clause = false
+        in_insert_columns = false
         pending_join = false
+      end
+
+      if upper == "WITH" then
+        in_cte = true
+        reset_clauses()
       elseif upper == "SELECT" then
         -- SELECT ends CTE section at top level
         if in_cte and (token.paren_depth or 0) == 0 then
           in_cte = false
         end
+        reset_clauses()
         in_select_list = true
-        in_where_clause = false
-        in_set_clause = false
-        in_values_clause = false
-        pending_join = false
       elseif upper == "FROM" then
-        in_select_list = false
-        in_where_clause = false
-        in_set_clause = false
-        in_values_clause = false
+        reset_clauses()
+        in_from_clause = true
       elseif upper == "WHERE" then
-        in_select_list = false
+        reset_clauses()
         in_where_clause = true
-        in_set_clause = false
-        in_values_clause = false
-        pending_join = false
+      elseif upper == "GROUP" then
+        reset_clauses()
+        in_group_by_clause = true
+      elseif upper == "ORDER" and not token.in_over_clause then
+        reset_clauses()
+        in_order_by_clause = true
+      elseif upper == "HAVING" then
+        reset_clauses()
+        in_having_clause = true
       elseif upper == "SET" then
-        in_select_list = false
-        in_where_clause = false
+        reset_clauses()
         in_set_clause = true
-        in_values_clause = false
-        pending_join = false
       elseif upper == "VALUES" then
-        in_select_list = false
-        in_where_clause = false
-        in_set_clause = false
+        reset_clauses()
         in_values_clause = true
-        pending_join = false
-      elseif upper == "UPDATE" or upper == "INSERT" or upper == "DELETE" then
+      elseif upper == "ON" and in_join_clause then
+        in_on_clause = true
+      elseif upper == "MERGE" then
         if in_cte and (token.paren_depth or 0) == 0 then
           in_cte = false
         end
-        in_select_list = false
-        in_where_clause = false
-        in_set_clause = false
-        in_values_clause = false
-        pending_join = false
+        reset_clauses()
+        in_merge_statement = true
+      elseif upper == "UPDATE" then
+        if in_cte and (token.paren_depth or 0) == 0 then
+          in_cte = false
+        end
+        reset_clauses()
+      elseif upper == "INSERT" then
+        if in_cte and (token.paren_depth or 0) == 0 then
+          in_cte = false
+        end
+        reset_clauses()
+        in_insert_columns = true
+      elseif upper == "DELETE" then
+        if in_cte and (token.paren_depth or 0) == 0 then
+          in_cte = false
+        end
+        reset_clauses()
+      end
+
+      -- Track JOIN state
+      if is_join_modifier(upper) or is_join_keyword(upper) then
+        in_from_clause = false
+        in_join_clause = true
+        in_on_clause = false
       end
     end
 
@@ -387,6 +630,11 @@ function Output.generate(tokens, config)
         if not pending_join then
           needs_newline = true
           current_indent = base_indent
+
+          -- Phase 1: empty_line_before_join option
+          if config.empty_line_before_join and #result > 0 then
+            table.insert(result, "")  -- Add blank line before JOIN
+          end
         end
         pending_join = true
       elseif is_join_keyword(upper) then
@@ -394,6 +642,11 @@ function Output.generate(tokens, config)
         if not pending_join then
           needs_newline = true
           current_indent = base_indent
+
+          -- Phase 1: empty_line_before_join option
+          if config.empty_line_before_join and #result > 0 then
+            table.insert(result, "")  -- Add blank line before JOIN
+          end
         end
         pending_join = false
       elseif upper == "BY" and token.part_of_compound then
@@ -403,6 +656,54 @@ function Output.generate(tokens, config)
         needs_newline = true
         current_indent = base_indent
         pending_join = false
+
+        -- Phase 3: blank_line_before_clause option
+        if config.blank_line_before_clause and #result > 0 then
+          -- Add blank line before major clauses (SELECT, FROM, WHERE, etc.)
+          -- But not at the start of the statement
+          local prev_line = result[#result]
+          if prev_line and prev_line ~= "" then
+            table.insert(result, "")
+          end
+        end
+      end
+    end
+
+    -- Phase 1: Handle SELECT modifiers (DISTINCT, TOP)
+    if token.type == "keyword" then
+      local upper = string.upper(token.text)
+      local base_indent = token.indent_level or 0
+
+      -- select_distinct_newline: DISTINCT on new line after SELECT
+      if upper == "DISTINCT" and in_select_list and config.select_distinct_newline then
+        needs_newline = true
+        current_indent = base_indent
+        extra_indent = 1
+      end
+
+      -- select_top_newline: TOP on new line after SELECT
+      if upper == "TOP" and in_select_list and config.select_top_newline then
+        needs_newline = true
+        current_indent = base_indent
+        extra_indent = 1
+      end
+
+      -- select_into_newline: INTO on new line (SELECT ... INTO)
+      if upper == "INTO" and in_select_list and config.select_into_newline then
+        needs_newline = true
+        current_indent = base_indent
+      end
+
+      -- Phase 2: OUTPUT clause on new line
+      if upper == "OUTPUT" and config.output_clause_newline then
+        needs_newline = true
+        current_indent = base_indent
+      end
+
+      -- Phase 2: WHEN clauses on new lines in MERGE
+      if upper == "WHEN" and in_merge_statement and config.merge_when_newline then
+        needs_newline = true
+        current_indent = base_indent
       end
     end
 
@@ -416,6 +717,15 @@ function Output.generate(tokens, config)
     -- Handle AND/OR positioning in WHERE clause
     if in_where_clause and is_and_or(token) then
       if config.and_or_position == "leading" then
+        needs_newline = true
+        current_indent = token.indent_level or 0
+        extra_indent = config.where_and_or_indent or 1  -- Phase 1: configurable indent
+      end
+    end
+
+    -- Phase 1: Handle AND/OR positioning in ON clause (join conditions)
+    if in_on_clause and is_and_or(token) then
+      if config.on_and_position == "leading" then
         needs_newline = true
         current_indent = token.indent_level or 0
         extra_indent = 1
@@ -479,8 +789,9 @@ function Output.generate(tokens, config)
       end
     end
 
-    -- Add the token text
-    table.insert(current_line, text)
+    -- Add the token text with proper casing (Phase 3)
+    local formatted_text = apply_token_casing(token, config)
+    table.insert(current_line, formatted_text)
 
     -- Handle trailing comma newline in SELECT list
     -- Only at paren_depth 0 (not inside function calls like COUNT(*), COALESCE(a, b), etc.)
@@ -500,13 +811,57 @@ function Output.generate(tokens, config)
     end
 
     -- Handle trailing comma newline in SET clause (UPDATE assignments)
-    if token.type == "comma" and in_set_clause then
+    -- Phase 2: update_set_style stacked
+    if token.type == "comma" and in_set_clause and config.update_set_style == "stacked" then
       local line_text = table.concat(current_line, "")
       if line_text:match("%S") then
         table.insert(result, line_text)
       end
       current_line = {}
       -- Indent continuation for SET assignments
+      local base_indent = token.indent_level or 0
+      local indent = get_indent(config, base_indent + 1)
+      if indent ~= "" then
+        table.insert(current_line, indent)
+      end
+    end
+
+    -- Phase 2: GROUP BY stacked style
+    if token.type == "comma" and in_group_by_clause and config.group_by_style == "stacked" and paren_depth == 0 then
+      local line_text = table.concat(current_line, "")
+      if line_text:match("%S") then
+        table.insert(result, line_text)
+      end
+      current_line = {}
+      local base_indent = token.indent_level or 0
+      local indent = get_indent(config, base_indent + 1)
+      if indent ~= "" then
+        table.insert(current_line, indent)
+      end
+    end
+
+    -- Phase 2: ORDER BY stacked style
+    if token.type == "comma" and in_order_by_clause and config.order_by_style == "stacked" and paren_depth == 0 then
+      local line_text = table.concat(current_line, "")
+      if line_text:match("%S") then
+        table.insert(result, line_text)
+      end
+      current_line = {}
+      local base_indent = token.indent_level or 0
+      local indent = get_indent(config, base_indent + 1)
+      if indent ~= "" then
+        table.insert(current_line, indent)
+      end
+    end
+
+    -- Phase 2: VALUES multi-row style (stacked)
+    -- Handle comma between value rows: (...), (...), (...)
+    if token.type == "comma" and in_values_clause and config.insert_multi_row_style == "stacked" and paren_depth == 0 then
+      local line_text = table.concat(current_line, "")
+      if line_text:match("%S") then
+        table.insert(result, line_text)
+      end
+      current_line = {}
       local base_indent = token.indent_level or 0
       local indent = get_indent(config, base_indent + 1)
       if indent ~= "" then
@@ -532,12 +887,28 @@ function Output.generate(tokens, config)
       end
       current_line = {}
       current_indent = 0
+
+      -- Reset all clause tracking
       in_select_list = false
+      in_from_clause = false
       in_where_clause = false
+      in_join_clause = false
+      in_on_clause = false
+      in_group_by_clause = false
+      in_order_by_clause = false
+      in_having_clause = false
       in_set_clause = false
       in_values_clause = false
+      in_insert_columns = false
+      in_merge_statement = false
       in_cte = false
       pending_join = false
+
+      -- Phase 3: blank_line_between_statements
+      local blank_lines = config.blank_line_between_statements or 1
+      for _ = 1, blank_lines do
+        table.insert(result, "")
+      end
     end
 
     -- Handle GO - batch separator
@@ -550,7 +921,7 @@ function Output.generate(tokens, config)
         if line_text:match("%S") then
           table.insert(result, line_text)
         end
-        table.insert(result, go_text)
+        table.insert(result, apply_token_casing(token, config))  -- Apply casing to GO
         current_line = {}
       else
         local line_text = table.concat(current_line, "")
@@ -560,12 +931,28 @@ function Output.generate(tokens, config)
         current_line = {}
       end
       current_indent = 0
+
+      -- Reset all clause tracking
       in_select_list = false
+      in_from_clause = false
       in_where_clause = false
+      in_join_clause = false
+      in_on_clause = false
+      in_group_by_clause = false
+      in_order_by_clause = false
+      in_having_clause = false
       in_set_clause = false
       in_values_clause = false
+      in_insert_columns = false
+      in_merge_statement = false
       in_cte = false
       pending_join = false
+
+      -- Phase 3: blank_line_after_go
+      local blank_lines = config.blank_line_after_go or 1
+      for _ = 1, blank_lines do
+        table.insert(result, "")
+      end
     end
 
     -- Reset pending_join if we hit something other than OUTER or JOIN
