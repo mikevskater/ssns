@@ -309,10 +309,8 @@ local function needs_space_before(prev, curr, config)
     if comma_mode == "after" or comma_mode == "both" then
       return true
     end
-    if comma_mode == "none" then
-      return false
-    end
-    return true -- default
+    -- "before" mode and "none" mode both have no space after
+    return false
   end
 
   -- Semicolon spacing - Phase 3
@@ -345,15 +343,16 @@ local function needs_space_before(prev, curr, config)
       return false
     end
 
-    -- Concatenation spacing (+ for strings, ||)
-    if is_concat_operator(op_text) then
+    -- Concatenation spacing (|| for ANSI SQL)
+    -- Note: + is both concat and arithmetic, so we use operator_spacing for +
+    if op_text == "||" then
       if config.concatenation_spacing ~= false then  -- default true
         return true
       end
       return false
     end
 
-    -- General operator spacing for arithmetic
+    -- General operator spacing for arithmetic (including +, -, *, /)
     if config.operator_spacing ~= false then  -- default true
       return true
     end
@@ -653,17 +652,26 @@ function Output.generate(tokens, config)
         -- BY is part of GROUP BY or ORDER BY, don't add newline
         needs_newline = false
       elseif is_major_clause(token.text) then
-        needs_newline = true
-        current_indent = base_indent
-        pending_join = false
+        -- Special handling for OUTPUT - controlled by output_clause_newline option
+        if upper == "OUTPUT" then
+          if config.output_clause_newline then
+            needs_newline = true
+            current_indent = base_indent
+          end
+          -- If output_clause_newline is false, don't add newline
+        else
+          needs_newline = true
+          current_indent = base_indent
+          pending_join = false
 
-        -- Phase 3: blank_line_before_clause option
-        if config.blank_line_before_clause and #result > 0 then
-          -- Add blank line before major clauses (SELECT, FROM, WHERE, etc.)
-          -- But not at the start of the statement
-          local prev_line = result[#result]
-          if prev_line and prev_line ~= "" then
-            table.insert(result, "")
+          -- Phase 3: blank_line_before_clause option
+          if config.blank_line_before_clause and #result > 0 then
+            -- Add blank line before major clauses (SELECT, FROM, WHERE, etc.)
+            -- But not at the start of the statement
+            local prev_line = result[#result]
+            if prev_line and prev_line ~= "" then
+              table.insert(result, "")
+            end
           end
         end
       end
@@ -690,18 +698,6 @@ function Output.generate(tokens, config)
 
       -- select_into_newline: INTO on new line (SELECT ... INTO)
       if upper == "INTO" and in_select_list and config.select_into_newline then
-        needs_newline = true
-        current_indent = base_indent
-      end
-
-      -- Phase 2: OUTPUT clause on new line
-      if upper == "OUTPUT" and config.output_clause_newline then
-        needs_newline = true
-        current_indent = base_indent
-      end
-
-      -- Phase 2: WHEN clauses on new lines in MERGE
-      if upper == "WHEN" and in_merge_statement and config.merge_when_newline then
         needs_newline = true
         current_indent = base_indent
       end
@@ -771,6 +767,28 @@ function Output.generate(tokens, config)
       if upper == "UNION" or upper == "INTERSECT" or upper == "EXCEPT" then
         local union_indent = config.union_indent or 0
         current_indent = union_indent
+      end
+    end
+
+    -- Phase 2: CTE AS position - cte_as_position (must be before newline application)
+    if token.is_cte_as and config.cte_as_position == "new_line" then
+      needs_newline = true
+      current_indent = token.indent_level or 0
+    end
+
+    -- Phase 2: CTE parenthesis style - cte_parenthesis_style
+    if token.starts_cte_body and config.cte_parenthesis_style == "new_line" then
+      needs_newline = true
+      current_indent = config.cte_indent or 1
+    end
+
+    -- Note: OUTPUT clause newline handling is in is_major_clause section above
+
+    -- Phase 2: MERGE WHEN clauses on new line (use token marker from engine)
+    if token.is_merge_when then
+      if config.merge_when_newline then
+        needs_newline = true
+        current_indent = token.indent_level or 0
       end
     end
 
@@ -907,30 +925,6 @@ function Output.generate(tokens, config)
       -- If cte_separator_newline is false and compact style, don't add newline
       if config.cte_separator_newline then
         -- Newline after comma is already handled by finishing the line
-      end
-    end
-
-    -- Phase 2: CTE AS position - cte_as_position
-    if token.is_cte_as and config.cte_as_position == "new_line" then
-      needs_newline = true
-      current_indent = token.indent_level or 0
-    end
-
-    -- Phase 2: CTE parenthesis style - cte_parenthesis_style
-    if token.starts_cte_body and config.cte_parenthesis_style == "new_line" then
-      -- Need to put opening paren on new line
-      -- This requires finishing current line first
-      if #current_line > 0 then
-        local line_text = table.concat(current_line, "")
-        if line_text:match("%S") then
-          table.insert(result, line_text)
-        end
-        current_line = {}
-      end
-      local cte_indent = config.cte_indent or 1
-      local indent = get_indent(config, cte_indent)
-      if indent ~= "" then
-        table.insert(current_line, indent)
       end
     end
 

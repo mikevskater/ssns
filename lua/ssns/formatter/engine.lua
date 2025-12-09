@@ -130,6 +130,12 @@ local function create_state()
     -- Window function (OVER clause) tracking
     in_over = false,           -- Currently inside OVER clause
     over_paren_depth = 0,      -- Paren depth when entering OVER
+    -- DML statement tracking
+    in_merge = false,          -- Currently inside MERGE statement
+    in_insert = false,         -- Currently inside INSERT statement
+    insert_expecting_table = false,  -- Expecting table name after INSERT INTO
+    in_values = false,         -- Currently inside VALUES clause
+    in_update = false,         -- Currently inside UPDATE statement
   }
 end
 
@@ -280,6 +286,9 @@ local DEFAULT_CONFIG = {
   -- Phase 5: Advanced
   union_indent = 0,
   continuation_indent = 1,
+  -- Indentation
+  subquery_indent = 1,
+  case_indent = 1,
 }
 
 ---Merge provided config with defaults
@@ -487,6 +496,86 @@ function Engine.format(sql, config, opts)
           if state.in_over then
             processed.in_over_clause = true
           end
+        end
+
+        -- Handle OUTPUT clause (SQL Server INSERT/UPDATE/DELETE OUTPUT)
+        if upper == "OUTPUT" then
+          processed.is_output_clause = true
+          -- Check if INSERTED or DELETED follows
+          local next_idx = i + 1
+          while next_idx <= #tokens and
+                (tokens[next_idx].type == "comment" or tokens[next_idx].type == "line_comment") do
+            next_idx = next_idx + 1
+          end
+          if next_idx <= #tokens and tokens[next_idx].type == "keyword" then
+            local next_upper = string.upper(tokens[next_idx].text)
+            if next_upper == "INSERTED" or next_upper == "DELETED" then
+              processed.output_target = next_upper
+            end
+          end
+        elseif upper == "INSERTED" or upper == "DELETED" then
+          -- Check if preceded by OUTPUT
+          local prev_idx = i - 1
+          while prev_idx >= 1 and
+                (tokens[prev_idx].type == "comment" or tokens[prev_idx].type == "line_comment") do
+            prev_idx = prev_idx - 1
+          end
+          if prev_idx >= 1 and tokens[prev_idx].type == "keyword" and
+             string.upper(tokens[prev_idx].text) == "OUTPUT" then
+            processed.is_output_target = true
+          end
+        end
+
+        -- Handle MERGE statement tracking
+        if upper == "MERGE" then
+          state.in_merge = true
+          processed.is_merge_start = true
+        elseif upper == "USING" and state.in_merge then
+          processed.is_merge_using = true
+        elseif upper == "WHEN" and state.in_merge then
+          processed.is_merge_when = true
+          -- Check for MATCHED/NOT MATCHED
+          local next_idx = i + 1
+          while next_idx <= #tokens and
+                (tokens[next_idx].type == "comment" or tokens[next_idx].type == "line_comment") do
+            next_idx = next_idx + 1
+          end
+          if next_idx <= #tokens and tokens[next_idx].type == "keyword" then
+            local next_upper = string.upper(tokens[next_idx].text)
+            if next_upper == "MATCHED" or next_upper == "NOT" then
+              processed.merge_when_type = next_upper == "NOT" and "not_matched" or "matched"
+            end
+          end
+        elseif upper == "MATCHED" and state.in_merge then
+          processed.is_merge_matched = true
+        end
+
+        -- Handle INSERT statement tracking
+        if upper == "INSERT" then
+          state.in_insert = true
+          state.insert_expecting_table = true
+          processed.is_insert_start = true
+        elseif upper == "INTO" and state.in_insert then
+          -- INTO after INSERT
+          processed.is_insert_into = true
+        elseif upper == "VALUES" then
+          state.in_values = true
+          state.insert_expecting_table = false
+          processed.is_values_keyword = true
+          if state.in_insert then
+            state.in_insert = false
+          end
+        end
+
+        -- Handle UPDATE statement tracking
+        if upper == "UPDATE" then
+          state.in_update = true
+          processed.is_update_start = true
+        elseif upper == "SET" and state.in_update then
+          processed.is_update_set = true
+        elseif upper == "FROM" and state.in_update then
+          -- SQL Server UPDATE...FROM syntax
+          processed.is_update_from = true
         end
 
         -- Handle CASE expression tracking
