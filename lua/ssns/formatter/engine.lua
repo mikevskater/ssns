@@ -134,6 +134,7 @@ local function create_state()
     in_merge = false,          -- Currently inside MERGE statement
     in_insert = false,         -- Currently inside INSERT statement
     insert_expecting_table = false,  -- Expecting table name after INSERT INTO
+    insert_has_into = false,   -- INSERT has INTO keyword
     in_values = false,         -- Currently inside VALUES clause
     in_update = false,         -- Currently inside UPDATE statement
     in_delete = false,         -- Currently inside DELETE statement
@@ -263,6 +264,7 @@ local DEFAULT_CONFIG = {
   insert_columns_style = "inline",
   insert_values_style = "inline",
   insert_multi_row_style = "stacked",
+  insert_into_keyword = false,  -- Enforce INTO keyword in INSERT (default: false for backward compat)
   output_clause_newline = true,
   merge_when_newline = true,
   -- Phase 2: CTE
@@ -568,9 +570,12 @@ function Engine.format(sql, config, opts)
         if upper == "INSERT" then
           state.in_insert = true
           state.insert_expecting_table = true
+          state.insert_has_into = false  -- Track if INTO keyword is present
           processed.is_insert_start = true
         elseif upper == "INTO" and state.in_insert then
           -- INTO after INSERT
+          state.insert_has_into = true
+          state.insert_expecting_table = true  -- Now expecting table name
           processed.is_insert_into = true
         elseif upper == "VALUES" then
           state.in_values = true
@@ -734,6 +739,16 @@ function Engine.format(sql, config, opts)
         processed.is_delete_alias = true
         state.delete_expecting_alias_or_from = false
         -- Still in_delete, waiting for FROM
+      end
+
+      -- Handle INSERT table name (detect if INTO is missing)
+      -- Pattern: INSERT tablename ... (without INTO)
+      if (token.type == "identifier" or token.type == "bracket_id") and state.in_insert and state.insert_expecting_table then
+        if not state.insert_has_into then
+          -- Table name directly after INSERT without INTO - mark for INTO insertion
+          processed.needs_into_keyword = true
+        end
+        state.insert_expecting_table = false
       end
 
       -- Preserve comments - pass through with metadata

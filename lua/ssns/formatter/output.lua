@@ -1263,6 +1263,12 @@ function Output.generate(tokens, config)
       table.insert(current_line, case_fn("AS") .. " ")
     end
 
+    -- Phase 2: insert_into_keyword - insert INTO before table name if missing
+    if token.needs_into_keyword and config.insert_into_keyword then
+      local case_fn = (config.keyword_case == "lower") and string.lower or string.upper
+      table.insert(current_line, case_fn("INTO") .. " ")
+    end
+
     table.insert(current_line, formatted_text)
 
     -- Phase 1: select_list_style stacked_indent - set flag to add newline before first column

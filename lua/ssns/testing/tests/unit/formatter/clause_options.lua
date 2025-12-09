@@ -1386,4 +1386,60 @@ return {
             not_matches = { "\n\n\n%s*%-%-" }
         }
     },
+
+    -- =========================================================================
+    -- insert_into_keyword tests (Phase 2: DML)
+    -- =========================================================================
+    {
+        id = 8583,
+        type = "formatter",
+        name = "insert_into_keyword true - adds INTO when missing",
+        input = "INSERT users (name) VALUES ('test')",
+        opts = { insert_into_keyword = true },
+        expected = {
+            contains = { "INSERT INTO users" }
+        }
+    },
+    {
+        id = 8584,
+        type = "formatter",
+        name = "insert_into_keyword true - keeps INTO when present",
+        input = "INSERT INTO users (name) VALUES ('test')",
+        opts = { insert_into_keyword = true },
+        expected = {
+            contains = { "INSERT INTO users" },
+            not_contains = { "INTO INTO" }
+        }
+    },
+    {
+        id = 8585,
+        type = "formatter",
+        name = "insert_into_keyword false - no change",
+        input = "INSERT users (name) VALUES ('test')",
+        opts = { insert_into_keyword = false },
+        expected = {
+            contains = { "INSERT users" },
+            not_contains = { "INSERT INTO" }
+        }
+    },
+    {
+        id = 8586,
+        type = "formatter",
+        name = "insert_into_keyword - schema qualified table",
+        input = "INSERT dbo.users (name) VALUES ('test')",
+        opts = { insert_into_keyword = true },
+        expected = {
+            contains = { "INSERT INTO dbo.users" }
+        }
+    },
+    {
+        id = 8587,
+        type = "formatter",
+        name = "insert_into_keyword - lowercase keyword case",
+        input = "INSERT users (name) VALUES ('test')",
+        opts = { insert_into_keyword = true, keyword_case = "lower" },
+        expected = {
+            contains = { "insert into users" }
+        }
+    },
 }
