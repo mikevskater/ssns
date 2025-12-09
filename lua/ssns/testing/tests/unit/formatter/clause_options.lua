@@ -1116,4 +1116,89 @@ return {
             matches = { "COALESCE%(\n%s+a,\n%s+b,\n%s+c%)" }
         }
     },
+
+    -- ============================================
+    -- group_by_newline, having_newline, order_by_newline tests (IDs: 8559-8570)
+    -- ============================================
+    {
+        id = 8559,
+        type = "formatter",
+        name = "group_by_newline true (default)",
+        input = "SELECT a, COUNT(*) FROM users GROUP BY a",
+        opts = { group_by_newline = true },
+        expected = {
+            matches = { "users\nGROUP BY" }
+        }
+    },
+    {
+        id = 8560,
+        type = "formatter",
+        name = "group_by_newline false",
+        input = "SELECT a, COUNT(*) FROM users GROUP BY a",
+        opts = { group_by_newline = false },
+        expected = {
+            contains = { "users GROUP BY" }
+        }
+    },
+    {
+        id = 8561,
+        type = "formatter",
+        name = "having_newline true (default)",
+        input = "SELECT a FROM users GROUP BY a HAVING COUNT(*) > 1",
+        opts = { having_newline = true },
+        expected = {
+            matches = { "a\nHAVING" }
+        }
+    },
+    {
+        id = 8562,
+        type = "formatter",
+        name = "having_newline false",
+        input = "SELECT a FROM users GROUP BY a HAVING COUNT(*) > 1",
+        opts = { having_newline = false },
+        expected = {
+            contains = { "a HAVING" }
+        }
+    },
+    {
+        id = 8563,
+        type = "formatter",
+        name = "order_by_newline true (default)",
+        input = "SELECT a FROM users ORDER BY a",
+        opts = { order_by_newline = true },
+        expected = {
+            matches = { "users\nORDER BY" }
+        }
+    },
+    {
+        id = 8564,
+        type = "formatter",
+        name = "order_by_newline false",
+        input = "SELECT a FROM users ORDER BY a",
+        opts = { order_by_newline = false },
+        expected = {
+            contains = { "users ORDER BY" }
+        }
+    },
+    {
+        id = 8565,
+        type = "formatter",
+        name = "all clause newlines disabled",
+        input = "SELECT a FROM users GROUP BY a HAVING COUNT(*) > 1 ORDER BY a",
+        opts = { group_by_newline = false, having_newline = false, order_by_newline = false },
+        expected = {
+            contains = { "users GROUP BY a HAVING COUNT(*) > 1 ORDER BY a" }
+        }
+    },
+    {
+        id = 8566,
+        type = "formatter",
+        name = "ORDER BY in OVER clause - not affected by order_by_newline",
+        input = "SELECT ROW_NUMBER() OVER (ORDER BY id) FROM users",
+        opts = { order_by_newline = true },
+        expected = {
+            -- ORDER BY inside OVER should stay inline
+            contains = { "OVER (ORDER BY" }
+        }
+    },
 }

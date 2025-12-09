@@ -995,6 +995,27 @@ function Output.generate(tokens, config)
             current_indent = base_indent
           end
           -- If where_newline is false, WHERE stays on same line
+        -- Special handling for GROUP (BY) clause - controlled by group_by_newline option
+        elseif upper == "GROUP" then
+          if config.group_by_newline ~= false then  -- Default is true
+            needs_newline = true
+            current_indent = base_indent
+          end
+          -- If group_by_newline is false, GROUP BY stays on same line
+        -- Special handling for HAVING clause - controlled by having_newline option
+        elseif upper == "HAVING" then
+          if config.having_newline ~= false then  -- Default is true
+            needs_newline = true
+            current_indent = base_indent
+          end
+          -- If having_newline is false, HAVING stays on same line
+        -- Special handling for ORDER (BY) clause - controlled by order_by_newline option
+        elseif upper == "ORDER" and not token.in_over_clause then
+          if config.order_by_newline ~= false then  -- Default is true
+            needs_newline = true
+            current_indent = base_indent
+          end
+          -- If order_by_newline is false, ORDER BY stays on same line
         else
           needs_newline = true
           current_indent = base_indent
