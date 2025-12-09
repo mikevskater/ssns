@@ -908,6 +908,15 @@ function Output.generate(tokens, config)
     -- Handle CTE separator comma (newline after)
     -- This will be handled after adding the token
 
+    -- Check if we should skip this token early (for join_keyword_style)
+    -- This must be done before adding spaces/newlines
+    if skip_token then
+      -- Reset skip flag and don't output this token
+      -- Also don't update prev_token so spacing works correctly
+      skip_token = false
+      goto continue
+    end
+
     -- Apply newline if needed
     if needs_newline and #current_line > 0 then
       -- Finish current line
@@ -936,43 +945,37 @@ function Output.generate(tokens, config)
     end
 
     -- Add the token text with proper casing (Phase 3)
-    -- But first check if we should skip this token (for join_keyword_style)
-    if skip_token then
-      -- Reset skip flag and don't output this token
-      skip_token = false
-    else
-      local formatted_text = apply_token_casing(token, config)
+    local formatted_text = apply_token_casing(token, config)
 
-      -- Phase 1: join_keyword_style "full" - insert OUTER before JOIN if needed
-      -- "preserve" (default) keeps original, "full" expands, "short" abbreviates
-      local join_style = config.join_keyword_style or "preserve"
-      if is_join_keyword(string.upper(token.text)) and join_style == "full" then
-        -- Check what modifiers we have
-        local has_outer = false
-        local has_inner = false
-        local has_left_right_full = false
+    -- Phase 1: join_keyword_style "full" - insert OUTER before JOIN if needed
+    -- "preserve" (default) keeps original, "full" expands, "short" abbreviates
+    local join_style = config.join_keyword_style or "preserve"
+    if is_join_keyword(string.upper(token.text)) and join_style == "full" then
+      -- Check what modifiers we have
+      local has_outer = false
+      local has_inner = false
+      local has_left_right_full = false
 
-        for _, mod in ipairs(join_modifiers) do
-          if mod == "OUTER" then has_outer = true end
-          if mod == "INNER" then has_inner = true end
-          if mod == "LEFT" or mod == "RIGHT" or mod == "FULL" then has_left_right_full = true end
-        end
-
-        -- For standalone JOIN (no modifiers), add INNER
-        if #join_modifiers == 0 then
-          local case_fn = (config.keyword_case == "lower") and string.lower or string.upper
-          table.insert(current_line, case_fn("INNER") .. " ")
-        -- For LEFT/RIGHT/FULL JOIN without OUTER, add OUTER
-        elseif has_left_right_full and not has_outer then
-          local case_fn = (config.keyword_case == "lower") and string.lower or string.upper
-          table.insert(current_line, case_fn("OUTER") .. " ")
-        end
-        -- Reset join_modifiers after processing JOIN
-        join_modifiers = {}
+      for _, mod in ipairs(join_modifiers) do
+        if mod == "OUTER" then has_outer = true end
+        if mod == "INNER" then has_inner = true end
+        if mod == "LEFT" or mod == "RIGHT" or mod == "FULL" then has_left_right_full = true end
       end
 
-      table.insert(current_line, formatted_text)
+      -- For standalone JOIN (no modifiers), add INNER
+      if #join_modifiers == 0 then
+        local case_fn = (config.keyword_case == "lower") and string.lower or string.upper
+        table.insert(current_line, case_fn("INNER") .. " ")
+      -- For LEFT/RIGHT/FULL JOIN without OUTER, add OUTER
+      elseif has_left_right_full and not has_outer then
+        local case_fn = (config.keyword_case == "lower") and string.lower or string.upper
+        table.insert(current_line, case_fn("OUTER") .. " ")
+      end
+      -- Reset join_modifiers after processing JOIN
+      join_modifiers = {}
     end
+
+    table.insert(current_line, formatted_text)
 
     -- Phase 1: select_list_style stacked_indent - set flag to add newline before first column
     local select_list_style = config.select_list_style or "stacked"
