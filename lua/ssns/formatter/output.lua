@@ -173,6 +173,21 @@ local function is_join_keyword(text)
   return string.upper(text) == "JOIN"
 end
 
+---Check if keyword is APPLY (for CROSS APPLY, OUTER APPLY)
+---@param text string
+---@return boolean
+local function is_apply_keyword(text)
+  return string.upper(text) == "APPLY"
+end
+
+---Check if keyword is CROSS or OUTER (potential APPLY modifier)
+---@param text string
+---@return boolean
+local function is_apply_modifier(text)
+  local upper = string.upper(text)
+  return upper == "CROSS" or upper == "OUTER"
+end
+
 ---Check if token is AND or OR
 ---@param token table
 ---@return boolean
@@ -583,6 +598,7 @@ function Output.generate(tokens, config)
   local pending_in_stacked_indent_newline = false  -- For stacked_indent: newline after IN (
   local pending_join = false -- Track if we're building a compound JOIN keyword
   local join_modifiers = {} -- Track accumulated JOIN modifiers (LEFT, RIGHT, FULL, INNER, OUTER)
+  local pending_apply = false -- Track if we're building CROSS APPLY or OUTER APPLY
   local pending_stacked_indent_newline = false -- For stacked_indent: newline after SELECT
   local pending_where_stacked_indent_newline = false -- For where stacked_indent: newline after WHERE
   local pending_from_stacked_indent_newline = false -- For from stacked_indent: newline after FROM
@@ -962,9 +978,52 @@ function Output.generate(tokens, config)
       if token.in_over_clause then
         -- Don't add newline for PARTITION, ORDER, BY inside OVER
         needs_newline = false
-      -- Check if this is a join modifier or JOIN keyword
+      -- Phase 1: Check if this is CROSS APPLY or OUTER APPLY
+      -- Look ahead to see if CROSS or OUTER is followed by APPLY
+      elseif is_apply_modifier(upper) then
+        -- Check if next keyword token is APPLY
+        local next_is_apply = false
+        for j = i + 1, #tokens do
+          local next_token = tokens[j]
+          if next_token.type == "keyword" then
+            if is_apply_keyword(next_token.text) then
+              next_is_apply = true
+            end
+            break
+          end
+        end
+
+        if next_is_apply then
+          -- This is CROSS APPLY or OUTER APPLY
+          if not pending_apply then
+            if config.cross_apply_newline ~= false then
+              needs_newline = true
+              current_indent = base_indent
+            end
+          end
+          pending_apply = true
+        else
+          -- This is a join modifier (CROSS JOIN or OUTER JOIN)
+          if not pending_join then
+            needs_newline = true
+            current_indent = base_indent
+            join_modifiers = {}
+            if config.empty_line_before_join then
+              add_empty_line_after_flush = true
+            end
+          end
+          pending_join = true
+          table.insert(join_modifiers, upper)
+
+          -- Phase 1: join_keyword_style - skip OUTER in short mode
+          local join_style = config.join_keyword_style or "preserve"
+          if join_style == "short" and upper == "OUTER" then
+            skip_token = true
+          end
+        end
+      -- Check if this is a join modifier or JOIN keyword (excluding CROSS/OUTER which are handled above)
       elseif token.is_join_modifier or is_join_modifier(upper) then
-        -- This is a join modifier (INNER, LEFT, OUTER, etc.)
+        -- This is a join modifier (INNER, LEFT, RIGHT, FULL, NATURAL)
         -- Add newline if this is the START of a new join clause
         if not pending_join then
           needs_newline = true
@@ -981,16 +1040,16 @@ function Output.generate(tokens, config)
         -- Track this modifier for join_keyword_style processing
         table.insert(join_modifiers, upper)
 
-        -- Phase 1: join_keyword_style - skip INNER or OUTER in short mode
+        -- Phase 1: join_keyword_style - skip INNER in short mode
         -- "preserve" (default) keeps original, "full" expands, "short" abbreviates
         local join_style = config.join_keyword_style or "preserve"
-        if join_style == "short" then
-          if upper == "INNER" then
-            skip_token = true  -- Skip INNER in short mode
-          elseif upper == "OUTER" then
-            skip_token = true  -- Skip OUTER in short mode
-          end
+        if join_style == "short" and upper == "INNER" then
+          skip_token = true  -- Skip INNER in short mode
         end
+      elseif is_apply_keyword(upper) then
+        -- This is APPLY keyword (part of CROSS APPLY or OUTER APPLY)
+        -- Reset pending_apply flag
+        pending_apply = false
       elseif is_join_keyword(upper) then
         -- This is JOIN - only add newline if no modifier preceded it
         if not pending_join then

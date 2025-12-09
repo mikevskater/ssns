@@ -1753,4 +1753,78 @@ return {
             contains = { "ON (a.id = b.id AND a.type = 1) OR a.override = 1" }
         }
     },
+
+    -- =========================================================================
+    -- cross_apply_newline tests (Phase 1: JOIN Clause)
+    -- =========================================================================
+    {
+        id = 8710,
+        type = "formatter",
+        name = "cross_apply_newline true (default) - CROSS APPLY on new line",
+        input = "SELECT * FROM users u CROSS APPLY (SELECT TOP 1 * FROM orders WHERE user_id = u.id) o",
+        opts = { cross_apply_newline = true },
+        expected = {
+            matches = { "FROM users u\nCROSS APPLY" }
+        }
+    },
+    {
+        id = 8711,
+        type = "formatter",
+        name = "cross_apply_newline false - CROSS APPLY on same line",
+        input = "SELECT * FROM users u CROSS APPLY (SELECT TOP 1 * FROM orders WHERE user_id = u.id) o",
+        opts = { cross_apply_newline = false },
+        expected = {
+            contains = { "FROM users u CROSS APPLY" }
+        }
+    },
+    {
+        id = 8712,
+        type = "formatter",
+        name = "cross_apply_newline true - OUTER APPLY on new line",
+        input = "SELECT * FROM users u OUTER APPLY (SELECT TOP 1 * FROM orders WHERE user_id = u.id) o",
+        opts = { cross_apply_newline = true },
+        expected = {
+            matches = { "FROM users u\nOUTER APPLY" }
+        }
+    },
+    {
+        id = 8713,
+        type = "formatter",
+        name = "cross_apply_newline false - OUTER APPLY on same line",
+        input = "SELECT * FROM users u OUTER APPLY (SELECT TOP 1 * FROM orders WHERE user_id = u.id) o",
+        opts = { cross_apply_newline = false },
+        expected = {
+            contains = { "FROM users u OUTER APPLY" }
+        }
+    },
+    {
+        id = 8714,
+        type = "formatter",
+        name = "cross_apply_newline true - multiple APPLY operators",
+        input = "SELECT * FROM users u CROSS APPLY fn1(u.id) a OUTER APPLY fn2(a.val) b",
+        opts = { cross_apply_newline = true },
+        expected = {
+            matches = { "FROM users u\nCROSS APPLY", "\nOUTER APPLY" }
+        }
+    },
+    {
+        id = 8715,
+        type = "formatter",
+        name = "cross_apply_newline with JOIN - both on new lines",
+        input = "SELECT * FROM users u INNER JOIN profiles p ON u.id = p.user_id CROSS APPLY fn(u.id) a",
+        opts = { cross_apply_newline = true },
+        expected = {
+            matches = { "\nINNER JOIN", "\nCROSS APPLY" }
+        }
+    },
+    {
+        id = 8716,
+        type = "formatter",
+        name = "cross_apply_newline - APPLY with table-valued function",
+        input = "SELECT * FROM sys.dm_exec_requests r CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) t",
+        opts = { cross_apply_newline = true },
+        expected = {
+            matches = { "FROM sys.dm_exec_requests r\nCROSS APPLY" }
+        }
+    },
 }
