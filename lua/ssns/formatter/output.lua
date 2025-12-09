@@ -645,9 +645,21 @@ function Output.generate(tokens, config)
       pending_in_stacked_indent_newline = false
     end
 
+    -- Phase 4: Handle subquery_paren_style for subquery opening parens
+    if token.starts_subquery and config.subquery_paren_style == "new_line" then
+      -- Put subquery opening paren on new line
+      needs_newline = true
+      current_indent = token.indent_level or 0
+    end
+
     -- Handle comments specially
     if token.is_comment then
-      if token.is_inline_comment then
+      local comment_position = config.comment_position or "preserve"
+
+      -- Determine if this comment should be on its own line (above)
+      local force_above = (comment_position == "above")
+
+      if token.is_inline_comment and not force_above then
         -- Inline comment: add space and keep on same line
         if #current_line > 0 then
           table.insert(current_line, " ")
@@ -662,7 +674,7 @@ function Output.generate(tokens, config)
           current_line = {}
         end
       else
-        -- Standalone comment: put on its own line with proper indentation
+        -- Standalone comment OR force_above: put on its own line with proper indentation
         -- Finish current line first
         if #current_line > 0 then
           local line_text = table.concat(current_line, "")

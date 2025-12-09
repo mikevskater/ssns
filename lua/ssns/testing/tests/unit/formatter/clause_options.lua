@@ -904,4 +904,138 @@ return {
             contains = { "users    u", "orders   o", "payments p" }
         }
     },
+
+    -- ============================================
+    -- comment_position tests (IDs: 8536-8545)
+    -- ============================================
+    {
+        id = 8536,
+        type = "formatter",
+        name = "comment_position preserve - inline comment stays inline",
+        input = "SELECT a, b -- comment\nFROM users",
+        opts = { comment_position = "preserve" },
+        expected = {
+            contains = { "b -- comment" }  -- Comment stays on same line as b
+        }
+    },
+    {
+        id = 8537,
+        type = "formatter",
+        name = "comment_position preserve - block comment stays in place",
+        input = "SELECT /* comment */ a FROM users",
+        opts = { comment_position = "preserve" },
+        expected = {
+            contains = { "/* comment */" }
+        }
+    },
+    {
+        id = 8538,
+        type = "formatter",
+        name = "comment_position above - moves inline comment to own line",
+        input = "SELECT a, b -- comment\nFROM users",
+        opts = { comment_position = "above" },
+        expected = {
+            -- Comment should be on its own line (not inline with b)
+            -- Output: b\n-- comment\nFROM
+            matches = { "b\n%-%-.-comment" }
+        }
+    },
+    {
+        id = 8539,
+        type = "formatter",
+        name = "comment_position above - block comment on own line",
+        input = "SELECT a, /* comment */ b FROM users",
+        opts = { comment_position = "above" },
+        expected = {
+            -- Block comment should be on its own line
+            matches = { "/%* comment %*/\n" }
+        }
+    },
+    {
+        id = 8540,
+        type = "formatter",
+        name = "comment_position inline - keeps comments inline",
+        input = "SELECT a,\n-- comment\nb FROM users",
+        opts = { comment_position = "inline" },
+        expected = {
+            -- Comment should move to same line as b
+            contains = { "-- comment" }
+        }
+    },
+    {
+        id = 8541,
+        type = "formatter",
+        name = "comment_position preserve - multiline block comment",
+        input = "SELECT /* line1\nline2 */ a FROM users",
+        opts = { comment_position = "preserve" },
+        expected = {
+            contains = { "/* line1", "line2 */" }
+        }
+    },
+
+    -- ============================================
+    -- subquery_paren_style tests (IDs: 8546-8551)
+    -- ============================================
+    {
+        id = 8546,
+        type = "formatter",
+        name = "subquery_paren_style same_line (default) - IN subquery",
+        input = "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)",
+        opts = { subquery_paren_style = "same_line" },
+        expected = {
+            -- Opening paren stays on same line as IN
+            contains = { "IN (" }
+        }
+    },
+    {
+        id = 8547,
+        type = "formatter",
+        name = "subquery_paren_style new_line - IN subquery",
+        input = "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)",
+        opts = { subquery_paren_style = "new_line" },
+        expected = {
+            -- Opening paren goes to new line
+            matches = { "IN\n%s*%(" }
+        }
+    },
+    {
+        id = 8548,
+        type = "formatter",
+        name = "subquery_paren_style same_line - EXISTS subquery",
+        input = "SELECT * FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id)",
+        opts = { subquery_paren_style = "same_line" },
+        expected = {
+            contains = { "EXISTS (" }
+        }
+    },
+    {
+        id = 8549,
+        type = "formatter",
+        name = "subquery_paren_style new_line - EXISTS subquery",
+        input = "SELECT * FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id)",
+        opts = { subquery_paren_style = "new_line" },
+        expected = {
+            matches = { "EXISTS\n%s*%(" }
+        }
+    },
+    {
+        id = 8550,
+        type = "formatter",
+        name = "subquery_paren_style same_line - derived table FROM",
+        input = "SELECT * FROM (SELECT id, name FROM users) AS u",
+        opts = { subquery_paren_style = "same_line" },
+        expected = {
+            contains = { "FROM (" }
+        }
+    },
+    {
+        id = 8551,
+        type = "formatter",
+        name = "subquery_paren_style new_line - derived table FROM",
+        input = "SELECT * FROM (SELECT id, name FROM users) AS u",
+        opts = { subquery_paren_style = "new_line" },
+        expected = {
+            matches = { "FROM\n%s*%(" }
+        }
+    },
 }
