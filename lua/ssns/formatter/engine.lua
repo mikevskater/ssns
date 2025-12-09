@@ -16,6 +16,7 @@ local Engine = {}
 local Tokenizer = require('ssns.completion.tokenizer')
 local Output = require('ssns.formatter.output')
 local Stats = require('ssns.formatter.stats')
+local Passes = require('ssns.formatter.passes')
 
 -- High-resolution timer
 local hrtime = vim.loop.hrtime
@@ -929,6 +930,15 @@ function Engine.format(sql, config, opts)
     end
     return sql
   end
+
+  -- Run all annotation passes in sequence
+  -- Passes: clauses -> subqueries -> expressions -> structure -> spacing -> casing
+  -- Each pass annotates tokens, building up context for output generation
+  local passes_ok, passes_result = pcall(Passes.run_all, processed_or_error, config)
+  if passes_ok then
+    processed_or_error = passes_result
+  end
+  -- If passes fail, continue with unannotated tokens (graceful degradation)
 
   -- Generate output with error recovery
   local output_start = hrtime()
