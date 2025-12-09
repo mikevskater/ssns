@@ -1534,4 +1534,113 @@ return {
             matches = { "DELETE\nFROM users" }
         }
     },
+
+    -- =========================================================================
+    -- from_table_style tests (Phase 1: FROM Clause)
+    -- =========================================================================
+    {
+        id = 8596,
+        type = "formatter",
+        name = "from_table_style inline (default) - multiple tables on one line",
+        input = "SELECT * FROM users, orders, products",
+        opts = { from_table_style = "inline" },
+        expected = {
+            contains = { "FROM users, orders, products" }
+        }
+    },
+    {
+        id = 8597,
+        type = "formatter",
+        name = "from_table_style stacked - each table on new line",
+        input = "SELECT * FROM users, orders, products",
+        opts = { from_table_style = "stacked" },
+        expected = {
+            matches = { "FROM users,\n%s*orders,\n%s*products" }
+        }
+    },
+    {
+        id = 8598,
+        type = "formatter",
+        name = "from_table_style stacked_indent - first table on new line",
+        input = "SELECT * FROM users, orders, products",
+        opts = { from_table_style = "stacked_indent" },
+        expected = {
+            -- First table should be on new line after FROM
+            matches = { "FROM\n%s+users,\n%s+orders,\n%s+products" }
+        }
+    },
+    {
+        id = 8599,
+        type = "formatter",
+        name = "from_table_style stacked vs stacked_indent comparison",
+        input = "SELECT * FROM a, b FROM t",
+        opts = { from_table_style = "stacked" },
+        expected = {
+            -- stacked: first table on same line as FROM
+            contains = { "FROM a," }
+        }
+    },
+    {
+        id = 85991,
+        type = "formatter",
+        name = "from_table_style stacked with aliases",
+        input = "SELECT * FROM users u, orders o, products p",
+        opts = { from_table_style = "stacked" },
+        expected = {
+            matches = { "FROM users u,\n%s*orders o,\n%s*products p" }
+        }
+    },
+    {
+        id = 85992,
+        type = "formatter",
+        name = "from_table_style stacked_indent with aliases",
+        input = "SELECT * FROM users u, orders o",
+        opts = { from_table_style = "stacked_indent" },
+        expected = {
+            matches = { "FROM\n%s+users u,\n%s+orders o" }
+        }
+    },
+    {
+        id = 85993,
+        type = "formatter",
+        name = "from_table_style inline preserves single table",
+        input = "SELECT * FROM users WHERE id = 1",
+        opts = { from_table_style = "inline" },
+        expected = {
+            contains = { "FROM users" }
+        }
+    },
+    {
+        id = 85994,
+        type = "formatter",
+        name = "from_table_style stacked with schema-qualified tables",
+        input = "SELECT * FROM dbo.users, dbo.orders",
+        opts = { from_table_style = "stacked" },
+        expected = {
+            matches = { "FROM dbo.users,\n%s*dbo.orders" }
+        }
+    },
+    {
+        id = 85995,
+        type = "formatter",
+        name = "from_table_style inline - doesn't affect JOINs",
+        input = "SELECT * FROM users, orders JOIN products ON orders.product_id = products.id",
+        opts = { from_table_style = "inline" },
+        expected = {
+            -- JOIN should still be on new line (controlled by join_newline)
+            contains = { "FROM users, orders" },
+            matches = { "\nJOIN products" }
+        }
+    },
+    {
+        id = 85996,
+        type = "formatter",
+        name = "from_table_style stacked - subquery tables not affected",
+        input = "SELECT * FROM (SELECT id FROM users) AS sub, orders",
+        opts = { from_table_style = "stacked" },
+        expected = {
+            -- Subquery content handled separately, outer tables stacked
+            contains = { "AS sub," }
+        }
+    },
 }

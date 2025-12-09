@@ -250,7 +250,7 @@
 ---@field join_newline boolean JOIN on new line (default: true)
 ---@field join_keyword_style string "full"|"short" - INNER JOIN vs JOIN (default: "full")
 ---@field join_indent_style string "align"|"indent" - JOIN alignment style (default: "indent")
----@field on_condition_style string "inline"|"stacked" - ON conditions layout (default: "inline")
+---@field on_condition_style string "inline"|"stacked"|"stacked_indent" - ON conditions layout (default: "inline")
 ---@field on_and_position string "leading"|"trailing" - AND in ON clause position (default: "leading")
 ---@field cross_apply_newline boolean CROSS/OUTER APPLY on new line (default: true)
 ---@field empty_line_before_join boolean Empty line before JOIN (default: false)
