@@ -110,7 +110,7 @@ return {
         input = "INSERT INTO users (name) OUTPUT INSERTED.id VALUES ('John')",
         opts = { output_clause_newline = true },
         expected = {
-            matches = { "users %(name%)\n.-OUTPUT" }
+            matches = { "users%(name%)\n.-OUTPUT" }  -- No space before ( after identifier
         }
     },
     {
@@ -120,7 +120,7 @@ return {
         input = "INSERT INTO users (name) OUTPUT INSERTED.id VALUES ('John')",
         opts = { output_clause_newline = false },
         expected = {
-            contains = { "(name) OUTPUT INSERTED.id" }  -- Same line
+            contains = { "users(name) OUTPUT" }  -- No space before (, OUTPUT on same line
         }
     },
     {

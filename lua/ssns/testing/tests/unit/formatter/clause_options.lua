@@ -242,7 +242,7 @@ return {
         input = "WITH cte AS (SELECT * FROM users) SELECT * FROM cte",
         opts = { cte_parenthesis_style = "new_line" },
         expected = {
-            matches = { "AS\n.-(" }
+            matches = { "AS\n.-%(" }  -- Escape ( in Lua pattern
         }
     },
 

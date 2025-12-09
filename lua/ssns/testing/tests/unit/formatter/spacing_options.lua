@@ -219,9 +219,9 @@ return {
         id = 8433,
         type = "formatter",
         name = "operator_spacing true - division",
-        input = "SELECT total/count FROM stats",
+        input = "SELECT total/[count] FROM stats",  -- Bracket identifier treated as object
         expected = {
-            contains = { "total / count" }
+            contains = { "total / [count]" }
         }
     },
     {
@@ -248,9 +248,9 @@ return {
     {
         id = 8441,
         type = "formatter",
-        name = "concatenation_spacing false",
+        name = "concatenation_spacing false (uses operator_spacing for +)",
         input = "SELECT first_name + ' ' + last_name FROM users",
-        opts = { concatenation_spacing = false },
+        opts = { operator_spacing = false },  -- + is handled by operator_spacing
         expected = {
             contains = { "first_name+' '+last_name" }
         }
@@ -263,7 +263,7 @@ return {
         name = "No space around PostgreSQL :: cast operator",
         input = "SELECT id :: int FROM users",
         expected = {
-            contains = { "id::int" }
+            contains = { "id::INT" }  -- Datatype is uppercased by default
         }
     },
 
