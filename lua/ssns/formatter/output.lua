@@ -1269,6 +1269,32 @@ function Output.generate(tokens, config)
       table.insert(current_line, case_fn("INTO") .. " ")
     end
 
+    -- Phase 2: delete_from_keyword - insert FROM before table name if missing
+    if token.needs_from_keyword and config.delete_from_keyword then
+      local case_fn = (config.keyword_case == "lower") and string.lower or string.upper
+      local from_keyword = case_fn("FROM")
+
+      -- Respect delete_from_newline setting
+      if config.delete_from_newline then
+        -- Flush current line (DELETE) and put FROM on new line
+        local line_text = table.concat(current_line, "")
+        -- Trim trailing whitespace before flushing
+        line_text = line_text:gsub("%s+$", "")
+        if line_text:match("%S") then
+          table.insert(result, line_text)
+        end
+        current_line = {}
+        -- Add FROM with proper indentation on new line
+        local base_indent = token.indent_level or 0
+        local indent = get_indent(config, base_indent)
+        table.insert(current_line, indent .. from_keyword .. " ")
+        line_just_started = false  -- We added content, not just indent
+      else
+        -- Keep FROM on same line as DELETE
+        table.insert(current_line, from_keyword .. " ")
+      end
+    end
+
     table.insert(current_line, formatted_text)
 
     -- Phase 1: select_list_style stacked_indent - set flag to add newline before first column

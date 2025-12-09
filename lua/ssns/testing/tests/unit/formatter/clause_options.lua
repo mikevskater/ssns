@@ -1442,4 +1442,96 @@ return {
             contains = { "insert into users" }
         }
     },
+
+    -- =========================================================================
+    -- delete_from_keyword tests (Phase 2: DML)
+    -- =========================================================================
+    {
+        id = 8588,
+        type = "formatter",
+        name = "delete_from_keyword true - adds FROM when missing",
+        input = "DELETE users WHERE id = 1",
+        opts = { delete_from_keyword = true },
+        expected = {
+            -- FROM is on new line by default (delete_from_newline = true)
+            matches = { "DELETE\nFROM users" }
+        }
+    },
+    {
+        id = 8589,
+        type = "formatter",
+        name = "delete_from_keyword true - keeps FROM when present",
+        input = "DELETE FROM users WHERE id = 1",
+        opts = { delete_from_keyword = true },
+        expected = {
+            -- FROM should appear after DELETE (may be on new line due to delete_from_newline)
+            matches = { "DELETE%s+FROM%s+users" },
+            not_contains = { "FROM FROM" }
+        }
+    },
+    {
+        id = 8590,
+        type = "formatter",
+        name = "delete_from_keyword false - no change",
+        input = "DELETE users WHERE id = 1",
+        opts = { delete_from_keyword = false },
+        expected = {
+            contains = { "DELETE users" },
+            not_contains = { "DELETE FROM" }
+        }
+    },
+    {
+        id = 8591,
+        type = "formatter",
+        name = "delete_from_keyword - schema qualified table",
+        input = "DELETE dbo.users WHERE id = 1",
+        opts = { delete_from_keyword = true },
+        expected = {
+            -- FROM is on new line by default (delete_from_newline = true)
+            matches = { "DELETE\nFROM dbo.users" }
+        }
+    },
+    {
+        id = 8592,
+        type = "formatter",
+        name = "delete_from_keyword - lowercase keyword case",
+        input = "DELETE users WHERE id = 1",
+        opts = { delete_from_keyword = true, keyword_case = "lower" },
+        expected = {
+            contains = { "delete", "from users" }
+        }
+    },
+    {
+        id = 8593,
+        type = "formatter",
+        name = "delete_from_keyword - alias syntax preserved (DELETE u FROM users u)",
+        input = "DELETE u FROM users u WHERE u.id = 1",
+        opts = { delete_from_keyword = true },
+        expected = {
+            -- Should NOT insert another FROM - alias syntax already has FROM
+            contains = { "DELETE u", "FROM users u" },
+            not_contains = { "FROM FROM" }
+        }
+    },
+    {
+        id = 8594,
+        type = "formatter",
+        name = "delete_from_keyword - respects delete_from_newline false",
+        input = "DELETE users WHERE id = 1",
+        opts = { delete_from_keyword = true, delete_from_newline = false },
+        expected = {
+            contains = { "DELETE FROM users" }
+        }
+    },
+    {
+        id = 8595,
+        type = "formatter",
+        name = "delete_from_keyword - respects delete_from_newline true (default)",
+        input = "DELETE users WHERE id = 1",
+        opts = { delete_from_keyword = true, delete_from_newline = true },
+        expected = {
+            -- FROM should be on new line
+            matches = { "DELETE\nFROM users" }
+        }
+    },
 }

@@ -139,6 +139,8 @@ local function create_state()
     in_update = false,         -- Currently inside UPDATE statement
     in_delete = false,         -- Currently inside DELETE statement
     delete_expecting_alias_or_from = false,  -- After DELETE, expecting alias or FROM
+    delete_has_from = false,   -- DELETE has FROM keyword
+    delete_expecting_table = false,  -- Expecting table name after DELETE [FROM]
     -- Alias detection tracking (for use_as_keyword)
     in_select_clause = false,  -- Currently in SELECT column list
     in_from_clause = false,    -- Currently in FROM clause
@@ -305,6 +307,7 @@ local DEFAULT_CONFIG = {
   -- DELETE formatting
   delete_from_newline = true,    -- FROM on new line after DELETE (default: true)
   delete_alias_newline = false,  -- Alias on own line after DELETE (default: false, keeps DELETE s together)
+  delete_from_keyword = false,   -- Enforce FROM keyword in DELETE (default: false for backward compat)
 }
 
 ---Merge provided config with defaults
@@ -601,8 +604,12 @@ function Engine.format(sql, config, opts)
         if upper == "DELETE" then
           state.in_delete = true
           state.delete_expecting_alias_or_from = true
+          state.delete_has_from = false  -- Track if FROM keyword is present
+          state.delete_expecting_table = true  -- Expecting table name after DELETE [FROM]
           processed.is_delete_start = true
         elseif upper == "FROM" and state.in_delete then
+          state.delete_has_from = true
+          state.delete_expecting_table = true  -- Now expecting table name
           processed.is_delete_from = true
           state.delete_expecting_alias_or_from = false
           state.in_delete = false  -- FROM ends the DELETE-specific tracking
@@ -749,6 +756,37 @@ function Engine.format(sql, config, opts)
           processed.needs_into_keyword = true
         end
         state.insert_expecting_table = false
+      end
+
+      -- Handle DELETE table name (detect if FROM is missing)
+      -- Pattern: DELETE tablename ... (without FROM)
+      -- Note: SQL Server allows DELETE alias FROM table alias syntax, so we need to be careful
+      -- We only mark the first identifier after DELETE as needing FROM if:
+      -- 1. FROM hasn't been seen yet, AND
+      -- 2. FROM doesn't follow this identifier (look ahead)
+      if (token.type == "identifier" or token.type == "bracket_id") and state.in_delete and state.delete_expecting_table then
+        if not state.delete_has_from then
+          -- Look ahead to see if FROM follows (skip whitespace/comments)
+          local next_idx = i + 1
+          while next_idx <= #tokens and
+                (tokens[next_idx].type == "whitespace" or tokens[next_idx].type == "comment" or tokens[next_idx].type == "line_comment") do
+            next_idx = next_idx + 1
+          end
+
+          -- Check if next significant token is FROM
+          local from_follows = false
+          if next_idx <= #tokens and tokens[next_idx].type == "keyword" and
+             string.upper(tokens[next_idx].text) == "FROM" then
+            from_follows = true
+          end
+
+          if not from_follows then
+            -- Table name directly after DELETE without FROM following - mark for FROM insertion
+            processed.needs_from_keyword = true
+          end
+          -- If FROM follows, this is the alias in "DELETE alias FROM table" syntax - don't add FROM
+        end
+        state.delete_expecting_table = false
       end
 
       -- Preserve comments - pass through with metadata
