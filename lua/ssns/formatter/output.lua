@@ -732,19 +732,46 @@ function Output.generate(tokens, config)
       end
     end
 
-    -- Handle CASE expression formatting
-    if token.is_case_when then
-      -- WHEN starts new line with case indent
+    -- Handle CASE expression formatting (Phase 4: case_style, case_then_position)
+    -- Only apply newlines if case_style is "stacked" (default)
+    local case_style = config.case_style or "stacked"
+    if case_style == "stacked" then
+      if token.is_case_when then
+        -- WHEN starts new line with case indent
+        needs_newline = true
+        current_indent = token.case_indent or token.indent_level or 0
+      elseif token.is_case_else then
+        -- ELSE starts new line at same level as WHEN
+        needs_newline = true
+        current_indent = token.case_indent or token.indent_level or 0
+      elseif token.is_case_end then
+        -- END starts new line at CASE level (one less than WHEN)
+        needs_newline = true
+        current_indent = token.case_indent or token.indent_level or 0
+      end
+    end
+
+    -- Phase 4: case_then_position - THEN on new line
+    if token.is_case_then and config.case_then_position == "new_line" then
       needs_newline = true
-      current_indent = token.case_indent or token.indent_level or 0
-    elseif token.is_case_else then
-      -- ELSE starts new line at same level as WHEN
+      current_indent = token.indent_level or 0
+      extra_indent = 1
+    end
+
+    -- Phase 4: boolean_operator_newline - AND/OR on new lines (global, not just WHERE)
+    if config.boolean_operator_newline and is_and_or(token) and not in_where_clause and not in_on_clause then
       needs_newline = true
-      current_indent = token.case_indent or token.indent_level or 0
-    elseif token.is_case_end then
-      -- END starts new line at CASE level (one less than WHEN)
-      needs_newline = true
-      current_indent = token.case_indent or token.indent_level or 0
+      current_indent = token.indent_level or 0
+      extra_indent = 1
+    end
+
+    -- Phase 5: union_indent - UNION/INTERSECT/EXCEPT handling
+    if token.type == "keyword" then
+      local upper = string.upper(token.text)
+      if upper == "UNION" or upper == "INTERSECT" or upper == "EXCEPT" then
+        local union_indent = config.union_indent or 0
+        current_indent = union_indent
+      end
     end
 
     -- Handle comma for column lists (SELECT)
@@ -870,13 +897,41 @@ function Output.generate(tokens, config)
     end
 
     -- Handle CTE separator comma (between CTE definitions)
+    -- Phase 2: cte_separator_newline
     if token.is_cte_separator then
       local line_text = table.concat(current_line, "")
       if line_text:match("%S") then
         table.insert(result, line_text)
       end
       current_line = {}
-      -- No indent for next CTE definition (starts at base level)
+      -- If cte_separator_newline is false and compact style, don't add newline
+      if config.cte_separator_newline then
+        -- Newline after comma is already handled by finishing the line
+      end
+    end
+
+    -- Phase 2: CTE AS position - cte_as_position
+    if token.is_cte_as and config.cte_as_position == "new_line" then
+      needs_newline = true
+      current_indent = token.indent_level or 0
+    end
+
+    -- Phase 2: CTE parenthesis style - cte_parenthesis_style
+    if token.starts_cte_body and config.cte_parenthesis_style == "new_line" then
+      -- Need to put opening paren on new line
+      -- This requires finishing current line first
+      if #current_line > 0 then
+        local line_text = table.concat(current_line, "")
+        if line_text:match("%S") then
+          table.insert(result, line_text)
+        end
+        current_line = {}
+      end
+      local cte_indent = config.cte_indent or 1
+      local indent = get_indent(config, cte_indent)
+      if indent ~= "" then
+        table.insert(current_line, indent)
+      end
     end
 
     -- Handle semicolon - end of statement

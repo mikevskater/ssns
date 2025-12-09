@@ -427,10 +427,12 @@ function Engine.format(sql, config, opts)
           end
         end
 
-        -- Apply keyword casing
-        processed.text = apply_keyword_case(token.text, config.keyword_case)
+        -- Casing is handled by output.lua's apply_token_casing()
+        -- which supports keyword_case, function_case, datatype_case, identifier_case, alias_case
+        processed.text = token.text
       elseif token.type == "go" then
-        processed.text = apply_keyword_case(token.text, config.keyword_case)
+        -- Casing handled by output.lua
+        processed.text = token.text
       end
 
       -- Track clause context
