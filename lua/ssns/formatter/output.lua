@@ -586,6 +586,7 @@ function Output.generate(tokens, config)
   local pending_stacked_indent_newline = false -- For stacked_indent: newline after SELECT
   local pending_where_stacked_indent_newline = false -- For where stacked_indent: newline after WHERE
   local pending_from_stacked_indent_newline = false -- For from stacked_indent: newline after FROM
+  local pending_on_stacked_indent_newline = false -- For on stacked_indent: newline after ON
   local line_just_started = false -- Track if we just started a new line with indent
   local skip_token = false -- Flag to skip outputting current token (for join_keyword_style)
 
@@ -650,6 +651,15 @@ function Output.generate(tokens, config)
       current_indent = token.indent_level or 0
       extra_indent = 1
       pending_from_stacked_indent_newline = false
+    end
+
+    -- Phase 1: Handle pending on_condition_style stacked_indent newline (first condition after ON)
+    if pending_on_stacked_indent_newline and not token.is_comment then
+      -- First condition after ON - add newline
+      needs_newline = true
+      current_indent = token.indent_level or 0
+      extra_indent = 1
+      pending_on_stacked_indent_newline = false
     end
 
     -- Phase 4: Handle pending in_list_style stacked_indent newline (first value after IN ()
@@ -766,6 +776,7 @@ function Output.generate(tokens, config)
         pending_join = false
         pending_where_stacked_indent_newline = false
         pending_from_stacked_indent_newline = false
+        pending_on_stacked_indent_newline = false
       end
 
       if upper == "WITH" then
@@ -890,6 +901,11 @@ function Output.generate(tokens, config)
         in_values_clause = true
       elseif upper == "ON" and in_join_clause then
         in_on_clause = true
+        -- Phase 1: on_condition_style stacked_indent - set flag to add newline before first condition
+        local on_cond_style = config.on_condition_style or "inline"
+        if on_cond_style == "stacked_indent" then
+          pending_on_stacked_indent_newline = true
+        end
       elseif upper == "MERGE" then
         if in_cte and (token.paren_depth or 0) == 0 then
           in_cte = false
@@ -1111,7 +1127,10 @@ function Output.generate(tokens, config)
     end
 
     -- Phase 1: Handle AND/OR positioning in ON clause (join conditions)
-    if in_on_clause and is_and_or(token) then
+    -- Respect on_condition_style: inline keeps everything on one line, stacked/stacked_indent stack
+    local on_cond_style = config.on_condition_style or "inline"
+    if in_on_clause and is_and_or(token) and on_cond_style ~= "inline" then
+      -- stacked and stacked_indent both stack conditions
       if config.on_and_position == "leading" then
         needs_newline = true
         current_indent = token.indent_level or 0
@@ -1345,6 +1364,23 @@ function Output.generate(tokens, config)
       -- Indent the next condition
       local base_indent = token.indent_level or 0
       local indent = get_indent(config, base_indent + (config.where_and_or_indent or 1))
+      if indent ~= "" then
+        table.insert(current_line, indent)
+      end
+      line_just_started = true  -- Skip space before next token
+    end
+
+    -- Phase 1: Handle trailing AND/OR in ON clause (newline after AND/OR)
+    local on_cond_style_trailing = config.on_condition_style or "inline"
+    if in_on_clause and is_and_or(token) and on_cond_style_trailing ~= "inline" and config.on_and_position == "trailing" then
+      local line_text = table.concat(current_line, "")
+      if line_text:match("%S") then
+        table.insert(result, line_text)
+      end
+      current_line = {}
+      -- Indent the next condition
+      local base_indent = token.indent_level or 0
+      local indent = get_indent(config, base_indent + 1)
       if indent ~= "" then
         table.insert(current_line, indent)
       end

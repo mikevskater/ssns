@@ -202,7 +202,7 @@ return {
         type = "formatter",
         name = "on_and_position leading in ON clause",
         input = "SELECT * FROM users u INNER JOIN orders o ON u.id = o.user_id AND u.active = 1",
-        opts = { on_and_position = "leading" },
+        opts = { on_and_position = "leading", on_condition_style = "stacked" },
         expected = {
             matches = { "ON u.id = o.user_id\n.-AND u.active" }
         }
@@ -1641,6 +1641,116 @@ return {
         expected = {
             -- Subquery content handled separately, outer tables stacked
             contains = { "AS sub," }
+        }
+    },
+
+    -- =========================================================================
+    -- on_condition_style tests (Phase 1: JOIN Clause)
+    -- =========================================================================
+    {
+        id = 8700,
+        type = "formatter",
+        name = "on_condition_style inline (default) - all conditions on one line",
+        input = "SELECT * FROM users u INNER JOIN orders o ON u.id = o.user_id AND u.active = 1",
+        opts = { on_condition_style = "inline" },
+        expected = {
+            contains = { "ON u.id = o.user_id AND u.active = 1" }
+        }
+    },
+    {
+        id = 8701,
+        type = "formatter",
+        name = "on_condition_style stacked - AND/OR on new lines",
+        input = "SELECT * FROM users u INNER JOIN orders o ON u.id = o.user_id AND u.active = 1",
+        opts = { on_condition_style = "stacked", on_and_position = "leading" },
+        expected = {
+            matches = { "ON u.id = o.user_id\n%s+AND u.active = 1" }
+        }
+    },
+    {
+        id = 8702,
+        type = "formatter",
+        name = "on_condition_style stacked_indent - first condition on new line",
+        input = "SELECT * FROM users u INNER JOIN orders o ON u.id = o.user_id AND u.active = 1",
+        opts = { on_condition_style = "stacked_indent", on_and_position = "leading" },
+        expected = {
+            -- First condition on new line after ON, then AND on new line
+            matches = { "ON\n%s+u.id = o.user_id\n%s+AND u.active = 1" }
+        }
+    },
+    {
+        id = 8703,
+        type = "formatter",
+        name = "on_condition_style stacked with trailing AND",
+        input = "SELECT * FROM users u INNER JOIN orders o ON u.id = o.user_id AND u.active = 1",
+        opts = { on_condition_style = "stacked", on_and_position = "trailing" },
+        expected = {
+            -- AND at end of line, next condition on new line
+            matches = { "ON u.id = o.user_id AND\n%s+u.active = 1" }
+        }
+    },
+    {
+        id = 8704,
+        type = "formatter",
+        name = "on_condition_style inline ignores on_and_position",
+        input = "SELECT * FROM users u INNER JOIN orders o ON a = 1 AND b = 2 OR c = 3",
+        opts = { on_condition_style = "inline", on_and_position = "leading" },
+        expected = {
+            -- Even with leading position, inline keeps everything on one line
+            contains = { "ON a = 1 AND b = 2 OR c = 3" }
+        }
+    },
+    {
+        id = 8705,
+        type = "formatter",
+        name = "on_condition_style stacked with multiple ANDs",
+        input = "SELECT * FROM a JOIN b ON a.id = b.a_id AND a.type = b.type AND a.status = 'active'",
+        opts = { on_condition_style = "stacked", on_and_position = "leading" },
+        expected = {
+            matches = { "ON a.id = b.a_id\n%s+AND a.type = b.type\n%s+AND a.status = 'active'" }
+        }
+    },
+    {
+        id = 8706,
+        type = "formatter",
+        name = "on_condition_style stacked_indent with multiple ANDs",
+        input = "SELECT * FROM a JOIN b ON a.id = b.a_id AND a.type = b.type AND a.status = 'active'",
+        opts = { on_condition_style = "stacked_indent", on_and_position = "leading" },
+        expected = {
+            -- First condition on new line after ON, all ANDs stacked
+            matches = { "ON\n%s+a.id = b.a_id\n%s+AND a.type = b.type\n%s+AND a.status = 'active'" }
+        }
+    },
+    {
+        id = 8707,
+        type = "formatter",
+        name = "on_condition_style stacked - multiple JOINs",
+        input = "SELECT * FROM a JOIN b ON a.id = b.a_id AND a.x = b.x LEFT JOIN c ON b.id = c.b_id AND b.y = c.y",
+        opts = { on_condition_style = "stacked", on_and_position = "leading" },
+        expected = {
+            -- Both ON clauses should have stacked conditions
+            matches = { "ON a.id = b.a_id\n%s+AND a.x = b.x", "ON b.id = c.b_id\n%s+AND b.y = c.y" }
+        }
+    },
+    {
+        id = 8708,
+        type = "formatter",
+        name = "on_condition_style stacked_indent - single condition stays on new line",
+        input = "SELECT * FROM users u INNER JOIN orders o ON u.id = o.user_id",
+        opts = { on_condition_style = "stacked_indent" },
+        expected = {
+            -- Even with single condition, it should be on new line after ON
+            matches = { "ON\n%s+u.id = o.user_id" }
+        }
+    },
+    {
+        id = 8709,
+        type = "formatter",
+        name = "on_condition_style inline - complex condition with parentheses",
+        input = "SELECT * FROM a JOIN b ON (a.id = b.id AND a.type = 1) OR a.override = 1",
+        opts = { on_condition_style = "inline" },
+        expected = {
+            contains = { "ON (a.id = b.id AND a.type = 1) OR a.override = 1" }
         }
     },
 }
