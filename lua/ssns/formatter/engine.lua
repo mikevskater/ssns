@@ -138,6 +138,12 @@ local function create_state()
     in_update = false,         -- Currently inside UPDATE statement
     in_delete = false,         -- Currently inside DELETE statement
     delete_expecting_alias_or_from = false,  -- After DELETE, expecting alias or FROM
+    -- Alias detection tracking (for use_as_keyword)
+    in_select_clause = false,  -- Currently in SELECT column list
+    in_from_clause = false,    -- Currently in FROM clause
+    in_join_clause = false,    -- Currently in JOIN clause (until ON or next clause)
+    expecting_alias = false,   -- Next identifier might be an alias (no AS keyword seen)
+    last_was_as = false,       -- Previous keyword was AS
   }
 end
 
@@ -269,6 +275,7 @@ local DEFAULT_CONFIG = {
   datatype_case = "upper",
   identifier_case = "preserve",
   alias_case = "preserve",
+  use_as_keyword = false,  -- Always use AS for column/table aliases (default: false for backward compat)
   -- Phase 3: Spacing
   comma_spacing = "after",
   semicolon_spacing = false,
@@ -636,6 +643,82 @@ function Engine.format(sql, config, opts)
       -- Track clause context
       if token.type == "keyword" and is_major_clause(token.text) then
         state.current_clause = string.upper(token.text)
+      end
+
+      -- Track clause state for alias detection (use_as_keyword)
+      if token.type == "keyword" then
+        local upper = string.upper(token.text)
+        -- Track when entering/exiting clauses
+        if upper == "SELECT" then
+          state.in_select_clause = true
+          state.in_from_clause = false
+          state.in_join_clause = false
+          state.expecting_alias = false
+        elseif upper == "FROM" then
+          state.in_select_clause = false
+          state.in_from_clause = true
+          state.in_join_clause = false
+          state.expecting_alias = false
+        elseif upper == "JOIN" then
+          state.in_select_clause = false
+          state.in_from_clause = false
+          state.in_join_clause = true
+          state.expecting_alias = false
+        elseif upper == "ON" or upper == "WHERE" or upper == "GROUP" or upper == "ORDER" or
+               upper == "HAVING" or upper == "UNION" or upper == "EXCEPT" or upper == "INTERSECT" or
+               upper == "INTO" or upper == "SET" or upper == "VALUES" then
+          state.in_select_clause = false
+          state.in_from_clause = false
+          state.in_join_clause = false
+          state.expecting_alias = false
+        elseif upper == "AS" then
+          -- AS keyword seen - next identifier is an alias but doesn't need AS inserted
+          state.last_was_as = true
+          state.expecting_alias = false
+        end
+      end
+
+      -- Detect aliases that need AS keyword inserted
+      if config.use_as_keyword and (token.type == "identifier" or token.type == "bracket_id") then
+        -- Check if this identifier might be an alias (no AS before it)
+        if state.expecting_alias and not state.last_was_as then
+          -- This looks like an alias without AS - mark it for AS insertion
+          processed.needs_as_keyword = true
+        end
+        state.last_was_as = false
+
+        -- After seeing an identifier in FROM/JOIN, the next identifier might be an alias
+        if state.in_from_clause or state.in_join_clause then
+          -- After table name, next identifier could be alias
+          -- But not if this is part of a dotted name (schema.table)
+          local next_idx = i + 1
+          while next_idx <= #tokens and tokens[next_idx].type == "whitespace" do
+            next_idx = next_idx + 1
+          end
+          -- If next token is a dot, this is part of a qualified name, not followed by alias
+          if next_idx <= #tokens and tokens[next_idx].type == "dot" then
+            state.expecting_alias = false
+          else
+            state.expecting_alias = true
+          end
+        elseif state.in_select_clause then
+          -- In SELECT, after identifier/expression, next identifier could be alias
+          -- This is tricky - need to check if followed by comma or keyword
+          state.expecting_alias = true
+        else
+          state.expecting_alias = false
+        end
+      elseif token.type == "comma" then
+        -- Comma resets alias expectation - next item is a new column/table
+        state.expecting_alias = false
+        state.last_was_as = false
+      elseif token.type == "dot" then
+        -- Dot means we're in qualified name - don't expect alias right after
+        state.expecting_alias = false
+        state.last_was_as = false
+      elseif token.type ~= "whitespace" and token.type ~= "comment" and token.type ~= "line_comment" then
+        -- Other tokens reset AS tracking
+        state.last_was_as = false
       end
 
       -- Handle CTE name identifier

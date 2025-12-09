@@ -1239,4 +1239,92 @@ return {
             matches = { "users;\n\n\nSELECT" }
         }
     },
+
+    -- =========================================================================
+    -- use_as_keyword tests (Phase 3: Casing)
+    -- =========================================================================
+    {
+        id = 8570,
+        type = "formatter",
+        name = "use_as_keyword - column alias without AS gets AS added",
+        input = "SELECT name n, email e FROM users",
+        opts = { use_as_keyword = true },
+        expected = {
+            contains = { "name AS n", "email AS e" }
+        }
+    },
+    {
+        id = 8571,
+        type = "formatter",
+        name = "use_as_keyword - column alias with AS stays unchanged",
+        input = "SELECT name AS n, email AS e FROM users",
+        opts = { use_as_keyword = true },
+        expected = {
+            contains = { "name AS n", "email AS e" },
+            not_contains = { "AS AS" }
+        }
+    },
+    {
+        id = 8572,
+        type = "formatter",
+        name = "use_as_keyword - table alias without AS gets AS added",
+        input = "SELECT * FROM users u WHERE u.id = 1",
+        opts = { use_as_keyword = true },
+        expected = {
+            contains = { "users AS u" }
+        }
+    },
+    {
+        id = 8573,
+        type = "formatter",
+        name = "use_as_keyword - table alias with AS stays unchanged",
+        input = "SELECT * FROM users AS u WHERE u.id = 1",
+        opts = { use_as_keyword = true },
+        expected = {
+            contains = { "users AS u" },
+            not_contains = { "AS AS" }
+        }
+    },
+    {
+        id = 8574,
+        type = "formatter",
+        name = "use_as_keyword - JOIN table alias without AS gets AS added",
+        input = "SELECT * FROM users u JOIN orders o ON u.id = o.user_id",
+        opts = { use_as_keyword = true },
+        expected = {
+            contains = { "users AS u", "orders AS o" }
+        }
+    },
+    {
+        id = 8575,
+        type = "formatter",
+        name = "use_as_keyword false - aliases stay without AS",
+        input = "SELECT name n FROM users u",
+        opts = { use_as_keyword = false },
+        expected = {
+            contains = { "name n", "users u" },
+            not_contains = { "AS n", "AS u" }
+        }
+    },
+    {
+        id = 8576,
+        type = "formatter",
+        name = "use_as_keyword - qualified table name no false positive",
+        input = "SELECT * FROM dbo.users WHERE id = 1",
+        opts = { use_as_keyword = true },
+        expected = {
+            contains = { "dbo.users" },
+            not_contains = { "AS users" }
+        }
+    },
+    {
+        id = 8577,
+        type = "formatter",
+        name = "use_as_keyword - lowercase keyword case",
+        input = "SELECT name n FROM users u",
+        opts = { use_as_keyword = true, keyword_case = "lower" },
+        expected = {
+            contains = { "as n", "as u" }
+        }
+    },
 }

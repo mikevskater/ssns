@@ -1247,6 +1247,12 @@ function Output.generate(tokens, config)
       join_modifiers = {}
     end
 
+    -- Phase 3: use_as_keyword - insert AS before aliases that don't have it
+    if token.needs_as_keyword then
+      local case_fn = (config.keyword_case == "lower") and string.lower or string.upper
+      table.insert(current_line, case_fn("AS") .. " ")
+    end
+
     table.insert(current_line, formatted_text)
 
     -- Phase 1: select_list_style stacked_indent - set flag to add newline before first column
