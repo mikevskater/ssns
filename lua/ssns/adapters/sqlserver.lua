@@ -231,6 +231,39 @@ WHERE o.name = '%s'
 ]], database_name, table_name, schema_filter)
 end
 
+---Get query to bulk load all columns for all tables and views in a schema
+---This is more efficient than loading columns one table at a time
+---@param database_name string
+---@param schema_name string
+---@return string query
+function SqlServerAdapter:get_columns_bulk_query(database_name, schema_name)
+  return string.format([[
+USE [%s];
+SET NOCOUNT ON;
+
+SELECT
+  o.name AS table_name,
+  s.name AS schema_name,
+  c.name AS column_name,
+  t.name AS data_type,
+  c.max_length,
+  c.precision,
+  c.scale,
+  c.is_nullable,
+  c.is_identity,
+  c.is_computed,
+  OBJECT_DEFINITION(c.default_object_id) AS default_value,
+  c.column_id AS ordinal_position
+FROM sys.columns c
+INNER JOIN sys.types t ON c.user_type_id = t.user_type_id
+INNER JOIN sys.objects o ON c.object_id = o.object_id
+INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
+WHERE o.type IN ('U', 'V')  -- U = User Table, V = View
+  AND s.name = '%s'
+ORDER BY o.name, c.column_id;
+]], database_name, schema_name)
+end
+
 ---Get query to list columns of a table-valued function (TVF)
 ---@param database_name string
 ---@param schema_name string?
