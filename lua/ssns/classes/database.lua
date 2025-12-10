@@ -475,12 +475,13 @@ end
 
 ---Get all tables (server-type aware - aggregates from schemas if needed)
 ---Uses bulk loading when tables haven't been loaded yet
+---Supports lazy loading based on config.completion.eager_load setting
 ---@param schema_filter string? Optional schema name to filter by
 ---@param opts table? Options { skip_load: boolean? } - skip_load prevents triggering load
 ---@return TableClass[]
 function DbClass:get_tables(schema_filter, opts)
   opts = opts or {}
-  
+
   -- Ensure schemas are loaded (but not objects)
   if not opts.skip_load then
     self:_ensure_schemas_loaded()
@@ -497,16 +498,57 @@ function DbClass:get_tables(schema_filter, opts)
       end
     end
 
-    -- If no schemas have tables loaded yet and not skipping load, use bulk loading
+    -- If no schemas have tables loaded yet and not skipping load, check loading mode
     if not any_loaded and not opts.skip_load then
-      self:load_all_tables_bulk()
+      local Config = require('ssns.config')
+      local config = Config.get()
+      local eager_load = config.completion and config.completion.eager_load
+
+      if eager_load then
+        -- Eager mode: load ALL schemas at once (bulk loading)
+        self:load_all_tables_bulk()
+      elseif schema_filter then
+        -- Lazy mode with specific schema: load only that schema's table list
+        -- Columns are loaded on-demand when individual tables are accessed
+        for _, schema in ipairs(self.schemas) do
+          if schema.name:lower() == schema_filter:lower() then
+            schema:load_tables()
+            break
+          end
+        end
+      else
+        -- Lazy mode without schema filter: load only default schema's table list
+        -- Columns are loaded on-demand when individual tables are accessed
+        local default_schema_name = self:get_default_schema()
+        for _, schema in ipairs(self.schemas) do
+          if schema.name:lower() == default_schema_name:lower() then
+            schema:load_tables()
+            break
+          end
+        end
+      end
     end
 
     -- Aggregate from schemas
     local all_tables = {}
+    local default_schema_name = self:get_default_schema()
     for _, schema in ipairs(self.schemas) do
       if not schema_filter or schema.name:lower() == schema_filter:lower() then
-        for _, t in ipairs(schema:get_tables(opts)) do
+        -- In lazy mode, only allow loading for the target schema
+        local Config = require('ssns.config')
+        local config = Config.get()
+        local eager_load = config.completion and config.completion.eager_load
+
+        local schema_opts = vim.tbl_extend('force', opts, {})
+        if not eager_load and not opts.skip_load then
+          local is_target_schema = schema_filter and schema.name:lower() == schema_filter:lower()
+          local is_default_schema = not schema_filter and schema.name:lower() == default_schema_name:lower()
+          if not is_target_schema and not is_default_schema then
+            schema_opts.skip_load = true  -- Skip loading non-target schemas
+          end
+        end
+
+        for _, t in ipairs(schema:get_tables(schema_opts)) do
           table.insert(all_tables, t)
         end
       end
@@ -539,12 +581,13 @@ end
 
 ---Get all views (server-type aware - aggregates from schemas if needed)
 ---Uses bulk loading when views haven't been loaded yet
+---Supports lazy loading based on config.completion.eager_load setting
 ---@param schema_filter string? Optional schema name to filter by
 ---@param opts table? Options { skip_load: boolean? } - skip_load prevents triggering load
 ---@return ViewClass[]
 function DbClass:get_views(schema_filter, opts)
   opts = opts or {}
-  
+
   -- Ensure schemas are loaded (but not objects)
   if not opts.skip_load then
     self:_ensure_schemas_loaded()
@@ -561,16 +604,57 @@ function DbClass:get_views(schema_filter, opts)
       end
     end
 
-    -- If no schemas have views loaded yet and not skipping load, use bulk loading
+    -- If no schemas have views loaded yet and not skipping load, check loading mode
     if not any_loaded and not opts.skip_load then
-      self:load_all_views_bulk()
+      local Config = require('ssns.config')
+      local config = Config.get()
+      local eager_load = config.completion and config.completion.eager_load
+
+      if eager_load then
+        -- Eager mode: load ALL schemas at once (bulk loading)
+        self:load_all_views_bulk()
+      elseif schema_filter then
+        -- Lazy mode with specific schema: load only that schema's view list
+        -- Columns are loaded on-demand when individual views are accessed
+        for _, schema in ipairs(self.schemas) do
+          if schema.name:lower() == schema_filter:lower() then
+            schema:load_views()
+            break
+          end
+        end
+      else
+        -- Lazy mode without schema filter: load only default schema's view list
+        -- Columns are loaded on-demand when individual views are accessed
+        local default_schema_name = self:get_default_schema()
+        for _, schema in ipairs(self.schemas) do
+          if schema.name:lower() == default_schema_name:lower() then
+            schema:load_views()
+            break
+          end
+        end
+      end
     end
 
     -- Aggregate from schemas
     local all_views = {}
+    local default_schema_name = self:get_default_schema()
     for _, schema in ipairs(self.schemas) do
       if not schema_filter or schema.name:lower() == schema_filter:lower() then
-        for _, v in ipairs(schema:get_views(opts)) do
+        -- In lazy mode, only allow loading for the target schema
+        local Config = require('ssns.config')
+        local config = Config.get()
+        local eager_load = config.completion and config.completion.eager_load
+
+        local schema_opts = vim.tbl_extend('force', opts, {})
+        if not eager_load and not opts.skip_load then
+          local is_target_schema = schema_filter and schema.name:lower() == schema_filter:lower()
+          local is_default_schema = not schema_filter and schema.name:lower() == default_schema_name:lower()
+          if not is_target_schema and not is_default_schema then
+            schema_opts.skip_load = true  -- Skip loading non-target schemas
+          end
+        end
+
+        for _, v in ipairs(schema:get_views(schema_opts)) do
           table.insert(all_views, v)
         end
       end
@@ -609,12 +693,13 @@ end
 
 ---Get all procedures (server-type aware - aggregates from schemas if needed)
 ---Uses bulk loading when procedures haven't been loaded yet
+---Supports lazy loading based on config.completion.eager_load setting
 ---@param schema_filter string? Optional schema name to filter by
 ---@param opts table? Options { skip_load: boolean? } - skip_load prevents triggering load
 ---@return ProcedureClass[]
 function DbClass:get_procedures(schema_filter, opts)
   opts = opts or {}
-  
+
   -- Ensure schemas are loaded (but not objects)
   if not opts.skip_load then
     self:_ensure_schemas_loaded()
@@ -631,16 +716,55 @@ function DbClass:get_procedures(schema_filter, opts)
       end
     end
 
-    -- If no schemas have procedures loaded yet and not skipping load, use bulk loading
+    -- If no schemas have procedures loaded yet and not skipping load, check loading mode
     if not any_loaded and not opts.skip_load then
-      self:load_all_procedures_bulk()
+      local Config = require('ssns.config')
+      local config = Config.get()
+      local eager_load = config.completion and config.completion.eager_load
+
+      if eager_load then
+        -- Eager mode: load ALL schemas at once (bulk loading)
+        self:load_all_procedures_bulk()
+      elseif schema_filter then
+        -- Lazy mode with specific schema: load only that schema
+        for _, schema in ipairs(self.schemas) do
+          if schema.name:lower() == schema_filter:lower() then
+            schema:load_procedures()
+            break
+          end
+        end
+      else
+        -- Lazy mode without schema filter: load only default schema
+        local default_schema_name = self:get_default_schema()
+        for _, schema in ipairs(self.schemas) do
+          if schema.name:lower() == default_schema_name:lower() then
+            schema:load_procedures()
+            break
+          end
+        end
+      end
     end
 
     -- Aggregate from schemas
     local all_procedures = {}
+    local default_schema_name = self:get_default_schema()
     for _, schema in ipairs(self.schemas) do
       if not schema_filter or schema.name:lower() == schema_filter:lower() then
-        for _, p in ipairs(schema:get_procedures(opts)) do
+        -- In lazy mode, only allow loading for the target schema
+        local Config = require('ssns.config')
+        local config = Config.get()
+        local eager_load = config.completion and config.completion.eager_load
+
+        local schema_opts = vim.tbl_extend('force', opts, {})
+        if not eager_load and not opts.skip_load then
+          local is_target_schema = schema_filter and schema.name:lower() == schema_filter:lower()
+          local is_default_schema = not schema_filter and schema.name:lower() == default_schema_name:lower()
+          if not is_target_schema and not is_default_schema then
+            schema_opts.skip_load = true  -- Skip loading non-target schemas
+          end
+        end
+
+        for _, p in ipairs(schema:get_procedures(schema_opts)) do
           table.insert(all_procedures, p)
         end
       end
@@ -679,12 +803,13 @@ end
 
 ---Get all functions (server-type aware - aggregates from schemas if needed)
 ---Uses bulk loading when functions haven't been loaded yet
+---Supports lazy loading based on config.completion.eager_load setting
 ---@param schema_filter string? Optional schema name to filter by
 ---@param opts table? Options { skip_load: boolean? } - skip_load prevents triggering load
 ---@return FunctionClass[]
 function DbClass:get_functions(schema_filter, opts)
   opts = opts or {}
-  
+
   -- Ensure schemas are loaded (but not objects)
   if not opts.skip_load then
     self:_ensure_schemas_loaded()
@@ -701,16 +826,55 @@ function DbClass:get_functions(schema_filter, opts)
       end
     end
 
-    -- If no schemas have functions loaded yet and not skipping load, use bulk loading
+    -- If no schemas have functions loaded yet and not skipping load, check loading mode
     if not any_loaded and not opts.skip_load then
-      self:load_all_functions_bulk()
+      local Config = require('ssns.config')
+      local config = Config.get()
+      local eager_load = config.completion and config.completion.eager_load
+
+      if eager_load then
+        -- Eager mode: load ALL schemas at once (bulk loading)
+        self:load_all_functions_bulk()
+      elseif schema_filter then
+        -- Lazy mode with specific schema: load only that schema
+        for _, schema in ipairs(self.schemas) do
+          if schema.name:lower() == schema_filter:lower() then
+            schema:load_functions()
+            break
+          end
+        end
+      else
+        -- Lazy mode without schema filter: load only default schema
+        local default_schema_name = self:get_default_schema()
+        for _, schema in ipairs(self.schemas) do
+          if schema.name:lower() == default_schema_name:lower() then
+            schema:load_functions()
+            break
+          end
+        end
+      end
     end
 
     -- Aggregate from schemas
     local all_functions = {}
+    local default_schema_name = self:get_default_schema()
     for _, schema in ipairs(self.schemas) do
       if not schema_filter or schema.name:lower() == schema_filter:lower() then
-        for _, f in ipairs(schema:get_functions(opts)) do
+        -- In lazy mode, only allow loading for the target schema
+        local Config = require('ssns.config')
+        local config = Config.get()
+        local eager_load = config.completion and config.completion.eager_load
+
+        local schema_opts = vim.tbl_extend('force', opts, {})
+        if not eager_load and not opts.skip_load then
+          local is_target_schema = schema_filter and schema.name:lower() == schema_filter:lower()
+          local is_default_schema = not schema_filter and schema.name:lower() == default_schema_name:lower()
+          if not is_target_schema and not is_default_schema then
+            schema_opts.skip_load = true  -- Skip loading non-target schemas
+          end
+        end
+
+        for _, f in ipairs(schema:get_functions(schema_opts)) do
           table.insert(all_functions, f)
         end
       end
@@ -749,12 +913,13 @@ end
 
 ---Get all synonyms (server-type aware - aggregates from schemas if needed)
 ---Uses bulk loading when synonyms haven't been loaded yet
+---Supports lazy loading based on config.completion.eager_load setting
 ---@param schema_filter string? Optional schema name to filter by
 ---@param opts table? Options { skip_load: boolean? } - skip_load prevents triggering load
 ---@return SynonymClass[]
 function DbClass:get_synonyms(schema_filter, opts)
   opts = opts or {}
-  
+
   -- Ensure schemas are loaded (but not objects)
   if not opts.skip_load then
     self:_ensure_schemas_loaded()
@@ -771,16 +936,55 @@ function DbClass:get_synonyms(schema_filter, opts)
       end
     end
 
-    -- If no schemas have synonyms loaded yet and not skipping load, use bulk loading
+    -- If no schemas have synonyms loaded yet and not skipping load, check loading mode
     if not any_loaded and not opts.skip_load then
-      self:load_all_synonyms_bulk()
+      local Config = require('ssns.config')
+      local config = Config.get()
+      local eager_load = config.completion and config.completion.eager_load
+
+      if eager_load then
+        -- Eager mode: load ALL schemas at once (bulk loading)
+        self:load_all_synonyms_bulk()
+      elseif schema_filter then
+        -- Lazy mode with specific schema: load only that schema
+        for _, schema in ipairs(self.schemas) do
+          if schema.name:lower() == schema_filter:lower() then
+            schema:load_synonyms()
+            break
+          end
+        end
+      else
+        -- Lazy mode without schema filter: load only default schema
+        local default_schema_name = self:get_default_schema()
+        for _, schema in ipairs(self.schemas) do
+          if schema.name:lower() == default_schema_name:lower() then
+            schema:load_synonyms()
+            break
+          end
+        end
+      end
     end
 
     -- Aggregate from schemas
     local all_synonyms = {}
+    local default_schema_name = self:get_default_schema()
     for _, schema in ipairs(self.schemas) do
       if not schema_filter or schema.name:lower() == schema_filter:lower() then
-        for _, s in ipairs(schema:get_synonyms(opts)) do
+        -- In lazy mode, only allow loading for the target schema
+        local Config = require('ssns.config')
+        local config = Config.get()
+        local eager_load = config.completion and config.completion.eager_load
+
+        local schema_opts = vim.tbl_extend('force', opts, {})
+        if not eager_load and not opts.skip_load then
+          local is_target_schema = schema_filter and schema.name:lower() == schema_filter:lower()
+          local is_default_schema = not schema_filter and schema.name:lower() == default_schema_name:lower()
+          if not is_target_schema and not is_default_schema then
+            schema_opts.skip_load = true  -- Skip loading non-target schemas
+          end
+        end
+
+        for _, s in ipairs(schema:get_synonyms(schema_opts)) do
           table.insert(all_synonyms, s)
         end
       end
