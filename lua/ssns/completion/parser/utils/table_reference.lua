@@ -19,6 +19,11 @@ local function parse_table_ref_internal(state, is_cte_func)
     return nil
   end
 
+  -- Skip function parameter list if present (for TVFs like: dbo.fn_Split(@param, ',') AS s)
+  if state:is_type("paren_open") then
+    state:skip_paren_contents()
+  end
+
   local alias = AliasParser.parse(state)
 
   -- Handle table hints: WITH (NOLOCK, READPAST, etc.)
