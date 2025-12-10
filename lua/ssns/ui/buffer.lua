@@ -327,6 +327,10 @@ end
 ---Close the SSNS window
 ---@param force boolean? If true, quit Neovim if this is the last window
 function UiBuffer.close(force)
+  -- Save cursor position before closing
+  local Tree = require('ssns.ui.tree')
+  Tree.save_cursor_position()
+
   if UiBuffer.is_open() then
     -- Check if this is the last window (only applies to split mode)
     -- Float windows don't count as "windows" for the last-window check

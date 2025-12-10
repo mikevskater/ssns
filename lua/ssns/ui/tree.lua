@@ -10,6 +10,10 @@ UiTree.line_map = {}
 ---@type table<BaseDbObject, number>
 UiTree.object_map = {}
 
+---Last cursor position tracking for restoring position after close/reopen
+---@type {object: BaseDbObject?, line: number?, column: number?}
+UiTree.last_cursor_state = { object = nil, line = nil, column = nil }
+
 ---Create an ephemeral UI group for display (not stored in data model)
 ---@param parent BaseDbObject Parent object
 ---@param name string Base name for the group (e.g., "TABLES")
@@ -137,6 +141,25 @@ function UiTree.render()
   local Config = require('ssns.config')
   local icons = Config.get_ui().icons
 
+  -- Save current cursor position before clearing mappings
+  local saved_object = nil
+  local saved_line = nil
+  local saved_column = nil
+
+  if Buffer.is_open() then
+    saved_line = Buffer.get_current_line()
+    saved_object = UiTree.line_map[saved_line]
+    if saved_object then
+      local cursor = vim.api.nvim_win_get_cursor(Buffer.winid)
+      saved_column = cursor[2]
+    end
+  else
+    -- Restoring from closed state - use last saved state
+    saved_object = UiTree.last_cursor_state.object
+    saved_line = UiTree.last_cursor_state.line
+    saved_column = UiTree.last_cursor_state.column
+  end
+
   -- Clear mappings
   UiTree.line_map = {}
   UiTree.object_map = {}
@@ -159,6 +182,7 @@ function UiTree.render()
   local add_icon = icons.action or ""
   table.insert(lines, string.format("  %s + Add Server", add_icon))
   UiTree.line_map[#lines] = add_server_action
+  UiTree.object_map[add_server_action] = #lines
   line_number = #lines + 1
 
   -- Add separator line
@@ -190,6 +214,11 @@ function UiTree.render()
   -- Apply syntax highlighting
   local Highlights = require('ssns.ui.highlights')
   Highlights.apply(UiTree.line_map)
+
+  -- Restore cursor position if we have a saved object
+  if saved_object and Buffer.is_open() then
+    UiTree.restore_cursor_to_object(saved_object, saved_column)
+  end
 end
 
 ---Render a server and its children
@@ -2315,6 +2344,83 @@ end
 ---Handle double-click on tree (expand/collapse)
 function UiTree.handle_double_click()
   UiTree.handle_mouse_click(true)
+end
+
+---Save current cursor position for later restoration
+---Called before closing the tree buffer
+function UiTree.save_cursor_position()
+  local Buffer = require('ssns.ui.buffer')
+
+  if not Buffer.is_open() then
+    return
+  end
+
+  local line = Buffer.get_current_line()
+  local obj = UiTree.line_map[line]
+
+  if obj then
+    local cursor = vim.api.nvim_win_get_cursor(Buffer.winid)
+    UiTree.last_cursor_state = {
+      object = obj,
+      line = line,
+      column = cursor[2],
+    }
+  end
+end
+
+---Restore cursor to a target object after tree re-render
+---Handles both direct object lookup and fuzzy matching by name/type
+---@param target_object table The object to restore cursor to
+---@param column number? Optional column position
+function UiTree.restore_cursor_to_object(target_object, column)
+  local Buffer = require('ssns.ui.buffer')
+
+  if not Buffer.is_open() or not target_object then
+    return
+  end
+
+  -- Try direct lookup first (object identity preserved)
+  local target_line = UiTree.object_map[target_object]
+
+  -- If direct lookup fails, try fuzzy matching by name and type
+  if not target_line then
+    for line_num, obj in pairs(UiTree.line_map) do
+      if obj.name == target_object.name and
+         obj.object_type == target_object.object_type then
+        -- Additional parent matching for nested objects
+        if target_object.parent and obj.parent then
+          if obj.parent.name == target_object.parent.name and
+             obj.parent.object_type == target_object.parent.object_type then
+            target_line = line_num
+            break
+          end
+        elseif not target_object.parent and not obj.parent then
+          target_line = line_num
+          break
+        end
+      end
+    end
+  end
+
+  if target_line then
+    local Config = require('ssns.config')
+    local smart_positioning = Config.get_ui().smart_cursor_positioning
+    local col = column or (smart_positioning and Buffer.get_name_column(target_line) or 0)
+
+    local total_lines = vim.api.nvim_buf_line_count(Buffer.bufnr)
+    if target_line >= 1 and target_line <= total_lines then
+      Buffer.set_cursor(target_line, col)
+
+      -- Update indent tracking for smart positioning
+      if smart_positioning then
+        Buffer.last_indent_info = {
+          line = target_line,
+          indent_level = Buffer.get_indent_level(target_line),
+          column = col,
+        }
+      end
+    end
+  end
 end
 
 return UiTree
