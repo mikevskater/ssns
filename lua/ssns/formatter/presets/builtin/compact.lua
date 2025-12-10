@@ -30,7 +30,6 @@ return {
     select_top_newline = false,
     select_into_newline = false,
     select_column_align = "left",
-    select_expression_wrap = 0,
     use_as_keyword = false,
 
     -- FROM clause (Phase 1) - inline tables
@@ -129,7 +128,6 @@ return {
     subquery_paren_style = "same_line",
     function_arg_style = "inline",
     in_list_style = "inline",
-    expression_wrap_length = 0,
     boolean_operator_newline = false,
 
     -- Indentation expansion (Phase 5) - minimal
@@ -140,8 +138,6 @@ return {
 
     -- Advanced (Phase 5)
     keyword_right_align = false,
-    smart_indent = false,
-    preserve_original_layout = false,
     format_only_selection = false,
     batch_separator_style = "semicolon",
   },

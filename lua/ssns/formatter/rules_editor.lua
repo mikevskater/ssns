@@ -74,7 +74,6 @@ local RULE_DEFINITIONS = {
   { key = "select_top_newline", name = "TOP Newline", description = "Put TOP clause on new line after SELECT", type = "boolean", category = "SELECT" },
   { key = "select_into_newline", name = "INTO Newline", description = "Put INTO clause on new line", type = "boolean", category = "SELECT" },
   { key = "select_column_align", name = "Column Alignment", description = "Align columns to left or keyword", type = "enum", options = {"left", "keyword"}, category = "SELECT" },
-  { key = "select_expression_wrap", name = "Expression Wrap", description = "Wrap expressions longer than N chars (0=disable)", type = "number", min = 0, max = 200, step = 10, category = "SELECT" },
   { key = "use_as_keyword", name = "Use AS Keyword", description = "Always use AS for column aliases", type = "boolean", category = "SELECT" },
 
   -- FROM Clause (Phase 1)
@@ -188,7 +187,6 @@ local RULE_DEFINITIONS = {
   { key = "subquery_paren_style", name = "Subquery Paren", description = "Subquery opening paren position", type = "enum", options = {"same_line", "new_line"}, category = "Expressions" },
   { key = "function_arg_style", name = "Function Args", description = "Function argument layout", type = "enum", options = {"inline", "stacked"}, category = "Expressions" },
   { key = "in_list_style", name = "IN List Style", description = "IN clause value list layout", type = "enum", options = {"inline", "stacked"}, category = "Expressions" },
-  { key = "expression_wrap_length", name = "Expr Wrap", description = "Wrap expressions at N chars (0=disable)", type = "number", min = 0, max = 200, step = 10, category = "Expressions" },
   { key = "boolean_operator_newline", name = "Bool Op Newline", description = "Put AND/OR on new lines in expressions", type = "boolean", category = "Expressions" },
 
   -- Indentation expansion (Phase 5)
@@ -199,8 +197,6 @@ local RULE_DEFINITIONS = {
 
   -- Advanced options (Phase 5)
   { key = "keyword_right_align", name = "Right-Align Keywords", description = "Right-align keywords (river style)", type = "boolean", category = "Advanced" },
-  { key = "smart_indent", name = "Smart Indent", description = "Context-aware indentation", type = "boolean", category = "Advanced" },
-  { key = "preserve_original_layout", name = "Preserve Layout", description = "Preserve user formatting where possible", type = "boolean", category = "Advanced" },
   { key = "format_only_selection", name = "Selection Only", description = "Format selection only vs whole buffer", type = "boolean", category = "Advanced" },
   { key = "batch_separator_style", name = "Batch Separator", description = "Batch separator preference", type = "enum", options = {"go", "semicolon"}, category = "Advanced" },
 }

@@ -30,7 +30,6 @@ return {
     select_top_newline = true,
     select_into_newline = true,
     select_column_align = "keyword",
-    select_expression_wrap = 60,
     use_as_keyword = true,
 
     -- FROM clause (Phase 1) - one table per line, aligned
@@ -129,7 +128,6 @@ return {
     subquery_paren_style = "new_line",
     function_arg_style = "stacked",
     in_list_style = "stacked",
-    expression_wrap_length = 60,
     boolean_operator_newline = true,
 
     -- Indentation expansion (Phase 5) - generous
@@ -140,8 +138,6 @@ return {
 
     -- Advanced (Phase 5)
     keyword_right_align = false,
-    smart_indent = true,
-    preserve_original_layout = false,
     format_only_selection = false,
     batch_separator_style = "go",
   },

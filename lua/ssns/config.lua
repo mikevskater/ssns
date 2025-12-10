@@ -230,7 +230,6 @@
 ---@field select_top_newline boolean Put TOP clause on new line after SELECT (default: false)
 ---@field select_into_newline boolean Put INTO clause on new line (default: true)
 ---@field select_column_align string "left"|"keyword" - Align columns to left or keyword (default: "left")
----@field select_expression_wrap number Wrap expressions longer than N chars, 0=disable (default: 0)
 ---@field use_as_keyword boolean Always use AS for column aliases (default: true)
 -- FROM clause rules (Phase 1)
 ---@field from_newline boolean FROM on new line (default: true)
@@ -317,7 +316,6 @@
 ---@field subquery_paren_style string "same_line"|"new_line" - Subquery opening paren position (default: "same_line")
 ---@field function_arg_style string "inline"|"stacked" - Function argument layout (default: "inline")
 ---@field in_list_style string "inline"|"stacked"|"stacked_indent" - IN clause value list layout (default: "inline")
----@field expression_wrap_length number Wrap long expressions at this length, 0=disable (default: 0)
 ---@field boolean_operator_newline boolean Put AND/OR on new lines in expressions (default: false)
 -- Indentation expansion (Phase 5)
 ---@field continuation_indent number Wrapped line continuation indent (default: 1)
@@ -326,8 +324,6 @@
 ---@field nested_join_indent number Nested JOIN indent level (default: 1)
 -- Advanced options (Phase 5)
 ---@field keyword_right_align boolean Right-align keywords for river style (default: false)
----@field smart_indent boolean Context-aware indentation (default: false)
----@field preserve_original_layout boolean Preserve user formatting where possible (default: false)
 ---@field format_only_selection boolean Format selection only vs whole buffer (default: false)
 ---@field batch_separator_style string "go"|"semicolon" - Batch separator preference (default: "go")
 ---@field rules FormatterRulesConfig Per-clause rule overrides
@@ -764,7 +760,6 @@ local default_config = {
     select_top_newline = false,          -- TOP clause on new line after SELECT
     select_into_newline = true,          -- INTO clause on new line
     select_column_align = "left",        -- "left"|"keyword" - Column alignment
-    select_expression_wrap = 0,          -- Wrap expressions longer than N chars (0=disable)
     use_as_keyword = true,               -- Always use AS for column aliases
 
     -- FROM clause rules (Phase 1)
@@ -863,7 +858,6 @@ local default_config = {
     subquery_paren_style = "same_line",  -- "same_line"|"new_line"
     function_arg_style = "inline",       -- "inline"|"stacked"
     in_list_style = "inline",            -- "inline"|"stacked"|"stacked_indent"
-    expression_wrap_length = 0,          -- Wrap at N chars (0=disable)
     boolean_operator_newline = false,    -- AND/OR on new lines
 
     -- Indentation expansion (Phase 5)
@@ -874,8 +868,6 @@ local default_config = {
 
     -- Advanced options (Phase 5)
     keyword_right_align = false,         -- Right-align keywords (river style)
-    smart_indent = false,                -- Context-aware indentation
-    preserve_original_layout = false,    -- Preserve user formatting
     format_only_selection = false,       -- Format selection vs whole buffer
     batch_separator_style = "go",        -- "go"|"semicolon"
 
