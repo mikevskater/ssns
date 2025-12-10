@@ -6,6 +6,7 @@
 ---  - insert_into_keyword: add INTO after INSERT
 ---  - delete_from_keyword: add FROM after DELETE
 ---  - use_as_keyword: add AS before aliases
+---  - from_schema_qualify: always/never (add/remove schema prefix from table names)
 ---
 ---Annotations added:
 ---  token.remove        - true if token should be removed from output
@@ -345,6 +346,160 @@ local function transform_use_as_keyword(tokens, config)
 end
 
 -- =============================================================================
+-- Schema Qualification Transformation
+-- =============================================================================
+
+-- Keywords that indicate we're in a table reference context
+local TABLE_CONTEXT_KEYWORDS = {
+  FROM = true,
+  JOIN = true,
+  INTO = true,
+  UPDATE = true,
+  TABLE = true,  -- CREATE TABLE, ALTER TABLE, DROP TABLE
+  MERGE = true,
+  USING = true,
+}
+
+-- Keywords that end a table reference context
+local TABLE_CONTEXT_END_KEYWORDS = {
+  WHERE = true,
+  SET = true,
+  ON = true,
+  VALUES = true,
+  SELECT = true,
+  ORDER = true,
+  GROUP = true,
+  HAVING = true,
+  UNION = true,
+  EXCEPT = true,
+  INTERSECT = true,
+  OUTPUT = true,
+  AS = true,  -- CTE AS, table AS alias (though alias is ok)
+}
+
+---Check if we're in a table reference context (after FROM, JOIN, INTO, UPDATE, etc.)
+---@param tokens table[] Array of tokens
+---@param pos number Current position
+---@return boolean True if in table reference context
+local function is_table_reference_context(tokens, pos)
+  local paren_depth = 0
+
+  for i = pos - 1, 1, -1 do
+    local t = tokens[i]
+    if t.type == "paren_close" then
+      paren_depth = paren_depth + 1
+    elseif t.type == "paren_open" then
+      paren_depth = paren_depth - 1
+    elseif t.type == "comma" and paren_depth == 0 then
+      -- After comma, still in same clause context, continue looking back
+    elseif t.type == "keyword" and paren_depth == 0 then
+      local upper = string.upper(t.text)
+      if TABLE_CONTEXT_KEYWORDS[upper] then
+        return true
+      elseif TABLE_CONTEXT_END_KEYWORDS[upper] then
+        return false
+      end
+      -- Other keywords (like INNER, LEFT, OUTER) - continue looking
+    elseif t.type == "semicolon" or t.type == "go" then
+      return false
+    end
+  end
+
+  return false
+end
+
+---Apply from_schema_qualify transformation
+---Handles "never" mode by removing schema prefixes from qualified table names
+---Note: "always" mode requires database connection and is handled separately
+---@param tokens table[] Array of tokens
+---@param config table Formatter configuration
+local function transform_schema_qualify(tokens, config)
+  local mode = config.from_schema_qualify
+  if not mode or mode == "preserve" then return end
+
+  -- "always" mode requires database lookup, handled elsewhere
+  if mode ~= "never" then return end
+
+  -- "never" mode: remove schema prefixes
+  -- Pattern to detect: identifier.identifier or identifier.identifier.identifier
+  -- We look for: identifier followed by . followed by identifier
+  -- The schema (and optionally database) prefix should be removed
+
+  local i = 1
+  while i <= #tokens do
+    local token = tokens[i]
+
+    -- Look for identifier that might be a schema or database prefix
+    if token.type == "identifier" or token.type == "quoted_identifier" then
+      -- Check if in a table reference context
+      if is_table_reference_context(tokens, i) then
+        -- Look ahead for dot pattern: identifier.identifier or identifier.identifier.identifier
+        local j = i + 1
+
+        -- Skip whitespace (though dots usually have no whitespace)
+        while j <= #tokens and tokens[j].type == "whitespace" do
+          j = j + 1
+        end
+
+        if j <= #tokens and (tokens[j].type == "dot" or (tokens[j].type == "operator" and tokens[j].text == ".")) then
+          -- Found first dot - this is potentially schema.table or db.schema.table
+          local dot1_pos = j
+          j = j + 1
+
+          -- Skip whitespace
+          while j <= #tokens and tokens[j].type == "whitespace" do
+            j = j + 1
+          end
+
+          if j <= #tokens and (tokens[j].type == "identifier" or tokens[j].type == "quoted_identifier") then
+            -- Found identifier after first dot
+            local second_identifier_pos = j
+            j = j + 1
+
+            -- Skip whitespace
+            while j <= #tokens and tokens[j].type == "whitespace" do
+              j = j + 1
+            end
+
+            -- Check for second dot (three-part name: db.schema.table)
+            if j <= #tokens and (tokens[j].type == "dot" or (tokens[j].type == "operator" and tokens[j].text == ".")) then
+              local dot2_pos = j
+              j = j + 1
+
+              -- Skip whitespace
+              while j <= #tokens and tokens[j].type == "whitespace" do
+                j = j + 1
+              end
+
+              if j <= #tokens and (tokens[j].type == "identifier" or tokens[j].type == "quoted_identifier") then
+                -- Three-part name: db.schema.table - remove db, schema, and both dots
+                -- Keep only the table name (third identifier)
+                token.remove = true  -- db
+                tokens[dot1_pos].remove = true  -- first dot
+                tokens[second_identifier_pos].remove = true  -- schema
+                tokens[dot2_pos].remove = true  -- second dot
+                -- Third identifier (table) stays but needs space before
+                tokens[j].space_before = true
+                i = j  -- Move to table identifier
+              end
+            else
+              -- Two-part name: schema.table - remove schema and dot
+              token.remove = true  -- schema
+              tokens[dot1_pos].remove = true  -- dot
+              -- Second identifier (table) stays but needs space before
+              tokens[second_identifier_pos].space_before = true
+              i = second_identifier_pos  -- Move to table identifier
+            end
+          end
+        end
+      end
+    end
+
+    i = i + 1
+  end
+end
+
+-- =============================================================================
 -- Main Pass
 -- =============================================================================
 
@@ -360,6 +515,7 @@ function TransformPass.run(tokens, config)
   transform_insert_into(tokens, config)
   transform_delete_from(tokens, config)
   transform_use_as_keyword(tokens, config)
+  transform_schema_qualify(tokens, config)
 
   return tokens
 end
@@ -370,7 +526,7 @@ function TransformPass.info()
   return {
     name = "transform",
     order = 7,
-    description = "Token transformations (insert/remove tokens)",
+    description = "Token transformations (insert/remove tokens, schema qualification)",
     annotations = {
       "remove", "insert_before", "insert_after", "is_inserted",
     },

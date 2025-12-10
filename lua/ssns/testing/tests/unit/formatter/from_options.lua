@@ -1,6 +1,6 @@
 -- Test file: from_options.lua
--- IDs: 8466-8469, 8530-8535, 8596-85996, 8770-8779
--- Tests: FROM clause options - from_newline, alias_align, table_style, hints
+-- IDs: 8466-8469, 8530-8535, 8596-85996, 8770-8779, 8780-8795
+-- Tests: FROM clause options - from_newline, alias_align, table_style, hints, schema_qualify
 
 return {
     -- FROM clause newline options
@@ -330,6 +330,195 @@ return {
         expected = {
             -- WITH should be indented (4 spaces by default)
             matches = { "users\n    WITH" }
+        }
+    },
+
+    -- from_schema_qualify tests
+    -- Options: "preserve" (default), "always" (lookup from cache), "never" (remove schema prefix)
+    -- NOTE: "always" mode requires database connection to look up actual schemas.
+    --       Without connection, tables that already have schema are preserved,
+    --       and unqualified tables remain unqualified (lookup fails gracefully).
+    --       These tests cover the "preserve" and "never" modes which work without connection.
+
+    -- PRESERVE mode tests (default - no changes)
+    {
+        id = 8780,
+        type = "formatter",
+        name = "from_schema_qualify preserve (default) - unqualified table unchanged",
+        input = "SELECT * FROM users WHERE id = 1",
+        opts = { from_schema_qualify = "preserve" },
+        expected = {
+            -- Table name stays as-is
+            contains = { "FROM users" }
+        }
+    },
+    {
+        id = 8781,
+        type = "formatter",
+        name = "from_schema_qualify preserve - keeps existing dbo schema",
+        input = "SELECT * FROM dbo.users WHERE id = 1",
+        opts = { from_schema_qualify = "preserve" },
+        expected = {
+            -- Schema-qualified name stays as-is
+            contains = { "FROM dbo.users" }
+        }
+    },
+    {
+        id = 8782,
+        type = "formatter",
+        name = "from_schema_qualify preserve - keeps existing non-dbo schema",
+        input = "SELECT * FROM sales.orders WHERE id = 1",
+        opts = { from_schema_qualify = "preserve" },
+        expected = {
+            -- Non-dbo schema preserved
+            contains = { "FROM sales.orders" }
+        }
+    },
+    {
+        id = 8783,
+        type = "formatter",
+        name = "from_schema_qualify preserve - keeps three-part names",
+        input = "SELECT * FROM mydb.dbo.users WHERE id = 1",
+        opts = { from_schema_qualify = "preserve" },
+        expected = {
+            -- Three-part name stays as-is
+            contains = { "FROM mydb.dbo.users" }
+        }
+    },
+
+    -- NEVER mode tests (remove schema prefixes)
+    {
+        id = 8784,
+        type = "formatter",
+        name = "from_schema_qualify never - removes dbo schema",
+        input = "SELECT * FROM dbo.users WHERE id = 1",
+        opts = { from_schema_qualify = "never" },
+        expected = {
+            -- dbo. prefix removed
+            contains = { "FROM users" }
+        }
+    },
+    {
+        id = 8785,
+        type = "formatter",
+        name = "from_schema_qualify never - removes non-dbo schema",
+        input = "SELECT * FROM sales.orders WHERE id = 1",
+        opts = { from_schema_qualify = "never" },
+        expected = {
+            -- Schema prefix removed
+            contains = { "FROM orders" }
+        }
+    },
+    {
+        id = 8786,
+        type = "formatter",
+        name = "from_schema_qualify never - removes schema from three-part name",
+        input = "SELECT * FROM mydb.dbo.users WHERE id = 1",
+        opts = { from_schema_qualify = "never" },
+        expected = {
+            -- Both database and schema removed, just table name
+            contains = { "FROM users" }
+        }
+    },
+    {
+        id = 8787,
+        type = "formatter",
+        name = "from_schema_qualify never - multiple tables",
+        input = "SELECT * FROM dbo.users, sales.orders, hr.employees",
+        opts = { from_schema_qualify = "never" },
+        expected = {
+            -- All schema prefixes removed
+            contains = { "users", "orders", "employees" },
+            excludes = { "dbo.users", "sales.orders", "hr.employees" }
+        }
+    },
+    {
+        id = 8788,
+        type = "formatter",
+        name = "from_schema_qualify never - JOIN tables",
+        input = "SELECT * FROM dbo.users u JOIN dbo.orders o ON u.id = o.user_id",
+        opts = { from_schema_qualify = "never" },
+        expected = {
+            -- Both tables have schema removed
+            contains = { "FROM users", "JOIN orders" }
+        }
+    },
+    {
+        id = 8789,
+        type = "formatter",
+        name = "from_schema_qualify never - INSERT table",
+        input = "INSERT INTO dbo.users (id, name) VALUES (1, 'John')",
+        opts = { from_schema_qualify = "never" },
+        expected = {
+            -- INSERT table has schema removed
+            contains = { "INSERT INTO users" }
+        }
+    },
+    {
+        id = 8790,
+        type = "formatter",
+        name = "from_schema_qualify never - UPDATE table",
+        input = "UPDATE dbo.users SET name = 'Jane' WHERE id = 1",
+        opts = { from_schema_qualify = "never" },
+        expected = {
+            -- UPDATE table has schema removed
+            contains = { "UPDATE users" }
+        }
+    },
+    {
+        id = 8791,
+        type = "formatter",
+        name = "from_schema_qualify never - DELETE table",
+        input = "DELETE FROM dbo.users WHERE id = 1",
+        opts = { from_schema_qualify = "never" },
+        expected = {
+            -- DELETE table has schema removed (formatter may add newline after DELETE)
+            contains = { "FROM users" },
+            excludes = { "dbo.users" }
+        }
+    },
+    {
+        id = 8792,
+        type = "formatter",
+        name = "from_schema_qualify never - preserves table alias",
+        input = "SELECT * FROM dbo.users u WHERE u.id = 1",
+        opts = { from_schema_qualify = "never" },
+        expected = {
+            -- Schema removed, alias preserved
+            contains = { "FROM users u" }
+        }
+    },
+    {
+        id = 8793,
+        type = "formatter",
+        name = "from_schema_qualify never - doesn't affect column references",
+        input = "SELECT u.id, u.name FROM dbo.users u",
+        opts = { from_schema_qualify = "never" },
+        expected = {
+            -- Only table schema removed, column references unchanged
+            contains = { "FROM users u", "u.id", "u.name" }
+        }
+    },
+    {
+        id = 8794,
+        type = "formatter",
+        name = "from_schema_qualify never - unqualified tables unchanged",
+        input = "SELECT * FROM users WHERE id = 1",
+        opts = { from_schema_qualify = "never" },
+        expected = {
+            -- Unqualified table stays unqualified
+            contains = { "FROM users" }
+        }
+    },
+    {
+        id = 8795,
+        type = "formatter",
+        name = "from_schema_qualify never - mixed qualified and unqualified",
+        input = "SELECT * FROM dbo.users u JOIN orders o ON u.id = o.user_id",
+        opts = { from_schema_qualify = "never" },
+        expected = {
+            -- Qualified becomes unqualified, unqualified stays unqualified
+            contains = { "FROM users u", "JOIN orders o" }
         }
     },
 }
