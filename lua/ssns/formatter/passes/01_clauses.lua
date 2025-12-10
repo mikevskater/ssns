@@ -107,7 +107,7 @@ function ClausesPass.run(tokens, config)
   local function_params_paren_depth = 0  -- Track paren depth for function params
   local paren_depth = 0
   local select_paren_depth = 0  -- Track paren depth when SELECT started
-  local cte_paren_depth = 0  -- Track when we enter CTE subquery
+  local cte_body_paren_depth = nil  -- paren_depth when we entered CTE body (nil = not in CTE body)
   local in_cte_definition = false  -- True between WITH and AS (
   local saw_cte_as = false  -- Track when we've seen AS in CTE definition
   local in_cte_columns = false  -- True when inside CTE column list: cte(col1, col2)
@@ -458,7 +458,8 @@ function ClausesPass.run(tokens, config)
         token.is_cte_open_paren = true
         in_cte_definition = false  -- Now inside CTE subquery
         saw_cte_as = false
-        cte_paren_depth = cte_paren_depth + 1
+        -- Remember the paren depth when we entered CTE body (paren_depth was already incremented above)
+        cte_body_paren_depth = paren_depth
       else
         -- This is the CTE columns paren (before AS)
         token.is_cte_columns_open = true
@@ -468,13 +469,11 @@ function ClausesPass.run(tokens, config)
       -- End of CTE column list
       token.is_cte_columns_close = true
       in_cte_columns = false
-    elseif in_cte and cte_paren_depth > 0 and token.type == "paren_close" then
-      cte_paren_depth = cte_paren_depth - 1
-      if cte_paren_depth == 0 then
-        -- End of CTE subquery, check for comma (more CTEs) or SELECT
-        -- Will be handled by next token
-        token.is_cte_close_paren = true
-      end
+    elseif in_cte and cte_body_paren_depth and token.type == "paren_close" and paren_depth < cte_body_paren_depth then
+      -- We're closing the CTE body paren (paren_depth was already decremented above)
+      -- paren_depth is now less than cte_body_paren_depth means we've closed the CTE paren
+      token.is_cte_close_paren = true
+      cte_body_paren_depth = nil  -- No longer in CTE body
     end
 
     -- Mark commas inside CTE column list
@@ -483,7 +482,8 @@ function ClausesPass.run(tokens, config)
     end
 
     -- Comma after CTE definition starts a new CTE
-    if in_cte and cte_paren_depth == 0 and not in_cte_columns and token.type == "comma" then
+    -- cte_body_paren_depth == nil means we're not inside a CTE body
+    if in_cte and cte_body_paren_depth == nil and not in_cte_columns and token.type == "comma" then
       in_cte_definition = true  -- Ready for next CTE name and AS
       saw_cte_as = false
     end
@@ -610,6 +610,7 @@ function ClausesPass.run(tokens, config)
     token.in_set_clause = in_set_clause
     token.in_values_clause = in_values_clause
     token.in_cte = in_cte
+    token.in_cte_body = in_cte and cte_body_paren_depth ~= nil  -- True only inside CTE subquery body
     token.in_insert_columns = in_insert_columns
     token.in_merge = in_merge
     token.in_update = in_update
@@ -656,7 +657,7 @@ function ClausesPass.run(tokens, config)
       in_function_params = false
       function_params_paren_depth = 0
       paren_depth = 0
-      cte_paren_depth = 0
+      cte_body_paren_depth = nil
       in_cte_definition = false
       saw_cte_as = false
       in_cte_columns = false

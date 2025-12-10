@@ -1,6 +1,6 @@
 -- Test file: grouping_options.lua
--- IDs: 8480-8487, 8490-8493, 8500, 8559-8566, 8740-8749
--- Tests: GROUP BY, ORDER BY, CTE, UNION options
+-- IDs: 8480-8487, 8490-8493, 8500, 8559-8566, 8740-8749, 9085-9095
+-- Tests: GROUP BY, ORDER BY, CTE, UNION options, cte_style
 
 return {
     -- GROUP BY options
@@ -298,6 +298,129 @@ return {
         opts = { cte_columns_style = "inline" },
         expected = {
             contains = { "(z_col, a_col, m_col)" }
+        }
+    },
+
+    -- cte_style tests
+    {
+        id = 9085,
+        type = "formatter",
+        name = "cte_style expanded (default) - CTE body has newlines",
+        input = "WITH cte AS (SELECT id, name FROM users WHERE active = 1) SELECT * FROM cte",
+        opts = { cte_style = "expanded" },
+        expected = {
+            -- Expanded mode: FROM and WHERE on new lines inside CTE
+            matches = { "AS %(\n.-SELECT", "\n.-FROM users", "\n.-WHERE active" }
+        }
+    },
+    {
+        id = 9086,
+        type = "formatter",
+        name = "cte_style compact - CTE body stays inline",
+        input = "WITH cte AS (SELECT id, name FROM users WHERE active = 1) SELECT * FROM cte",
+        opts = { cte_style = "compact" },
+        expected = {
+            -- Compact mode: clauses stay on same line inside CTE
+            contains = { "SELECT id, name FROM users WHERE active = 1" }
+        }
+    },
+    {
+        id = 9087,
+        type = "formatter",
+        name = "cte_style compact - stacked select_list_style suppressed in CTE",
+        input = "WITH cte AS (SELECT a, b, c FROM users) SELECT * FROM cte",
+        opts = { cte_style = "compact", select_list_style = "stacked" },
+        expected = {
+            -- Inside CTE: columns stay inline despite stacked style
+            contains = { "SELECT a, b, c FROM" }
+        }
+    },
+    {
+        id = 9088,
+        type = "formatter",
+        name = "cte_style compact - main query still uses stacked style",
+        input = "WITH cte AS (SELECT * FROM users) SELECT a, b, c FROM cte",
+        opts = { cte_style = "compact", select_list_style = "stacked" },
+        expected = {
+            -- Main query outside CTE should still use stacked style
+            matches = { "SELECT a,\n.-b,\n.-c\nFROM cte" }
+        }
+    },
+    {
+        id = 9089,
+        type = "formatter",
+        name = "cte_style compact - multiple CTEs all compact",
+        input = "WITH cte1 AS (SELECT id FROM a WHERE x = 1), cte2 AS (SELECT id FROM b WHERE y = 2) SELECT * FROM cte1 JOIN cte2 ON cte1.id = cte2.id",
+        opts = { cte_style = "compact" },
+        expected = {
+            -- Both CTE bodies should be compact
+            contains = { "SELECT id FROM a WHERE x = 1", "SELECT id FROM b WHERE y = 2" }
+        }
+    },
+    {
+        id = 9090,
+        type = "formatter",
+        name = "cte_style expanded - multiple CTEs all expanded",
+        input = "WITH cte1 AS (SELECT id FROM a WHERE x = 1), cte2 AS (SELECT id FROM b WHERE y = 2) SELECT * FROM cte1 JOIN cte2 ON cte1.id = cte2.id",
+        opts = { cte_style = "expanded" },
+        expected = {
+            -- Both CTE bodies should have newlines
+            matches = { "\n.-FROM a\n.-WHERE x", "\n.-FROM b\n.-WHERE y" }
+        }
+    },
+    {
+        id = 9091,
+        type = "formatter",
+        name = "cte_style compact - with GROUP BY inside CTE",
+        input = "WITH cte AS (SELECT category, COUNT(*) as cnt FROM products GROUP BY category) SELECT * FROM cte",
+        opts = { cte_style = "compact" },
+        expected = {
+            -- GROUP BY stays inline in compact mode
+            contains = { "FROM products GROUP BY category" }
+        }
+    },
+    {
+        id = 9092,
+        type = "formatter",
+        name = "cte_style compact - with ORDER BY inside CTE",
+        input = "WITH cte AS (SELECT TOP 10 id, name FROM users ORDER BY created_at) SELECT * FROM cte",
+        opts = { cte_style = "compact" },
+        expected = {
+            -- ORDER BY stays inline in compact mode
+            contains = { "FROM users ORDER BY" }
+        }
+    },
+    {
+        id = 9093,
+        type = "formatter",
+        name = "cte_style compact - with JOIN inside CTE",
+        input = "WITH cte AS (SELECT u.id, o.total FROM users u INNER JOIN orders o ON u.id = o.user_id) SELECT * FROM cte",
+        opts = { cte_style = "compact" },
+        expected = {
+            -- JOIN stays inline in compact mode
+            contains = { "FROM users u INNER JOIN orders o ON" }
+        }
+    },
+    {
+        id = 9094,
+        type = "formatter",
+        name = "cte_style compact - preserves other CTE options",
+        input = "WITH cte AS (SELECT * FROM users) SELECT * FROM cte",
+        opts = { cte_style = "compact", cte_parenthesis_style = "new_line" },
+        expected = {
+            -- cte_parenthesis_style should still work (open paren on new line)
+            matches = { "AS\n.-%(" }
+        }
+    },
+    {
+        id = 9095,
+        type = "formatter",
+        name = "cte_style expanded - stacked_indent in CTE body",
+        input = "WITH cte AS (SELECT id, name FROM users) SELECT * FROM cte",
+        opts = { cte_style = "expanded", select_list_style = "stacked_indent" },
+        expected = {
+            -- stacked_indent should work inside CTE in expanded mode
+            matches = { "SELECT\n.-id,\n.-name" }
         }
     },
 }

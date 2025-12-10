@@ -303,6 +303,14 @@ function StructurePass.run(tokens, config)
           should_newline = config.delete_from_newline == true
         end
 
+        -- CTE compact style - suppress newlines for clauses inside CTE body
+        -- cte_style: "compact" keeps CTE body inline, "expanded" (default) uses normal formatting
+        if token.in_cte_body and config.cte_style == "compact" then
+          -- In compact mode, don't add newlines for clauses inside CTE body
+          -- (SELECT, FROM, WHERE, etc. stay on same line within CTE)
+          should_newline = false
+        end
+
         -- Don't add newline for the first major clause of a statement
         -- (the semicolon/output.lua already adds blank lines between statements)
         -- EXCEPT: If we're in a view body, always add newline for the first clause
@@ -416,6 +424,11 @@ function StructurePass.run(tokens, config)
           skip_newline = true
         end
 
+        -- CTE compact mode: suppress JOIN newlines inside CTE body
+        if token.in_cte_body and config.cte_style == "compact" then
+          skip_newline = true
+        end
+
         if not skip_newline then
           -- Empty line before join if configured
           if config.empty_line_before_join and i > 1 then
@@ -435,13 +448,16 @@ function StructurePass.run(tokens, config)
       if upper == "JOIN" then
         if not state.pending_join_modifier then
           -- Standalone JOIN (no modifier)
-          if config.empty_line_before_join and i > 1 then
-            token.empty_line_before = true
+          -- Skip newline in CTE compact mode
+          if not (token.in_cte_body and config.cte_style == "compact") then
+            if config.empty_line_before_join and i > 1 then
+              token.empty_line_before = true
+            end
+            token.newline_before = true
+            -- join_indent_style: "indent" adds +1 level, "align" stays at base
+            local join_indent = config.join_indent_style == "indent" and 1 or 0
+            token.indent_level = state.base_indent + join_indent
           end
-          token.newline_before = true
-          -- join_indent_style: "indent" adds +1 level, "align" stays at base
-          local join_indent = config.join_indent_style == "indent" and 1 or 0
-          token.indent_level = state.base_indent + join_indent
         end
         state.pending_join_modifier = false
         state.in_from_clause = true  -- JOIN is part of FROM clause
@@ -501,16 +517,17 @@ function StructurePass.run(tokens, config)
         state.in_on_clause = true
         state.in_from_clause = false
 
-        if config.join_on_same_line == false then
+        -- Skip ON newline in CTE compact mode
+        if config.join_on_same_line == false and not (token.in_cte_body and config.cte_style == "compact") then
           token.newline_before = true
           -- ON indented from JOIN: +1 for join_indent_style, +1 for ON offset
           local join_indent = config.join_indent_style == "indent" and 1 or 0
           token.indent_level = state.base_indent + join_indent + 1
         end
 
-        -- Check for stacked_indent - first condition should be on new line
+        -- Check for stacked_indent - first condition should be on new line (skip in CTE compact mode)
         local style = config.on_condition_style or "inline"
-        if style == "stacked_indent" then
+        if style == "stacked_indent" and not (token.in_cte_body and config.cte_style == "compact") then
           state.pending_on_first = true
         end
       end
@@ -627,40 +644,43 @@ function StructurePass.run(tokens, config)
       local add_newline = false
       local next_indent = state.base_indent + 1
 
+      -- CTE compact mode: suppress all stacked styles inside CTE body
+      local in_cte_compact = token.in_cte_body and config.cte_style == "compact"
+
       if state.in_select_list and state.paren_depth == state.select_paren_depth then
         local style = config.select_list_style or "inline"
-        if style == "stacked" or style == "stacked_indent" then
+        if not in_cte_compact and (style == "stacked" or style == "stacked_indent") then
           add_newline = true
         end
       elseif state.in_from_clause and not state.in_on_clause then
         local style = config.from_table_style or "inline"
-        if style == "stacked" or style == "stacked_indent" then
+        if not in_cte_compact and (style == "stacked" or style == "stacked_indent") then
           add_newline = true
         end
       elseif state.in_group_by then
         local style = config.group_by_style or "inline"
-        if style == "stacked" then
+        if not in_cte_compact and style == "stacked" then
           add_newline = true
         end
       elseif state.in_order_by and not state.in_over_clause then
         local style = config.order_by_style or "inline"
-        if style == "stacked" then
+        if not in_cte_compact and style == "stacked" then
           add_newline = true
         end
       elseif state.in_set_clause then
         local style = config.update_set_style or "stacked"
-        if style == "stacked" then
+        if not in_cte_compact and style == "stacked" then
           add_newline = true
         end
       elseif state.in_in_list and state.paren_depth == state.in_list_paren_depth then
         local style = config.where_in_list_style or config.in_list_style or "inline"
-        if style == "stacked" or style == "stacked_indent" then
+        if not in_cte_compact and (style == "stacked" or style == "stacked_indent") then
           add_newline = true
           next_indent = state.base_indent + 2
         end
       elseif state.in_insert_columns then
         local style = config.insert_columns_style or "inline"
-        if style == "stacked" or style == "stacked_indent" then
+        if not in_cte_compact and (style == "stacked" or style == "stacked_indent") then
           add_newline = true
         end
       elseif state.in_values_clause and state.paren_depth == state.values_paren_depth then
@@ -807,38 +827,49 @@ function StructurePass.run(tokens, config)
     if not skip_types[token.type] then
       local upper = token.type == "keyword" and string.upper(token.text) or ""
 
+      -- CTE compact mode: suppress stacked_indent first-item newlines inside CTE body
+      local in_cte_compact = token.in_cte_body and config.cte_style == "compact"
+
       -- SELECT stacked_indent: skip SELECT and modifiers (DISTINCT, TOP, ALL, numbers after TOP, PERCENT, TIES, WITH)
       if state.pending_select_first then
         local is_modifier = upper == "SELECT" or upper == "DISTINCT" or upper == "TOP" or upper == "ALL"
                          or upper == "PERCENT" or upper == "TIES" or upper == "WITH"
                          or token.type == "number"
         if not is_modifier then
-          token.newline_before = true
-          token.indent_level = state.base_indent + 1
+          if not in_cte_compact then
+            token.newline_before = true
+            token.indent_level = state.base_indent + 1
+          end
           state.pending_select_first = false
         end
       end
 
       -- FROM stacked_indent: first table (skip FROM keyword)
       if state.pending_from_first and upper ~= "FROM" then
-        token.newline_before = true
-        token.indent_level = state.base_indent + 1
+        if not in_cte_compact then
+          token.newline_before = true
+          token.indent_level = state.base_indent + 1
+        end
         state.pending_from_first = false
       end
 
       -- WHERE stacked_indent: first condition (skip WHERE keyword)
       if state.pending_where_first and upper ~= "WHERE" then
-        token.newline_before = true
-        token.indent_level = state.base_indent + 1
+        if not in_cte_compact then
+          token.newline_before = true
+          token.indent_level = state.base_indent + 1
+        end
         state.pending_where_first = false
       end
 
       -- ON stacked_indent: first condition (skip ON keyword itself)
       if state.pending_on_first and upper ~= "ON" then
-        token.newline_before = true
-        -- +1 for join_indent_style, +1 for ON offset
-        local join_indent = config.join_indent_style == "indent" and 1 or 0
-        token.indent_level = state.base_indent + join_indent + 2
+        if not in_cte_compact then
+          token.newline_before = true
+          -- +1 for join_indent_style, +1 for ON offset
+          local join_indent = config.join_indent_style == "indent" and 1 or 0
+          token.indent_level = state.base_indent + join_indent + 2
+        end
         state.pending_on_first = false
       end
 
