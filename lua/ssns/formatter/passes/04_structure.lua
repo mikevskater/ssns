@@ -422,7 +422,9 @@ function StructurePass.run(tokens, config)
             token.empty_line_before = true
           end
           token.newline_before = true
-          token.indent_level = state.base_indent
+          -- join_indent_style: "indent" adds +1 level, "align" stays at base
+          local join_indent = config.join_indent_style == "indent" and 1 or 0
+          token.indent_level = state.base_indent + join_indent
         end
 
         state.pending_join_modifier = true
@@ -437,7 +439,9 @@ function StructurePass.run(tokens, config)
             token.empty_line_before = true
           end
           token.newline_before = true
-          token.indent_level = state.base_indent
+          -- join_indent_style: "indent" adds +1 level, "align" stays at base
+          local join_indent = config.join_indent_style == "indent" and 1 or 0
+          token.indent_level = state.base_indent + join_indent
         end
         state.pending_join_modifier = false
         state.in_from_clause = true  -- JOIN is part of FROM clause
@@ -499,7 +503,9 @@ function StructurePass.run(tokens, config)
 
         if config.join_on_same_line == false then
           token.newline_before = true
-          token.indent_level = state.base_indent + 1
+          -- ON indented from JOIN: +1 for join_indent_style, +1 for ON offset
+          local join_indent = config.join_indent_style == "indent" and 1 or 0
+          token.indent_level = state.base_indent + join_indent + 1
         end
 
         -- Check for stacked_indent - first condition should be on new line
@@ -587,14 +593,17 @@ function StructurePass.run(tokens, config)
           local position = config.on_and_position or config.and_or_position or "leading"
 
           if style == "stacked" or style == "stacked_indent" then
+            -- ON conditions: +1 for join_indent_style, +1 for ON offset, same level for AND/OR
+            local join_indent = config.join_indent_style == "indent" and 1 or 0
+            local on_indent = state.base_indent + join_indent + 2
             if position == "leading" then
               token.newline_before = true
-              token.indent_level = state.base_indent + 2
+              token.indent_level = on_indent
             else
               token.trailing_newline = true
               token.skip_pending = true
               state.pending_stacked_newline = true
-              state.stacked_indent = state.base_indent + 2
+              state.stacked_indent = on_indent
             end
           end
         elseif config.boolean_operator_newline then
@@ -827,7 +836,9 @@ function StructurePass.run(tokens, config)
       -- ON stacked_indent: first condition (skip ON keyword itself)
       if state.pending_on_first and upper ~= "ON" then
         token.newline_before = true
-        token.indent_level = state.base_indent + 2
+        -- +1 for join_indent_style, +1 for ON offset
+        local join_indent = config.join_indent_style == "indent" and 1 or 0
+        token.indent_level = state.base_indent + join_indent + 2
         state.pending_on_first = false
       end
 

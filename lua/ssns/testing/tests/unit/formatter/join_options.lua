@@ -1,6 +1,6 @@
 -- Test file: join_options.lua
--- IDs: 8460-8465, 84651-846592, 8700-8716
--- Tests: JOIN clause options - empty_line_before_join, join_keyword_style, on_condition_style, cross_apply
+-- IDs: 8460-8465, 84651-846592, 8700-8716, 9070-9080
+-- Tests: JOIN clause options - empty_line_before_join, join_keyword_style, on_condition_style, cross_apply, join_indent_style
 
 return {
     -- JOIN clause options
@@ -359,6 +359,126 @@ return {
         opts = { cross_apply_newline = true },
         expected = {
             matches = { "FROM sys.dm_exec_requests r\nCROSS APPLY" }
+        }
+    },
+
+    -- join_indent_style tests
+    {
+        id = 9070,
+        type = "formatter",
+        name = "join_indent_style indent (default) - JOIN indented from FROM",
+        input = "SELECT * FROM users u INNER JOIN orders o ON u.id = o.user_id",
+        opts = { join_indent_style = "indent" },
+        expected = {
+            -- JOIN should be indented (4 spaces from FROM level)
+            matches = { "FROM users u\n    INNER JOIN orders o" }
+        }
+    },
+    {
+        id = 9071,
+        type = "formatter",
+        name = "join_indent_style align - JOIN aligns with FROM",
+        input = "SELECT * FROM users u INNER JOIN orders o ON u.id = o.user_id",
+        opts = { join_indent_style = "align" },
+        expected = {
+            -- JOIN should be at same level as FROM (no indent)
+            matches = { "FROM users u\nINNER JOIN orders o" }
+        }
+    },
+    {
+        id = 9072,
+        type = "formatter",
+        name = "join_indent_style indent - ON clause further indented",
+        input = "SELECT * FROM users u INNER JOIN orders o ON u.id = o.user_id",
+        opts = { join_indent_style = "indent", join_on_same_line = false },
+        expected = {
+            -- ON should be indented from JOIN (2 levels from base)
+            matches = { "INNER JOIN orders o\n        ON u.id" }
+        }
+    },
+    {
+        id = 9073,
+        type = "formatter",
+        name = "join_indent_style align - ON clause indented from JOIN",
+        input = "SELECT * FROM users u INNER JOIN orders o ON u.id = o.user_id",
+        opts = { join_indent_style = "align", join_on_same_line = false },
+        expected = {
+            -- ON should be indented from JOIN (1 level from base)
+            matches = { "INNER JOIN orders o\n    ON u.id" }
+        }
+    },
+    {
+        id = 9074,
+        type = "formatter",
+        name = "join_indent_style indent - multiple JOINs all indented",
+        input = "SELECT * FROM a INNER JOIN b ON a.id = b.a_id LEFT JOIN c ON b.id = c.b_id",
+        opts = { join_indent_style = "indent" },
+        expected = {
+            -- All JOINs should be indented from FROM level
+            matches = { "FROM a\n    INNER JOIN b", "\n    LEFT JOIN c" }
+        }
+    },
+    {
+        id = 9075,
+        type = "formatter",
+        name = "join_indent_style align - multiple JOINs all aligned",
+        input = "SELECT * FROM a INNER JOIN b ON a.id = b.a_id LEFT JOIN c ON b.id = c.b_id",
+        opts = { join_indent_style = "align" },
+        expected = {
+            -- All JOINs should be at same level as FROM
+            matches = { "FROM a\nINNER JOIN b", "\nLEFT JOIN c" }
+        }
+    },
+    {
+        id = 9076,
+        type = "formatter",
+        name = "join_indent_style indent - with empty_line_before_join",
+        input = "SELECT * FROM users u INNER JOIN orders o ON u.id = o.user_id",
+        opts = { join_indent_style = "indent", empty_line_before_join = true },
+        expected = {
+            -- Empty line AND indentation
+            matches = { "FROM users u\n\n    INNER JOIN orders o" }
+        }
+    },
+    {
+        id = 9077,
+        type = "formatter",
+        name = "join_indent_style align - with empty_line_before_join",
+        input = "SELECT * FROM users u INNER JOIN orders o ON u.id = o.user_id",
+        opts = { join_indent_style = "align", empty_line_before_join = true },
+        expected = {
+            -- Empty line but no indentation
+            matches = { "FROM users u\n\nINNER JOIN orders o" }
+        }
+    },
+    {
+        id = 9078,
+        type = "formatter",
+        name = "join_indent_style indent - standalone JOIN (no modifier)",
+        input = "SELECT * FROM users u JOIN orders o ON u.id = o.user_id",
+        opts = { join_indent_style = "indent" },
+        expected = {
+            matches = { "FROM users u\n    JOIN orders o" }
+        }
+    },
+    {
+        id = 9079,
+        type = "formatter",
+        name = "join_indent_style indent - CROSS APPLY also indented",
+        input = "SELECT * FROM users u CROSS APPLY fn(u.id) a",
+        opts = { join_indent_style = "indent", cross_apply_newline = true },
+        expected = {
+            matches = { "FROM users u\n    CROSS APPLY fn" }
+        }
+    },
+    {
+        id = 9080,
+        type = "formatter",
+        name = "join_indent_style align - CROSS APPLY aligns with FROM",
+        input = "SELECT * FROM users u CROSS APPLY fn(u.id) a",
+        opts = { join_indent_style = "align", cross_apply_newline = true },
+        expected = {
+            matches = { "FROM users u\nCROSS APPLY fn" }
         }
     },
 }
