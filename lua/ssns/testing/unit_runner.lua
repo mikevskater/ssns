@@ -1124,7 +1124,8 @@ function UnitRunner._run_formatter_test(test)
   end
 
   -- Get test options (config overrides)
-  local opts = test.opts or {}
+  -- Support both test.opts and test.config for flexibility
+  local opts = test.opts or test.config or {}
 
   -- Format the input SQL with timing
   local start_time = vim.loop.hrtime()

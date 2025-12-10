@@ -1,5 +1,5 @@
 ---@class CommentsPass
----Pass 9: Handle comment positioning
+---Pass 9: Handle comment positioning and block comment formatting
 ---This pass runs after alignment and handles comment-specific formatting.
 ---
 ---Handles:
@@ -9,6 +9,9 @@
 ---    - inline: keep comments inline with code
 ---  blank_line_before_comment: true/false
 ---    - add empty line before standalone comments
+---  block_comment_style: "preserve" | "reformat"
+---    - preserve: keep block comments exactly as-is (default)
+---    - reformat: normalize whitespace in block comments
 ---
 ---Annotations added:
 ---  token.newline_before      - for comments that should be on their own line
@@ -39,6 +42,133 @@ end
 ---@return boolean
 local function is_block_comment(token)
   return token.type == "comment"
+end
+
+---Check if a block comment is a "decorative" comment (boxes, headers with asterisks/dashes)
+---These should be preserved as-is even in reformat mode
+---@param text string The comment text including /* */
+---@return boolean
+local function is_decorative_comment(text)
+  -- Check for boxed comments with repeated characters at start
+  -- e.g., /*****, /*-----, /******
+  if text:match("^/%*[%*%-=]+") then
+    return true
+  end
+  -- Check for boxed comments with repeated characters at end
+  -- e.g., *****/, -----*/
+  if text:match("[%*%-=]+%*/$") then
+    return true
+  end
+  return false
+end
+
+---Check if a block comment is a single-line comment (no newlines)
+---@param text string The comment text
+---@return boolean
+local function is_single_line_comment(text)
+  return not text:find("\n")
+end
+
+---Reformat a single-line block comment
+---Normalizes internal whitespace while preserving content
+---@param text string The comment text including /* */
+---@return string Reformatted comment
+local function reformat_single_line(text)
+  -- Extract content between /* and */
+  local content = text:match("^/%*(.-)%*/$")
+  if not content then
+    return text  -- Malformed, return as-is
+  end
+
+  -- Handle empty comment /**/
+  if content == "" then
+    return text
+  end
+
+  -- Check for hint-style comments that start with + (e.g., /*+HINT*/)
+  -- These should be preserved as-is
+  if content:match("^%+") then
+    return text
+  end
+
+  -- Normalize whitespace: trim leading/trailing, collapse internal spaces
+  content = content:gsub("^%s+", "")  -- Trim leading
+  content = content:gsub("%s+$", "")  -- Trim trailing
+
+  -- Return with single space padding if there's content
+  if content == "" then
+    return "/**/"
+  end
+  return "/* " .. content .. " */"
+end
+
+---Reformat a multi-line block comment
+---Normalizes internal whitespace while preserving structure
+---@param text string The comment text including /* */
+---@return string Reformatted comment
+local function reformat_multi_line(text)
+  -- Split into lines
+  local lines = {}
+  for line in (text .. "\n"):gmatch("([^\n]*)\n") do
+    table.insert(lines, line)
+  end
+
+  if #lines == 0 then
+    return text
+  end
+
+  -- Process each line
+  local result_lines = {}
+  local prev_was_blank = false
+
+  for i, line in ipairs(lines) do
+    local processed = line
+
+    if i == 1 then
+      -- First line: just the /* part, preserve it
+      result_lines[#result_lines + 1] = line
+      prev_was_blank = false
+    elseif i == #lines then
+      -- Last line: just the */ part
+      -- Trim trailing whitespace but preserve leading (for alignment)
+      processed = line:gsub("%s+$", "")
+      result_lines[#result_lines + 1] = processed
+    else
+      -- Middle lines: trim trailing whitespace
+      processed = line:gsub("%s+$", "")
+
+      -- Handle blank lines - collapse multiple to single
+      if processed:match("^%s*$") then
+        if not prev_was_blank then
+          result_lines[#result_lines + 1] = ""
+          prev_was_blank = true
+        end
+        -- Skip additional consecutive blank lines
+      else
+        result_lines[#result_lines + 1] = processed
+        prev_was_blank = false
+      end
+    end
+  end
+
+  return table.concat(result_lines, "\n")
+end
+
+---Reformat a block comment based on block_comment_style setting
+---@param text string The comment text including /* */
+---@return string Reformatted comment
+local function reformat_block_comment(text)
+  -- Decorative comments (boxes, headers) should be preserved
+  if is_decorative_comment(text) then
+    return text
+  end
+
+  -- Single-line vs multi-line handling
+  if is_single_line_comment(text) then
+    return reformat_single_line(text)
+  else
+    return reformat_multi_line(text)
+  end
 end
 
 ---Check if previous non-whitespace token is on a different line
@@ -121,9 +251,13 @@ function CommentsPass.run(tokens, config)
   -- Default to "preserve" if not specified
   local comment_position = config.comment_position or "preserve"
   local blank_before = config.blank_line_before_comment
+  local block_style = config.block_comment_style or "preserve"
 
-  -- If preserve mode and no blank_before, nothing to do
-  if comment_position == "preserve" and not blank_before then
+  -- Check if we have anything to do
+  local needs_position_handling = comment_position ~= "preserve" or blank_before
+  local needs_block_reformat = block_style == "reformat"
+
+  if not needs_position_handling and not needs_block_reformat then
     return tokens
   end
 
@@ -134,6 +268,12 @@ function CommentsPass.run(tokens, config)
       -- Instead, we use heuristics based on previous token
       local standalone = is_at_line_start(tokens, i)
       token.is_standalone_comment = standalone
+
+      -- Handle block_comment_style: reformat
+      -- This modifies the token.text to normalize whitespace
+      if needs_block_reformat and is_block_comment(token) then
+        token.text = reformat_block_comment(token.text)
+      end
 
       -- Handle comment_position: above
       -- Move inline comments to their own line
@@ -185,7 +325,7 @@ function CommentsPass.info()
   return {
     name = "comments",
     order = 9,
-    description = "Handle comment positioning (comment_position, blank_line_before_comment)",
+    description = "Handle comment positioning and block comment formatting (comment_position, blank_line_before_comment, block_comment_style)",
     annotations = {
       "is_standalone_comment",
     },

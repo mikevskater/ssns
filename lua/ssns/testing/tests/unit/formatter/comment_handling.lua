@@ -491,4 +491,227 @@ return {
             contains = { "-- PK", "-- Name", "-- Email" }
         }
     },
+
+    -- =========================================================================
+    -- Block Comment Style (IDs: 8260-8280)
+    -- =========================================================================
+
+    -- block_comment_style = "preserve" (default)
+    {
+        id = 8260,
+        type = "formatter",
+        name = "block_comment_style preserve - single line unchanged",
+        input = "/* This is a comment */\nSELECT * FROM users",
+        config = {
+            block_comment_style = "preserve"
+        },
+        expected = {
+            contains = { "/* This is a comment */" }
+        }
+    },
+    {
+        id = 8261,
+        type = "formatter",
+        name = "block_comment_style preserve - multi-line unchanged",
+        input = "/*\n * Multi-line\n * comment\n */\nSELECT * FROM users",
+        config = {
+            block_comment_style = "preserve"
+        },
+        expected = {
+            -- Should preserve the exact multi-line structure
+            contains = { "/*", "Multi-line", "comment", "*/" }
+        }
+    },
+    {
+        id = 8262,
+        type = "formatter",
+        name = "block_comment_style preserve - inline hint unchanged",
+        input = "SELECT /* hint */ * FROM users",
+        config = {
+            block_comment_style = "preserve"
+        },
+        expected = {
+            contains = { "/* hint */" }
+        }
+    },
+    {
+        id = 8263,
+        type = "formatter",
+        name = "block_comment_style preserve - boxed comment unchanged",
+        input = "/**********************\n * Header Comment\n * Author: Test\n **********************/\nSELECT * FROM t",
+        config = {
+            block_comment_style = "preserve"
+        },
+        expected = {
+            contains = { "/**********************", "Header Comment", "Author: Test", "**********************/" }
+        }
+    },
+
+    -- block_comment_style = "reformat"
+    {
+        id = 8265,
+        type = "formatter",
+        name = "block_comment_style reformat - normalize whitespace",
+        input = "/*    too much space    */\nSELECT * FROM users",
+        config = {
+            block_comment_style = "reformat"
+        },
+        expected = {
+            -- Should normalize to single space padding
+            contains = { "/* too much space */" }
+        }
+    },
+    {
+        id = 8266,
+        type = "formatter",
+        name = "block_comment_style reformat - trim trailing whitespace",
+        input = "/* comment with trailing   */\nSELECT * FROM t",
+        config = {
+            block_comment_style = "reformat"
+        },
+        expected = {
+            contains = { "/* comment with trailing */" }
+        }
+    },
+    {
+        id = 8267,
+        type = "formatter",
+        name = "block_comment_style reformat - multi-line normalize",
+        input = "/*\n   Line 1  \n  Line 2   \n*/\nSELECT * FROM t",
+        config = {
+            block_comment_style = "reformat"
+        },
+        expected = {
+            -- Should normalize leading whitespace and trim trailing
+            pattern = "/%*\n%s+Line 1\n%s+Line 2\n%*/"
+        }
+    },
+    {
+        id = 8268,
+        type = "formatter",
+        name = "block_comment_style reformat - preserve asterisk style",
+        input = "/*\n * Line 1\n * Line 2\n */\nSELECT * FROM t",
+        config = {
+            block_comment_style = "reformat"
+        },
+        expected = {
+            -- Should keep the asterisk-prefixed style
+            contains = { "/*", "* Line 1", "* Line 2", "*/" }
+        }
+    },
+    {
+        id = 8269,
+        type = "formatter",
+        name = "block_comment_style reformat - collapse blank lines",
+        input = "/*\n\n\nMultiple blanks\n\n\n*/\nSELECT * FROM t",
+        config = {
+            block_comment_style = "reformat"
+        },
+        expected = {
+            -- Should collapse multiple blank lines to single
+            pattern = "/%*\n\nMultiple blanks\n\n%*/"
+        }
+    },
+    {
+        id = 8270,
+        type = "formatter",
+        name = "block_comment_style reformat - empty comment",
+        input = "/**/\nSELECT * FROM users",
+        config = {
+            block_comment_style = "reformat"
+        },
+        expected = {
+            contains = { "/**/" }
+        }
+    },
+    {
+        id = 8271,
+        type = "formatter",
+        name = "block_comment_style reformat - single asterisk comment",
+        input = "/* * */\nSELECT * FROM users",
+        config = {
+            block_comment_style = "reformat"
+        },
+        expected = {
+            contains = { "/* * */" }
+        }
+    },
+
+    -- Edge cases
+    {
+        id = 8275,
+        type = "formatter",
+        name = "block_comment_style reformat - inline hint preserved short",
+        input = "SELECT /*+HINT*/ * FROM users",
+        config = {
+            block_comment_style = "reformat"
+        },
+        expected = {
+            -- Short inline hints stay inline
+            contains = { "/*+HINT*/" }
+        }
+    },
+    {
+        id = 8276,
+        type = "formatter",
+        name = "block_comment_style reformat - multiple block comments",
+        input = "/* First */\nSELECT /* Second */ *\nFROM /* Third */ users",
+        config = {
+            block_comment_style = "reformat"
+        },
+        expected = {
+            contains = { "/* First */", "/* Second */", "/* Third */" }
+        }
+    },
+    {
+        id = 8277,
+        type = "formatter",
+        name = "block_comment_style reformat - mixed with line comments",
+        input = "/* Block */\n-- Line\nSELECT * FROM users",
+        config = {
+            block_comment_style = "reformat"
+        },
+        expected = {
+            -- Line comments unaffected
+            contains = { "/* Block */", "-- Line" }
+        }
+    },
+    {
+        id = 8278,
+        type = "formatter",
+        name = "block_comment_style reformat - SQL inside comment unchanged",
+        input = "/* SELECT * FROM old_table; */\nSELECT * FROM new_table",
+        config = {
+            block_comment_style = "reformat"
+        },
+        expected = {
+            -- SQL inside comments should not be modified
+            contains = { "/* SELECT * FROM old_table; */" }
+        }
+    },
+    {
+        id = 8279,
+        type = "formatter",
+        name = "block_comment_style reformat - header comment with dashes",
+        input = "/*--------------------------\n Header\n--------------------------*/\nSELECT * FROM t",
+        config = {
+            block_comment_style = "reformat"
+        },
+        expected = {
+            -- Should preserve dash-style header comments
+            contains = { "/*--------------------------", "Header", "--------------------------*/" }
+        }
+    },
+    {
+        id = 8280,
+        type = "formatter",
+        name = "block_comment_style reformat - comment between clauses",
+        input = "SELECT *\n/* Filter condition */\nFROM users\nWHERE id = 1",
+        config = {
+            block_comment_style = "reformat"
+        },
+        expected = {
+            contains = { "/* Filter condition */" }
+        }
+    },
 }
