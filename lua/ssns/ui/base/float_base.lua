@@ -80,6 +80,18 @@ function UiFloatBase.create_window(bufnr, config)
     win_config.footer_pos = 'center'
   end
   
+  -- Apply custom window highlights for borders and titles
+  local winhl = {}
+  if not config.no_border_hl then
+    table.insert(winhl, 'FloatBorder:SsnsFloatBorder')
+  end
+  if not config.no_title_hl then
+    table.insert(winhl, 'FloatTitle:SsnsFloatTitle')
+  end
+  if #winhl > 0 then
+    win_config.winhighlight = table.concat(winhl, ',')
+  end
+  
   local enter = config.enter ~= nil and config.enter or true
   local winid = vim.api.nvim_open_win(bufnr, enter, win_config)
   
