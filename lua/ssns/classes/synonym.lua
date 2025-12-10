@@ -580,4 +580,56 @@ function SynonymClass:get_metadata_info()
   }
 end
 
+---Generate the CREATE SYNONYM DDL statement
+---Includes the base object definition if resolvable
+---@return string definition The CREATE SYNONYM statement with optional base object definition
+function SynonymClass:get_definition()
+  local adapter = self:get_adapter()
+
+  -- Use adapter to format the qualified synonym name
+  local synonym_qualified = adapter:get_qualified_name(
+    nil,  -- database (use connection context)
+    self.schema_name,
+    self.synonym_name
+  )
+
+  -- Base object name is already fully qualified in the metadata
+  local base_name = self.base_object_name
+
+  -- Generate the CREATE SYNONYM statement
+  local definition = string.format("CREATE SYNONYM %s\n  FOR %s;", synonym_qualified, base_name)
+
+  -- Try to resolve and get the base object's definition
+  local base_object, error_msg = self:resolve()
+
+  if base_object and base_object.get_definition then
+    -- Get the base object's definition
+    local base_definition = base_object:get_definition()
+
+    if base_definition and base_definition ~= "" then
+      -- Parse the base object name to get the database for USE statement
+      local parts = self:parse_base_object_name()
+      local use_statement = ""
+
+      if parts.database then
+        use_statement = string.format("USE [%s];\nGO\n\n", parts.database)
+      end
+
+      -- Append base object definition with a separator
+      definition = definition .. "\n\n/*" .. string.rep("=", 77) .. "*\\\n** BASE OBJECT DEFINITION\n\\*" .. string.rep("=", 77) .. "*/\n"
+
+      if use_statement ~= "" then
+        definition = definition .. "\n" .. use_statement
+      end
+
+      definition = definition .. base_definition
+    end
+  elseif error_msg then
+    -- Add a comment explaining why the base object couldn't be loaded
+    definition = definition .. string.format("\n\n/*" .. string.rep("=", 77) .. "\n** BASE OBJECT DEFINITION\n** Unable to load: %s\n" .. string.rep("=", 77) .. "*/", error_msg)
+  end
+
+  return definition
+end
+
 return SynonymClass
