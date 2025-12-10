@@ -143,7 +143,7 @@ function UiFloatMultiPanel.create(config)
     })
 
     UiFloatBase.set_window_options(state.footer_win, {
-      winhighlight = 'Normal:Comment',
+      winhighlight = 'Normal:SsnsFloatHint',
     })
   end
 
