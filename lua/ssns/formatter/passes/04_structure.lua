@@ -311,6 +311,17 @@ function StructurePass.run(tokens, config)
           should_newline = false
         end
 
+        -- MERGE compact style - suppress newlines for clauses inside MERGE statement
+        -- merge_style: "compact" keeps MERGE inline, "expanded" (default) uses normal formatting
+        if token.in_merge and config.merge_style == "compact" then
+          -- In compact mode, don't add newlines for clauses inside MERGE
+          -- (USING, ON, UPDATE, SET, INSERT, VALUES, DELETE stay inline)
+          -- Exception: WHEN clauses respect merge_when_newline separately
+          if upper ~= "WHEN" then
+            should_newline = false
+          end
+        end
+
         -- Don't add newline for the first major clause of a statement
         -- (the semicolon/output.lua already adds blank lines between statements)
         -- EXCEPT: If we're in a view body, always add newline for the first clause
@@ -517,17 +528,22 @@ function StructurePass.run(tokens, config)
         state.in_on_clause = true
         state.in_from_clause = false
 
-        -- Skip ON newline in CTE compact mode
-        if config.join_on_same_line == false and not (token.in_cte_body and config.cte_style == "compact") then
+        -- Check if we should skip ON newline:
+        -- - CTE compact mode
+        -- - MERGE compact mode
+        local skip_on_newline = (token.in_cte_body and config.cte_style == "compact")
+                             or (token.in_merge and config.merge_style == "compact")
+
+        if config.join_on_same_line == false and not skip_on_newline then
           token.newline_before = true
           -- ON indented from JOIN: +1 for join_indent_style, +1 for ON offset
           local join_indent = config.join_indent_style == "indent" and 1 or 0
           token.indent_level = state.base_indent + join_indent + 1
         end
 
-        -- Check for stacked_indent - first condition should be on new line (skip in CTE compact mode)
+        -- Check for stacked_indent - first condition should be on new line (skip in CTE/MERGE compact mode)
         local style = config.on_condition_style or "inline"
-        if style == "stacked_indent" and not (token.in_cte_body and config.cte_style == "compact") then
+        if style == "stacked_indent" and not skip_on_newline then
           state.pending_on_first = true
         end
       end
@@ -632,7 +648,14 @@ function StructurePass.run(tokens, config)
 
       -- WHEN in MERGE (not CASE)
       if upper == "WHEN" and not state.in_case then
-        if config.merge_when_newline ~= false then
+        -- In MERGE compact mode, respect merge_when_newline separately
+        -- (already handled in major clauses section but WHEN is not in MAJOR_CLAUSES)
+        local use_newline = config.merge_when_newline ~= false
+        -- But in compact mode, default to no newline unless merge_when_newline explicitly true
+        if token.in_merge and config.merge_style == "compact" then
+          use_newline = config.merge_when_newline == true
+        end
+        if use_newline then
           token.newline_before = true
           token.indent_level = state.base_indent
         end
@@ -645,7 +668,9 @@ function StructurePass.run(tokens, config)
       local next_indent = state.base_indent + 1
 
       -- CTE compact mode: suppress all stacked styles inside CTE body
+      -- MERGE compact mode: suppress all stacked styles inside MERGE statement
       local in_cte_compact = token.in_cte_body and config.cte_style == "compact"
+      local in_merge_compact = token.in_merge and config.merge_style == "compact"
 
       if state.in_select_list and state.paren_depth == state.select_paren_depth then
         local style = config.select_list_style or "inline"
@@ -669,7 +694,7 @@ function StructurePass.run(tokens, config)
         end
       elseif state.in_set_clause then
         local style = config.update_set_style or "stacked"
-        if not in_cte_compact and style == "stacked" then
+        if not in_cte_compact and not in_merge_compact and style == "stacked" then
           add_newline = true
         end
       elseif state.in_in_list and state.paren_depth == state.in_list_paren_depth then

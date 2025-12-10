@@ -1,5 +1,5 @@
 -- Test file: dml_options.lua
--- IDs: 8800-8850
+-- IDs: 8800-8850, 9100-9112
 -- Tests: Phase 2 DML options - INSERT, UPDATE, DELETE, MERGE specific formatting
 
 return {
@@ -171,6 +171,151 @@ return {
         expected = {
             -- WHEN clauses start on new lines; THEN action may be on separate line
             contains = { "WHEN MATCHED AND", "WHEN MATCHED THEN", "WHEN NOT MATCHED BY TARGET", "WHEN NOT MATCHED BY SOURCE" }
+        }
+    },
+
+    -- merge_style tests
+    {
+        id = 9100,
+        type = "formatter",
+        name = "merge_style expanded (default) - USING on new line",
+        input = "MERGE INTO target t USING source s ON t.id = s.id WHEN MATCHED THEN UPDATE SET t.name = s.name",
+        opts = { merge_style = "expanded" },
+        expected = {
+            -- USING gets its own line in expanded mode
+            matches = { "target t\nUSING source s" }
+        }
+    },
+    {
+        id = 9101,
+        type = "formatter",
+        name = "merge_style expanded (default) - ON on new line",
+        input = "MERGE INTO target t USING source s ON t.id = s.id WHEN MATCHED THEN UPDATE SET t.name = s.name",
+        opts = { merge_style = "expanded" },
+        expected = {
+            -- ON gets its own line in expanded mode (with indentation)
+            matches = { "source s\n.-ON t.id = s.id" }
+        }
+    },
+    {
+        id = 9102,
+        type = "formatter",
+        name = "merge_style compact - USING stays inline",
+        input = "MERGE INTO target t USING source s ON t.id = s.id WHEN MATCHED THEN UPDATE SET t.name = s.name",
+        opts = { merge_style = "compact" },
+        expected = {
+            -- USING stays on same line in compact mode
+            contains = { "MERGE INTO target t USING source s ON t.id = s.id" }
+        }
+    },
+    {
+        id = 9103,
+        type = "formatter",
+        name = "merge_style compact - entire MERGE on fewer lines",
+        input = "MERGE t USING s ON t.id = s.id WHEN MATCHED THEN UPDATE SET t.name = s.name WHEN NOT MATCHED THEN INSERT (id, name) VALUES (s.id, s.name)",
+        opts = { merge_style = "compact", merge_when_newline = false },
+        expected = {
+            -- Everything stays inline in compact mode with merge_when_newline=false
+            contains = { "MERGE t USING s ON t.id = s.id WHEN MATCHED THEN UPDATE SET" }
+        }
+    },
+    {
+        id = 9104,
+        type = "formatter",
+        name = "merge_style compact - WHEN still on new line if merge_when_newline true",
+        input = "MERGE t USING s ON t.id = s.id WHEN MATCHED THEN UPDATE SET t.name = s.name",
+        opts = { merge_style = "compact", merge_when_newline = true },
+        expected = {
+            -- WHEN clauses on new lines even in compact mode
+            matches = { "t.id = s.id\nWHEN MATCHED" }
+        }
+    },
+    {
+        id = 9105,
+        type = "formatter",
+        name = "merge_style expanded - UPDATE SET on new line inside WHEN",
+        input = "MERGE t USING s ON t.id = s.id WHEN MATCHED THEN UPDATE SET t.name = s.name, t.val = s.val",
+        opts = { merge_style = "expanded", update_set_style = "stacked" },
+        expected = {
+            -- SET on new line, assignments stacked
+            matches = { "UPDATE\n.-SET t.name = s.name,\n.-t.val = s.val" }
+        }
+    },
+    {
+        id = 9106,
+        type = "formatter",
+        name = "merge_style compact - SET stays inline",
+        input = "MERGE t USING s ON t.id = s.id WHEN MATCHED THEN UPDATE SET t.name = s.name, t.val = s.val",
+        opts = { merge_style = "compact" },
+        expected = {
+            -- SET stays inline in compact mode
+            contains = { "UPDATE SET t.name = s.name, t.val = s.val" }
+        }
+    },
+    {
+        id = 9107,
+        type = "formatter",
+        name = "merge_style expanded - INSERT VALUES on new lines",
+        input = "MERGE t USING s ON t.id = s.id WHEN NOT MATCHED THEN INSERT (id, name) VALUES (s.id, s.name)",
+        opts = { merge_style = "expanded" },
+        expected = {
+            -- INSERT and VALUES on separate lines
+            matches = { "INSERT %(id, name%)\n.-VALUES" }
+        }
+    },
+    {
+        id = 9108,
+        type = "formatter",
+        name = "merge_style compact - INSERT VALUES inline",
+        input = "MERGE t USING s ON t.id = s.id WHEN NOT MATCHED THEN INSERT (id, name) VALUES (s.id, s.name)",
+        opts = { merge_style = "compact", merge_when_newline = false },
+        expected = {
+            -- INSERT VALUES on same line in compact mode
+            contains = { "INSERT (id, name) VALUES (s.id, s.name)" }
+        }
+    },
+    {
+        id = 9109,
+        type = "formatter",
+        name = "merge_style expanded - OUTPUT clause formatting",
+        input = "MERGE t USING s ON t.id = s.id WHEN MATCHED THEN UPDATE SET t.name = s.name OUTPUT INSERTED.id, DELETED.name",
+        opts = { merge_style = "expanded" },
+        expected = {
+            -- OUTPUT on new line
+            matches = { "\nOUTPUT INSERTED.id" }
+        }
+    },
+    {
+        id = 9110,
+        type = "formatter",
+        name = "merge_style compact - multiple WHEN clauses compact",
+        input = "MERGE t USING s ON t.id = s.id WHEN MATCHED AND s.deleted = 1 THEN DELETE WHEN MATCHED THEN UPDATE SET t.name = s.name WHEN NOT MATCHED THEN INSERT (id) VALUES (s.id)",
+        opts = { merge_style = "compact", merge_when_newline = false },
+        expected = {
+            -- All on minimal lines
+            contains = { "MERGE t USING s ON t.id = s.id WHEN MATCHED" }
+        }
+    },
+    {
+        id = 9111,
+        type = "formatter",
+        name = "merge_style expanded - complex MERGE with all clauses",
+        input = "MERGE dbo.target AS t USING dbo.source AS s ON t.id = s.id WHEN MATCHED THEN UPDATE SET t.name = s.name, t.value = s.value WHEN NOT MATCHED BY TARGET THEN INSERT (id, name) VALUES (s.id, s.name) WHEN NOT MATCHED BY SOURCE THEN DELETE OUTPUT $action, INSERTED.id, DELETED.id",
+        opts = { merge_style = "expanded" },
+        expected = {
+            -- Multiple newlines in expanded mode (ON has indentation)
+            matches = { "\nUSING", "\n.-ON", "\nWHEN MATCHED", "\nWHEN NOT MATCHED BY TARGET", "\nWHEN NOT MATCHED BY SOURCE" }
+        }
+    },
+    {
+        id = 9112,
+        type = "formatter",
+        name = "merge_style expanded - respects other options",
+        input = "MERGE t USING s ON t.id = s.id AND t.type = s.type WHEN MATCHED THEN UPDATE SET t.name = s.name",
+        opts = { merge_style = "expanded", on_condition_style = "stacked", and_or_position = "leading" },
+        expected = {
+            -- AND in ON clause should respect and_or_position when on_condition_style is stacked
+            matches = { "ON t.id = s.id\n.-AND t.type = s.type" }
         }
     },
 
