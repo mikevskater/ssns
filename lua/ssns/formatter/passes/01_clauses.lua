@@ -311,6 +311,35 @@ function ClausesPass.run(tokens, config)
       token.is_create_table_column_separator = true
     end
 
+    -- Mark table-level constraints in CREATE TABLE for create_table_constraint_newline
+    -- These are: CONSTRAINT keyword, or PRIMARY KEY/FOREIGN KEY/UNIQUE/CHECK/INDEX at table level
+    -- Table-level means: appears after a comma at the top paren level (not inline with column def)
+    if in_create_table_columns and token.type == "keyword" and paren_depth == create_table_paren_depth then
+      local upper = string.upper(token.text)
+      -- CONSTRAINT keyword is always a table-level constraint definition
+      if upper == "CONSTRAINT" then
+        token.is_table_constraint_start = true
+      -- PRIMARY, FOREIGN, UNIQUE, CHECK, INDEX at table level (after comma, not following column type)
+      -- We check if this is after a comma by looking back for the comma
+      elseif upper == "PRIMARY" or upper == "FOREIGN" or upper == "UNIQUE" or upper == "CHECK" or upper == "INDEX" then
+        -- Look back to find what precedes this keyword
+        -- If it's a comma (at this paren level), it's a table-level constraint
+        for j = i - 1, 1, -1 do
+          local prev_tok = tokens[j]
+          if prev_tok.type == "whitespace" or prev_tok.type == "newline" then
+            -- Skip whitespace
+          elseif prev_tok.type == "comma" then
+            -- Table-level constraint (after comma)
+            token.is_table_constraint_start = true
+            break
+          else
+            -- Something else precedes (like column name/type) - inline constraint
+            break
+          end
+        end
+      end
+    end
+
     -- Mark commas that separate value rows in INSERT ... VALUES (...), (...), (...)
     -- These are commas outside all parentheses while in VALUES clause
     if in_values_clause and token.type == "comma" and paren_depth == 0 then

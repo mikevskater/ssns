@@ -605,11 +605,45 @@ function StructurePass.run(tokens, config)
 
       -- CREATE TABLE column definitions - each column on new line if configured
       if token.is_create_table_column_separator then
-        local should_stack = config.create_table_column_newline
-        -- Default to true if not specified
-        if should_stack ~= false then
-          add_newline = true
-          next_indent = state.base_indent + 1
+        -- Check if next token is a table-level constraint
+        local next_is_constraint = false
+        for j = i + 1, #tokens do
+          local next_tok = tokens[j]
+          if next_tok.type == "whitespace" or next_tok.type == "newline" then
+            -- skip
+          elseif next_tok.is_table_constraint_start then
+            next_is_constraint = true
+            break
+          else
+            break
+          end
+        end
+
+        if next_is_constraint then
+          -- Comma before a constraint
+          -- If create_table_constraint_newline = true (default): always newline
+          -- If create_table_constraint_newline = false: follow create_table_column_newline
+          local constraint_newline = config.create_table_constraint_newline
+          if constraint_newline ~= false then
+            -- Constraint newline is enabled (default)
+            add_newline = true
+            next_indent = state.base_indent + 1
+          else
+            -- Constraint newline is disabled - use column newline setting
+            local column_newline = config.create_table_column_newline
+            if column_newline ~= false then
+              add_newline = true
+              next_indent = state.base_indent + 1
+            end
+          end
+        else
+          -- Regular column separator: use create_table_column_newline setting
+          local column_newline = config.create_table_column_newline
+          -- Default to true if not specified
+          if column_newline ~= false then
+            add_newline = true
+            next_indent = state.base_indent + 1
+          end
         end
       end
 
