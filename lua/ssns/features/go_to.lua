@@ -128,6 +128,52 @@ function GoTo.resolve_object(bufnr, object_name, schema_name, database_name)
     return nil, "No database selected"
   end
 
+  -- Check if this is an alias first (before looking up in database)
+  -- Only check if it's a single-part name (no schema/database qualifier)
+  if not schema_name and not database_name then
+    local StatementCache = require('ssns.completion.statement_cache')
+    local cursor = vim.api.nvim_win_get_cursor(0)
+    local line, col = cursor[1], cursor[2]
+
+    local context = StatementCache.get_context_at_position(bufnr, line, col + 1, connection)
+    if context and context.aliases then
+      local alias_ref = context.aliases[object_name:lower()]
+      if alias_ref then
+        -- Found an alias - resolve it to the underlying object
+        if type(alias_ref) == "table" then
+          -- alias_ref is a table reference with name, schema, database
+          if alias_ref.is_subquery then
+            return nil, string.format("'%s' is a subquery alias (derived table) - no metadata available", object_name)
+          end
+          -- Use the alias's underlying table/view name
+          object_name = alias_ref.name or object_name
+          schema_name = alias_ref.schema
+          database_name = alias_ref.database
+        elseif type(alias_ref) == "string" then
+          -- alias_ref is a string like "tablename" or "schema.tablename"
+          if alias_ref == "(subquery)" then
+            return nil, string.format("'%s' is a subquery alias (derived table) - no metadata available", object_name)
+          end
+          -- Parse the reference
+          local parts = {}
+          for part in alias_ref:gmatch("[^%.]+") do
+            table.insert(parts, part)
+          end
+          if #parts == 1 then
+            object_name = parts[1]
+          elseif #parts == 2 then
+            schema_name = parts[1]
+            object_name = parts[2]
+          elseif #parts >= 3 then
+            database_name = parts[1]
+            schema_name = parts[2]
+            object_name = parts[3]
+          end
+        end
+      end
+    end
+  end
+
   -- Handle cross-database references if database_name is provided
   if database_name then
     local server = connection.server or (database and database.parent)
