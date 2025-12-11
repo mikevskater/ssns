@@ -5,6 +5,7 @@
 local ViewFKGraph = {}
 
 local UiFloat = require('ssns.ui.core.float')
+local ContentBuilder = require('ssns.ui.core.content_builder')
 local JsonUtils = require('ssns.utils.json')
 local FKGraph = require('ssns.completion.fk_graph')
 local StatementContext = require('ssns.completion.statement_context')
@@ -92,63 +93,80 @@ local function get_fk_constraints(table_obj)
   return fks
 end
 
----Build display content for FK graph
+---Build styled content for FK graph
 ---@param bufnr number
 ---@param line_num number
 ---@param col number
----@return string[] display_lines
+---@return ContentBuilder cb
 ---@return table json_data
-local function build_display_content(bufnr, line_num, col)
-  local display_lines = {}
+local function build_styled_content(bufnr, line_num, col)
+  local cb = ContentBuilder.new()
   local json_data = { tables_in_scope = {}, fk_constraints = {} }
 
-  table.insert(display_lines, "Foreign Key Relationship Graph")
-  table.insert(display_lines, string.rep("=", 50))
-  table.insert(display_lines, "")
+  cb:header("Foreign Key Relationship Graph")
+  cb:separator("=", 50)
+  cb:blank()
 
   -- Get connection
   local connection = get_connection()
   if not connection then
-    table.insert(display_lines, "(No active connection)")
-    table.insert(display_lines, "")
-    table.insert(display_lines, "Connect to a database to view FK relationships")
-    return display_lines, json_data
+    cb:styled("(No active connection)", "error")
+    cb:blank()
+    cb:styled("Connect to a database to view FK relationships", "muted")
+    return cb, json_data
   end
 
   -- Get context
   local context = StatementContext.detect_full(bufnr, line_num, col)
   if not context then
-    table.insert(display_lines, "(No SQL context detected)")
-    return display_lines, json_data
+    cb:styled("(No SQL context detected)", "muted")
+    return cb, json_data
   end
 
   -- Connection info
-  table.insert(display_lines, "Connection")
-  table.insert(display_lines, string.rep("-", 30))
+  cb:section("Connection")
+  cb:separator("-", 30)
   local server_name = connection.server and connection.server.name or "unknown"
   local db_name = connection.database and (connection.database.db_name or connection.database.name) or "unknown"
-  table.insert(display_lines, string.format("  Server: %s", server_name))
-  table.insert(display_lines, string.format("  Database: %s", db_name))
-  table.insert(display_lines, "")
+  cb:spans({
+    { text = "  Server: ", style = "label" },
+    { text = server_name, style = "server" },
+  })
+  cb:spans({
+    { text = "  Database: ", style = "label" },
+    { text = db_name, style = "database" },
+  })
+  cb:blank()
 
   -- Get tables in scope
   local tables_in_scope = context.tables_in_scope or {}
-  table.insert(display_lines, "Tables in Scope")
-  table.insert(display_lines, string.rep("-", 30))
+  cb:section("Tables in Scope")
+  cb:separator("-", 30)
 
   if #tables_in_scope == 0 then
-    table.insert(display_lines, "  (No tables in current scope)")
-    table.insert(display_lines, "")
+    cb:styled("  (No tables in current scope)", "muted")
+    cb:blank()
   else
     for _, table_info in ipairs(tables_in_scope) do
       local name = table_info.table or table_info.name or "?"
       local alias = table_info.alias and (" AS " .. table_info.alias) or ""
       local type_str = ""
-      if table_info.is_cte then type_str = " [CTE]"
-      elseif table_info.is_temp_table then type_str = " [Temp]"
-      elseif table_info.is_subquery then type_str = " [Subquery]"
+      local style = "table"
+      if table_info.is_cte then
+        type_str = " [CTE]"
+        style = "view"
+      elseif table_info.is_temp_table then
+        type_str = " [Temp]"
+        style = "warning"
+      elseif table_info.is_subquery then
+        type_str = " [Subquery]"
+        style = "muted"
       end
-      table.insert(display_lines, string.format("  - %s%s%s", name, alias, type_str))
+      cb:spans({
+        { text = "  - " },
+        { text = name .. alias, style = style },
+        { text = type_str, style = "muted" },
+      })
 
       -- Add to JSON
       table.insert(json_data.tables_in_scope, {
@@ -158,7 +176,7 @@ local function build_display_content(bufnr, line_num, col)
         is_temp_table = table_info.is_temp_table,
       })
     end
-    table.insert(display_lines, "")
+    cb:blank()
   end
 
   -- Resolve tables and get FK constraints
@@ -186,12 +204,12 @@ local function build_display_content(bufnr, line_num, col)
   end
 
   -- FK Constraints from tables in scope
-  table.insert(display_lines, "FK Constraints (from tables in scope)")
-  table.insert(display_lines, string.rep("-", 30))
+  cb:section("FK Constraints (from tables in scope)")
+  cb:separator("-", 30)
 
   if #all_fk_constraints == 0 then
-    table.insert(display_lines, "  (No FK constraints found)")
-    table.insert(display_lines, "")
+    cb:styled("  (No FK constraints found)", "muted")
+    cb:blank()
   else
     for _, fk in ipairs(all_fk_constraints) do
       local source = fk._source_table or "?"
@@ -211,10 +229,21 @@ local function build_display_content(bufnr, line_num, col)
 
       local constraint_name = fk.constraint_name or fk.name or ""
 
-      table.insert(display_lines, string.format("  %s.%s -> %s.%s",
-        source, source_col, target, target_col))
+      cb:spans({
+        { text = "  " },
+        { text = source, style = "table" },
+        { text = "." },
+        { text = source_col, style = "column" },
+        { text = " -> " },
+        { text = target, style = "table" },
+        { text = "." },
+        { text = target_col, style = "column" },
+      })
       if constraint_name ~= "" then
-        table.insert(display_lines, string.format("    Constraint: %s", constraint_name))
+        cb:spans({
+          { text = "    Constraint: ", style = "label" },
+          { text = constraint_name, style = "key" },
+        })
       end
 
       -- Add to JSON
@@ -227,15 +256,19 @@ local function build_display_content(bufnr, line_num, col)
         constraint_name = fk.constraint_name or fk.name,
       })
     end
-    table.insert(display_lines, "")
+    cb:blank()
   end
 
   -- Build FK chain graph (if we have resolved tables)
   if #resolved_tables > 0 then
-    table.insert(display_lines, "FK Chain Graph (BFS traversal)")
-    table.insert(display_lines, string.rep("-", 30))
-    table.insert(display_lines, "  Max depth: 2 hops")
-    table.insert(display_lines, "")
+    cb:section("FK Chain Graph (BFS traversal)")
+    cb:separator("-", 30)
+    cb:spans({
+      { text = "  Max depth: ", style = "label" },
+      { text = "2", style = "number" },
+      { text = " hops" },
+    })
+    cb:blank()
 
     local chain_results = FKGraph.build_chains(resolved_tables, connection, 2)
 
@@ -244,24 +277,34 @@ local function build_display_content(bufnr, line_num, col)
       local hop_results = chain_results[hop] or {}
       if #hop_results > 0 then
         has_results = true
-        table.insert(display_lines, string.format("  Hop %d:", hop))
+        cb:spans({
+          { text = "  Hop " },
+          { text = tostring(hop), style = "number" },
+          { text = ":" },
+        })
         for _, result in ipairs(hop_results) do
           local label = FKGraph.build_label(result)
           local detail = FKGraph.build_detail(result)
-          table.insert(display_lines, string.format("    -> %s", label))
-          table.insert(display_lines, string.format("       %s", detail))
+          cb:spans({
+            { text = "    -> " },
+            { text = label, style = "table" },
+          })
+          cb:spans({
+            { text = "       " },
+            { text = detail, style = "muted" },
+          })
         end
-        table.insert(display_lines, "")
+        cb:blank()
       end
     end
 
     if not has_results then
-      table.insert(display_lines, "  (No related tables found via FK chain)")
-      table.insert(display_lines, "")
+      cb:styled("  (No related tables found via FK chain)", "muted")
+      cb:blank()
     end
   end
 
-  return display_lines, json_data
+  return cb, json_data
 end
 
 ---View FK graph
@@ -274,28 +317,26 @@ function ViewFKGraph.view_graph()
   local line_num = cursor[1]
   local col = cursor[2] + 1
 
-  -- Build display content
-  local display_lines, json_data = build_display_content(bufnr, line_num, col)
+  -- Build styled content
+  local cb, json_data = build_styled_content(bufnr, line_num, col)
 
   -- Add JSON output
-  table.insert(display_lines, "")
-  table.insert(display_lines, "FK Data JSON")
-  table.insert(display_lines, string.rep("=", 50))
-  table.insert(display_lines, "")
+  cb:blank()
+  cb:header("FK Data JSON")
+  cb:separator("=", 50)
+  cb:blank()
 
   local json_lines = JsonUtils.prettify_lines(json_data)
   for _, line in ipairs(json_lines) do
-    table.insert(display_lines, line)
+    cb:line(line)
   end
 
   -- Create floating window
-  current_float = UiFloat.create(display_lines, {
+  current_float = UiFloat.create_styled(cb, {
     title = "FK Graph",
     border = "rounded",
-    filetype = "json",
     min_width = 60,
     max_width = 110,
-    max_height = 50,
     wrap = false,
     keymaps = {
       ['r'] = function()
