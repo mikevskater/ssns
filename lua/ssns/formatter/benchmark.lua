@@ -420,15 +420,66 @@ function Benchmark.run_and_display(opts)
   vim.notify("Running formatter benchmarks...", vim.log.levels.INFO)
 
   local results = Benchmark.run_suite(opts)
-  local output = Benchmark.format_results(results)
-  local lines = vim.split(output, "\n")
-
+  
   local UiFloat = require('ssns.ui.core.float')
-  UiFloat.create(lines, {
+  local ContentBuilder = require('ssns.ui.core.content_builder')
+  
+  local cb = ContentBuilder.new()
+  
+  cb:header("SQL Formatter Benchmark Results")
+  cb:separator("=", 90)
+  cb:blank()
+  
+  -- Header row
+  cb:spans({
+    { text = string.format("%-30s", "Test Case"), style = "label" },
+    { text = string.format(" %8s", "Size"), style = "label" },
+    { text = string.format(" %8s", "Lines"), style = "label" },
+    { text = string.format(" %8s", "Avg(ms)"), style = "label" },
+    { text = string.format(" %8s", "Med(ms)"), style = "label" },
+    { text = string.format(" %8s", "Min(ms)"), style = "label" },
+    { text = string.format(" %8s", "Max(ms)"), style = "label" },
+  })
+  cb:separator("-", 90)
+
+  for _, r in ipairs(results) do
+    -- Color-code avg time based on performance
+    local avg_style = r.avg_ms < 10 and "success" or (r.avg_ms < 50 and "warning" or "error")
+    cb:spans({
+      { text = string.format("%-30s", r.name) },
+      { text = string.format(" %8d", r.input_size), style = "number" },
+      { text = string.format(" %8d", r.input_lines or 0), style = "number" },
+      { text = string.format(" %8.3f", r.avg_ms), style = avg_style },
+      { text = string.format(" %8.3f", r.median_ms), style = "number" },
+      { text = string.format(" %8.3f", r.min_ms), style = "success" },
+      { text = string.format(" %8.3f", r.max_ms), style = "muted" },
+    })
+  end
+
+  cb:separator("-", 90)
+  cb:blank()
+
+  -- Summary stats
+  local total_avg = 0
+  local max_time = 0
+  for _, r in ipairs(results) do
+    total_avg = total_avg + r.avg_ms
+    if r.max_ms > max_time then max_time = r.max_ms end
+  end
+
+  cb:spans({
+    { text = "Average across all tests: ", style = "label" },
+    { text = string.format("%.3f ms", total_avg / #results), style = "number" },
+  })
+  cb:spans({
+    { text = "Maximum single run: ", style = "label" },
+    { text = string.format("%.3f ms", max_time), style = "number" },
+  })
+
+  UiFloat.create_styled(cb, {
     title = "Formatter Benchmarks",
     min_width = 95,
     max_height = 30,
-    filetype = 'text',
     footer = "q/Esc: close",
   })
 
