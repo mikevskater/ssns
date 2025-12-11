@@ -990,11 +990,11 @@ end
 ---Show completion performance statistics
 function Ssns.show_completion_stats()
   local Source = require('ssns.completion.source')
+  local UiFloat = require('ssns.ui.core.float')
+  local ContentBuilder = require('ssns.ui.core.content_builder')
 
   -- Try to get stats from the source module
-  -- Note: This accesses the module-level stats through the Source class
   local success, result = pcall(function()
-    -- Create a temporary source instance to access the get_stats method
     local temp_source = Source.new()
     return temp_source:get_stats()
   end)
@@ -1005,29 +1005,52 @@ function Ssns.show_completion_stats()
   end
 
   local stats = result
-
-  local lines = {
-    "=== SSNS Completion Performance Statistics ===",
-    "",
-    string.format("Total Requests: %d", stats.total_requests),
-    string.format("Average Time: %.2fms", stats.avg_time_ms),
-    string.format(
-      "Slow Requests (>100ms): %d (%.1f%%)",
-      stats.slow_requests,
-      stats.total_requests > 0 and (stats.slow_requests / stats.total_requests * 100) or 0
-    ),
-    "",
-    string.format("Cache Hits: %d", stats.cache_hits),
-    string.format("Cache Misses: %d", stats.cache_misses),
-    stats.cache_hits + stats.cache_misses > 0
-        and string.format(
-          "Cache Hit Rate: %.1f%%",
-          (stats.cache_hits / (stats.cache_hits + stats.cache_misses) * 100)
-        )
-      or "Cache Hit Rate: N/A",
-    "",
-    "Requests by Type:",
-  }
+  local cb = ContentBuilder.new()
+  
+  cb:header("SSNS Completion Performance Statistics")
+  cb:separator("=", 50)
+  cb:blank()
+  
+  cb:key_value("Total Requests", stats.total_requests)
+  cb:spans({
+    { text = "Average Time: ", style = "label" },
+    { text = string.format("%.2fms", stats.avg_time_ms), style = "number" },
+  })
+  
+  local slow_pct = stats.total_requests > 0 and (stats.slow_requests / stats.total_requests * 100) or 0
+  local slow_style = slow_pct > 10 and "warning" or "success"
+  cb:spans({
+    { text = "Slow Requests (>100ms): ", style = "label" },
+    { text = tostring(stats.slow_requests), style = slow_style },
+    { text = string.format(" (%.1f%%)", slow_pct), style = "muted" },
+  })
+  cb:blank()
+  
+  cb:spans({
+    { text = "Cache Hits: ", style = "label" },
+    { text = tostring(stats.cache_hits), style = "success" },
+  })
+  cb:spans({
+    { text = "Cache Misses: ", style = "label" },
+    { text = tostring(stats.cache_misses), style = "warning" },
+  })
+  
+  if stats.cache_hits + stats.cache_misses > 0 then
+    local hit_rate = stats.cache_hits / (stats.cache_hits + stats.cache_misses) * 100
+    local rate_style = hit_rate > 70 and "success" or (hit_rate > 40 and "warning" or "error")
+    cb:spans({
+      { text = "Cache Hit Rate: ", style = "label" },
+      { text = string.format("%.1f%%", hit_rate), style = rate_style },
+    })
+  else
+    cb:spans({
+      { text = "Cache Hit Rate: ", style = "label" },
+      { text = "N/A", style = "muted" },
+    })
+  end
+  cb:blank()
+  
+  cb:section("Requests by Type")
 
   -- Sort by request count (descending)
   local types = {}
@@ -1039,27 +1062,25 @@ function Ssns.show_completion_stats()
   end)
 
   for _, type_data in ipairs(types) do
-    table.insert(
-      lines,
-      string.format(
-        "  %s: %d requests, avg %.2fms",
-        type_data.name,
-        type_data.stats.count,
-        type_data.stats.avg_ms
-      )
-    )
+    cb:spans({
+      { text = "  " },
+      { text = type_data.name, style = "emphasis" },
+      { text = ": " },
+      { text = tostring(type_data.stats.count), style = "number" },
+      { text = " requests, avg " },
+      { text = string.format("%.2fms", type_data.stats.avg_ms), style = "number" },
+    })
   end
 
   if #types == 0 then
-    table.insert(lines, "  (no requests recorded)")
+    cb:styled("  (no requests recorded)", "muted")
   end
 
-  table.insert(lines, "")
-  table.insert(lines, "Note: Stats only tracked when debug mode is enabled")
-  table.insert(lines, "===============================================")
+  cb:blank()
+  cb:styled("Note: Stats only tracked when debug mode is enabled", "comment")
+  cb:separator("=", 50)
 
-  local UiFloat = require('ssns.ui.core.float')
-  UiFloat.create(lines, {
+  UiFloat.create_styled(cb, {
     title = "Completion Stats",
     min_width = 70,
     max_width = 70,
@@ -1088,6 +1109,8 @@ end
 function Ssns.show_usage_stats()
   local UsageTracker = require('ssns.completion.usage_tracker')
   local Cache = require('ssns.cache')
+  local UiFloat = require('ssns.ui.core.float')
+  local ContentBuilder = require('ssns.ui.core.content_builder')
 
   -- Get active database
   local active_db = Cache.get_active_database()
@@ -1105,55 +1128,88 @@ function Ssns.show_usage_stats()
   -- Get statistics
   local stats = UsageTracker.get_stats(connection)
 
-  -- Format output
-  local lines = {}
-  table.insert(lines, "=== Usage Statistics ===")
-  table.insert(lines, string.format("Connection: %s", server.name))
-  table.insert(lines, string.format("Database: %s", active_db.name))
-  table.insert(lines, "")
-  table.insert(lines, string.format("Total Items Tracked: %d", stats.total_items))
-  table.insert(lines, "")
-  table.insert(lines, "By Type:")
+  -- Build styled content
+  local cb = ContentBuilder.new()
+  
+  cb:header("Usage Statistics")
+  cb:separator("=", 50)
+  cb:blank()
+  
+  cb:spans({
+    { text = "Connection: ", style = "label" },
+    { text = server.name, style = "server" },
+  })
+  cb:spans({
+    { text = "Database: ", style = "label" },
+    { text = active_db.name, style = "database" },
+  })
+  cb:blank()
+  
+  cb:key_value("Total Items Tracked", stats.total_items)
+  cb:blank()
+  
+  cb:section("By Type")
   for type_name, count in pairs(stats.by_type) do
-    table.insert(lines, string.format("  %s: %d", type_name, count))
+    cb:spans({
+      { text = "  " },
+      { text = type_name, style = "emphasis" },
+      { text = ": " },
+      { text = tostring(count), style = "number" },
+    })
   end
-  table.insert(lines, "")
+  cb:blank()
 
   -- Show top 10 tables
   if stats.top_tables and #stats.top_tables > 0 then
-    table.insert(lines, "Top 10 Tables:")
+    cb:section("Top 10 Tables")
     for i = 1, math.min(10, #stats.top_tables) do
       local item = stats.top_tables[i]
-      table.insert(lines, string.format("  %2d. %s (weight: %d)", i, item.path, item.weight))
+      cb:spans({
+        { text = string.format("  %2d. ", i), style = "muted" },
+        { text = item.path, style = "table" },
+        { text = " (weight: " },
+        { text = tostring(item.weight), style = "number" },
+        { text = ")" },
+      })
     end
-    table.insert(lines, "")
+    cb:blank()
   end
 
   -- Show top 10 columns
   if stats.top_columns and #stats.top_columns > 0 then
-    table.insert(lines, "Top 10 Columns:")
+    cb:section("Top 10 Columns")
     for i = 1, math.min(10, #stats.top_columns) do
       local item = stats.top_columns[i]
-      table.insert(lines, string.format("  %2d. %s (weight: %d)", i, item.path, item.weight))
+      cb:spans({
+        { text = string.format("  %2d. ", i), style = "muted" },
+        { text = item.path, style = "column" },
+        { text = " (weight: " },
+        { text = tostring(item.weight), style = "number" },
+        { text = ")" },
+      })
     end
-    table.insert(lines, "")
+    cb:blank()
   end
 
   -- Show top 10 procedures
   if stats.top_procedures and #stats.top_procedures > 0 then
-    table.insert(lines, "Top 10 Procedures:")
+    cb:section("Top 10 Procedures")
     for i = 1, math.min(10, #stats.top_procedures) do
       local item = stats.top_procedures[i]
-      table.insert(lines, string.format("  %2d. %s (weight: %d)", i, item.path, item.weight))
+      cb:spans({
+        { text = string.format("  %2d. ", i), style = "muted" },
+        { text = item.path, style = "procedure" },
+        { text = " (weight: " },
+        { text = tostring(item.weight), style = "number" },
+        { text = ")" },
+      })
     end
   end
 
-  local UiFloat = require('ssns.ui.core.float')
-  UiFloat.create(lines, {
+  UiFloat.create_styled(cb, {
     title = "Usage Statistics",
     min_width = 80,
     max_width = 80,
-    filetype = 'ssns-usage-stats',
     footer = "q/Esc: close",
   })
 end
