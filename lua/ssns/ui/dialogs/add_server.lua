@@ -3,6 +3,7 @@
 local AddServerUI = {}
 
 local UiFloat = require('ssns.ui.core.float')
+local ContentBuilder = require('ssns.ui.core.content_builder')
 local Connections = require('ssns.connections')
 local Cache = require('ssns.cache')
 local KeymapManager = require('ssns.keymap_manager')
@@ -12,9 +13,6 @@ local current_float = nil
 local current_screen = "list"  -- "list" or "new"
 local selected_index = 1
 local connections_list = {}
-
--- Highlight namespace
-local ns_id = vim.api.nvim_create_namespace("ssns_add_server")
 
 -- Database type options
 local DB_TYPES = {
@@ -187,16 +185,6 @@ local function get_auth_label(db_type, auth_type)
   return auth_type
 end
 
----Apply highlights to a buffer
----@param bufnr number Buffer number
----@param highlights table[] Array of {line, col_start, col_end, hl_group}
-local function apply_highlights(bufnr, highlights)
-  vim.api.nvim_buf_clear_namespace(bufnr, ns_id, 0, -1)
-  for _, hl in ipairs(highlights) do
-    vim.api.nvim_buf_add_highlight(bufnr, ns_id, hl[4], hl[1], hl[2], hl[3])
-  end
-end
-
 ---Close the current floating window
 function AddServerUI.close()
   if current_float then
@@ -238,22 +226,21 @@ function AddServerUI.show_connection_list()
   current_screen = "list"
   connections_list = Connections.load()
 
-  -- Build display lines
-  local lines = {}
-  local highlights = {}
+  -- Build styled content
+  local cb = ContentBuilder.new()
 
   if #connections_list == 0 then
-    table.insert(lines, "")
-    table.insert(lines, "  No saved connections")
-    table.insert(lines, "")
-    table.insert(lines, "  Press n to create a new connection")
-    table.insert(lines, "")
-
-    -- Highlights
-    table.insert(highlights, {1, 0, -1, "Comment"})
-    table.insert(highlights, {3, 8, 9, "Special"})  -- 'n' key
+    cb:blank()
+    cb:styled("  No saved connections", "muted")
+    cb:blank()
+    cb:spans({
+      { text = "  Press ", style = "muted" },
+      { text = "n", style = "key" },
+      { text = " to create a new connection", style = "muted" },
+    })
+    cb:blank()
   else
-    table.insert(lines, "")
+    cb:blank()
 
     for i, conn in ipairs(connections_list) do
       local in_tree = is_in_tree(conn.name)
@@ -262,65 +249,64 @@ function AddServerUI.show_connection_list()
       -- Selection indicator
       local prefix = i == selected_index and "  " or "   "
 
-      -- Build status indicators
-      local indicators = ""
+      -- Build spans for this connection line
+      local spans = {}
+
+      if i == selected_index then
+        -- Selected item - use server style for icon, name
+        table.insert(spans, { text = prefix, style = "selected" })
+        table.insert(spans, { text = icon .. " ", style = "server" })
+        table.insert(spans, { text = conn.name, style = "server" })
+      else
+        -- Unselected - dimmed icon
+        table.insert(spans, { text = prefix, style = "text" })
+        table.insert(spans, { text = icon .. " ", style = "muted" })
+        table.insert(spans, { text = conn.name, style = "text" })
+      end
+
+      -- Add status indicators
       if conn.favorite or conn.auto_connect then
-        indicators = indicators .. " ★"
+        table.insert(spans, { text = " ★", style = "warning" })
       end
       if conn.auto_connect then
-        indicators = indicators .. "⚡"
+        table.insert(spans, { text = "⚡", style = "warning" })
       end
       if in_tree then
-        indicators = indicators .. " [active]"
+        table.insert(spans, { text = " [active]", style = "success" })
       end
 
-      local line = string.format("%s%s %s%s", prefix, icon, conn.name, indicators)
-      table.insert(lines, line)
-
-      local line_idx = #lines - 1
-      if i == selected_index then
-        table.insert(highlights, {line_idx, 0, -1, "CursorLine"})
-        table.insert(highlights, {line_idx, 2, 5, "Function"})  -- Icon
-      else
-        table.insert(highlights, {line_idx, 3, 6, "Comment"})  -- Icon dimmed
-      end
-
-      -- Highlight indicators
-      if conn.favorite or conn.auto_connect then
-        local star_pos = line:find("★")
-        if star_pos then
-          table.insert(highlights, {line_idx, star_pos - 1, star_pos + 2, "WarningMsg"})
-        end
-      end
-      if in_tree then
-        local active_pos = line:find("%[active%]")
-        if active_pos then
-          table.insert(highlights, {line_idx, active_pos - 1, -1, "DiagnosticOk"})
-        end
-      end
+      cb:spans(spans)
     end
 
-    table.insert(lines, "")
+    cb:blank()
   end
 
   -- Help section
-  table.insert(lines, "  ───────────────────────────────────────────")
-  local sep_line = #lines - 1
-  table.insert(highlights, {sep_line, 0, -1, "Comment"})
-
-  table.insert(lines, "")
-  table.insert(lines, "  a Enter   Add to tree       n   New")
-  table.insert(lines, "  e         Edit              d   Delete")
-  table.insert(lines, "  f *       Toggle favorite   q   Close")
-  table.insert(lines, "  j k       Navigate")
-  table.insert(lines, "")
-
-  -- Highlight keybinds
-  for i = sep_line + 2, #lines - 2 do
-    -- Highlight key letters (first column of keys)
-    table.insert(highlights, {i, 2, 10, "Special"})
-    table.insert(highlights, {i, 24, 32, "Special"})
-  end
+  cb:styled("  ───────────────────────────────────────────", "muted")
+  cb:blank()
+  cb:spans({
+    { text = "  a Enter", style = "key" },
+    { text = "   Add to tree       ", style = "text" },
+    { text = "n", style = "key" },
+    { text = "   New", style = "text" },
+  })
+  cb:spans({
+    { text = "  e", style = "key" },
+    { text = "         Edit              ", style = "text" },
+    { text = "d", style = "key" },
+    { text = "   Delete", style = "text" },
+  })
+  cb:spans({
+    { text = "  f *", style = "key" },
+    { text = "       Toggle favorite   ", style = "text" },
+    { text = "q", style = "key" },
+    { text = "   Close", style = "text" },
+  })
+  cb:spans({
+    { text = "  j k", style = "key" },
+    { text = "       Navigate", style = "text" },
+  })
+  cb:blank()
 
   -- Get keymaps from config
   local km = KeymapManager.get_group("add_server")
@@ -342,8 +328,8 @@ function AddServerUI.show_connection_list()
   keymaps[km.toggle_favorite or "f"] = function() AddServerUI.toggle_favorite_selected() end
   keymaps[km.toggle_favorite_alt or "*"] = function() AddServerUI.toggle_favorite_selected() end
 
-  -- Create floating window
-  current_float = UiFloat.create(lines, {
+  -- Create floating window with styled content
+  current_float = UiFloat.create_styled(cb, {
     title = " Server Connections ",
     title_pos = "center",
     footer = " ★ favorite  ⚡ auto-connect ",
@@ -356,14 +342,9 @@ function AddServerUI.show_connection_list()
     keymaps = keymaps,
   })
 
-  -- Apply highlights after window creation
-  if current_float and current_float:is_valid() then
-    apply_highlights(current_float.bufnr, highlights)
-
-    -- Position cursor on selected item
-    if #connections_list > 0 then
-      current_float:set_cursor(1 + selected_index, 0)
-    end
+  -- Position cursor on selected item
+  if current_float and current_float:is_valid() and #connections_list > 0 then
+    current_float:set_cursor(1 + selected_index, 0)
   end
 end
 
@@ -559,198 +540,153 @@ function AddServerUI.show_new_connection_form_with_state(form_state, edit_connec
   local is_sqlite = form_state.db_type == "sqlite"
   local needs_auth_creds = form_state.auth_type == "sql"
 
-  -- Build form lines
-  local lines = {}
-  local highlights = {}
-  local line_num = 0
+  -- Build styled content
+  local cb = ContentBuilder.new()
 
   -- Server Type section
-  table.insert(lines, "")
-  line_num = line_num + 1
-  table.insert(lines, "  SERVER TYPE")
-  table.insert(highlights, {line_num, 2, -1, "Title"})
-  line_num = line_num + 1
-
-  table.insert(lines, string.format("  %s %s", type_icon, type_label))
-  table.insert(highlights, {line_num, 2, 5, "Function"})
-  table.insert(highlights, {line_num, 5, -1, "String"})
-  line_num = line_num + 1
-
-  table.insert(lines, "  Press t to change")
-  table.insert(highlights, {line_num, 8, 9, "Special"})
-  table.insert(highlights, {line_num, 0, -1, "Comment"})
-  line_num = line_num + 1
-
-  table.insert(lines, "")
-  line_num = line_num + 1
+  cb:blank()
+  cb:styled("  SERVER TYPE", "section")
+  cb:spans({
+    { text = "  " .. type_icon .. " ", style = "server" },
+    { text = type_label, style = "value" },
+  })
+  cb:spans({
+    { text = "  Press ", style = "muted" },
+    { text = "t", style = "key" },
+    { text = " to change", style = "muted" },
+  })
+  cb:blank()
 
   -- Connection Name section
-  table.insert(lines, "  CONNECTION NAME")
-  table.insert(highlights, {line_num, 2, -1, "Title"})
-  line_num = line_num + 1
-
+  cb:styled("  CONNECTION NAME", "section")
   local name_display = form_state.name ~= "" and form_state.name or "(not set)"
-  table.insert(lines, "  " .. name_display)
   if form_state.name ~= "" then
-    table.insert(highlights, {line_num, 2, -1, "String"})
+    cb:styled("  " .. name_display, "value")
   else
-    table.insert(highlights, {line_num, 2, -1, "Comment"})
+    cb:styled("  " .. name_display, "muted")
   end
-  line_num = line_num + 1
-
-  table.insert(lines, "  Press n to set")
-  table.insert(highlights, {line_num, 8, 9, "Special"})
-  table.insert(highlights, {line_num, 0, -1, "Comment"})
-  line_num = line_num + 1
-
-  table.insert(lines, "")
-  line_num = line_num + 1
+  cb:spans({
+    { text = "  Press ", style = "muted" },
+    { text = "n", style = "key" },
+    { text = " to set", style = "muted" },
+  })
+  cb:blank()
 
   -- Server Path section
   local path_title = is_sqlite and "  DATABASE FILE" or "  SERVER"
-  table.insert(lines, path_title)
-  table.insert(highlights, {line_num, 2, -1, "Title"})
-  line_num = line_num + 1
-
+  cb:styled(path_title, "section")
   local path_display = form_state.server_path ~= "" and form_state.server_path or "(not set)"
-  table.insert(lines, "  " .. path_display)
   if form_state.server_path ~= "" then
-    table.insert(highlights, {line_num, 2, -1, "String"})
+    cb:styled("  " .. path_display, "value")
   else
-    table.insert(highlights, {line_num, 2, -1, "Comment"})
+    cb:styled("  " .. path_display, "muted")
   end
-  line_num = line_num + 1
-
-  table.insert(lines, "  Press p to set")
-  table.insert(highlights, {line_num, 8, 9, "Special"})
-  table.insert(highlights, {line_num, 0, -1, "Comment"})
-  line_num = line_num + 1
-
-  table.insert(lines, "  " .. path_hint)
-  table.insert(highlights, {line_num, 0, -1, "DiagnosticHint"})
-  line_num = line_num + 1
-
-  table.insert(lines, "")
-  line_num = line_num + 1
+  cb:spans({
+    { text = "  Press ", style = "muted" },
+    { text = "p", style = "key" },
+    { text = " to set", style = "muted" },
+  })
+  cb:styled("  " .. path_hint, "hint")
+  cb:blank()
 
   -- Database section (not for SQLite)
   if not is_sqlite then
-    table.insert(lines, "  DATABASE (optional)")
-    table.insert(highlights, {line_num, 2, -1, "Title"})
-    line_num = line_num + 1
-
+    cb:styled("  DATABASE (optional)", "section")
     local db_display = form_state.database ~= "" and form_state.database or "(default)"
-    table.insert(lines, "  " .. db_display)
     if form_state.database ~= "" then
-      table.insert(highlights, {line_num, 2, -1, "String"})
+      cb:styled("  " .. db_display, "database")
     else
-      table.insert(highlights, {line_num, 2, -1, "Comment"})
+      cb:styled("  " .. db_display, "muted")
     end
-    line_num = line_num + 1
-
-    table.insert(lines, "  Press D to set")
-    table.insert(highlights, {line_num, 8, 9, "Special"})
-    table.insert(highlights, {line_num, 0, -1, "Comment"})
-    line_num = line_num + 1
-
-    table.insert(lines, "")
-    line_num = line_num + 1
+    cb:spans({
+      { text = "  Press ", style = "muted" },
+      { text = "D", style = "key" },
+      { text = " to set", style = "muted" },
+    })
+    cb:blank()
   end
 
   -- Authentication section (not for SQLite)
   if not is_sqlite then
-    table.insert(lines, "  AUTHENTICATION")
-    table.insert(highlights, {line_num, 2, -1, "Title"})
-    line_num = line_num + 1
-
-    table.insert(lines, "  " .. auth_label)
-    table.insert(highlights, {line_num, 2, -1, "String"})
-    line_num = line_num + 1
-
-    table.insert(lines, "  Press A to change")
-    table.insert(highlights, {line_num, 8, 9, "Special"})
-    table.insert(highlights, {line_num, 0, -1, "Comment"})
-    line_num = line_num + 1
+    cb:styled("  AUTHENTICATION", "section")
+    cb:styled("  " .. auth_label, "value")
+    cb:spans({
+      { text = "  Press ", style = "muted" },
+      { text = "A", style = "key" },
+      { text = " to change", style = "muted" },
+    })
 
     -- Show username/password fields for SQL auth
     if needs_auth_creds then
-      table.insert(lines, "")
-      line_num = line_num + 1
+      cb:blank()
 
       local user_display = form_state.username ~= "" and form_state.username or "(not set)"
-      table.insert(lines, "  Username: " .. user_display)
-      if form_state.username ~= "" then
-        table.insert(highlights, {line_num, 12, -1, "String"})
-      else
-        table.insert(highlights, {line_num, 12, -1, "Comment"})
-      end
-      line_num = line_num + 1
+      cb:spans({
+        { text = "  Username: ", style = "label" },
+        { text = user_display, style = form_state.username ~= "" and "value" or "muted" },
+      })
 
       local pass_display = form_state.password ~= "" and string.rep("*", #form_state.password) or "(not set)"
-      table.insert(lines, "  Password: " .. pass_display)
-      if form_state.password ~= "" then
-        table.insert(highlights, {line_num, 12, -1, "String"})
-      else
-        table.insert(highlights, {line_num, 12, -1, "Comment"})
-      end
-      line_num = line_num + 1
+      cb:spans({
+        { text = "  Password: ", style = "label" },
+        { text = pass_display, style = form_state.password ~= "" and "value" or "muted" },
+      })
 
-      table.insert(lines, "  Press u/P to set credentials")
-      table.insert(highlights, {line_num, 8, 9, "Special"})
-      table.insert(highlights, {line_num, 10, 11, "Special"})
-      table.insert(highlights, {line_num, 0, -1, "Comment"})
-      line_num = line_num + 1
+      cb:spans({
+        { text = "  Press ", style = "muted" },
+        { text = "u", style = "key" },
+        { text = "/", style = "muted" },
+        { text = "P", style = "key" },
+        { text = " to set credentials", style = "muted" },
+      })
     end
 
-    table.insert(lines, "")
-    line_num = line_num + 1
+    cb:blank()
   end
 
   -- Options section
-  table.insert(lines, "  OPTIONS")
-  table.insert(highlights, {line_num, 2, -1, "Title"})
-  line_num = line_num + 1
+  cb:styled("  OPTIONS", "section")
 
   local fav_checkbox = form_state.favorite and "[x]" or "[ ]"
   local auto_checkbox = form_state.auto_connect and "[x]" or "[ ]"
 
-  table.insert(lines, string.format("  %s ★ Favorite          Show in tree on startup", fav_checkbox))
-  table.insert(highlights, {line_num, 2, 5, form_state.favorite and "DiagnosticOk" or "Comment"})
-  table.insert(highlights, {line_num, 6, 7, "WarningMsg"})
-  table.insert(highlights, {line_num, 26, -1, "Comment"})
-  line_num = line_num + 1
+  cb:spans({
+    { text = "  " .. fav_checkbox .. " ", style = form_state.favorite and "success" or "muted" },
+    { text = "★", style = "warning" },
+    { text = " Favorite          Show in tree on startup", style = "muted" },
+  })
 
-  table.insert(lines, string.format("  %s ⚡ Auto-connect      Connect automatically", auto_checkbox))
-  table.insert(highlights, {line_num, 2, 5, form_state.auto_connect and "DiagnosticOk" or "Comment"})
-  table.insert(highlights, {line_num, 6, 8, "DiagnosticWarn"})
-  table.insert(highlights, {line_num, 26, -1, "Comment"})
-  line_num = line_num + 1
+  cb:spans({
+    { text = "  " .. auto_checkbox .. " ", style = form_state.auto_connect and "success" or "muted" },
+    { text = "⚡", style = "warning" },
+    { text = " Auto-connect      Connect automatically", style = "muted" },
+  })
 
-  table.insert(lines, "  Press f or a to toggle")
-  table.insert(highlights, {line_num, 8, 9, "Special"})
-  table.insert(highlights, {line_num, 13, 14, "Special"})
-  table.insert(highlights, {line_num, 0, -1, "Comment"})
-  line_num = line_num + 1
-
-  table.insert(lines, "")
-  line_num = line_num + 1
+  cb:spans({
+    { text = "  Press ", style = "muted" },
+    { text = "f", style = "key" },
+    { text = " or ", style = "muted" },
+    { text = "a", style = "key" },
+    { text = " to toggle", style = "muted" },
+  })
+  cb:blank()
 
   -- Actions section
-  table.insert(lines, "  ───────────────────────────────────────────")
-  table.insert(highlights, {line_num, 0, -1, "Comment"})
-  line_num = line_num + 1
-
-  table.insert(lines, "")
-  line_num = line_num + 1
-  table.insert(lines, "  s   Save connection       T   Test connection")
-  table.insert(highlights, {line_num, 2, 3, "Special"})
-  table.insert(highlights, {line_num, 28, 29, "Special"})
-  line_num = line_num + 1
-  table.insert(lines, "  b   Back to list          q   Close")
-  table.insert(highlights, {line_num, 2, 3, "Special"})
-  table.insert(highlights, {line_num, 28, 29, "Special"})
-  line_num = line_num + 1
-  table.insert(lines, "")
+  cb:styled("  ───────────────────────────────────────────", "muted")
+  cb:blank()
+  cb:spans({
+    { text = "  s", style = "key" },
+    { text = "   Save connection       ", style = "text" },
+    { text = "T", style = "key" },
+    { text = "   Test connection", style = "text" },
+  })
+  cb:spans({
+    { text = "  b", style = "key" },
+    { text = "   Back to list          ", style = "text" },
+    { text = "q", style = "key" },
+    { text = "   Close", style = "text" },
+  })
+  cb:blank()
 
   local title = is_edit and " Edit Connection " or " New Connection "
 
@@ -815,8 +751,8 @@ function AddServerUI.show_new_connection_form_with_state(form_state, edit_connec
     AddServerUI.test_connection(form_state)
   end
 
-  -- Create fresh float with keymaps
-  current_float = UiFloat.create(lines, {
+  -- Create fresh float with styled content
+  current_float = UiFloat.create_styled(cb, {
     title = title,
     title_pos = "center",
     border = "rounded",
@@ -826,11 +762,6 @@ function AddServerUI.show_new_connection_form_with_state(form_state, edit_connec
     default_keymaps = false,
     keymaps = keymaps,
   })
-
-  -- Apply highlights after window creation
-  if current_float and current_float:is_valid() then
-    apply_highlights(current_float.bufnr, highlights)
-  end
 end
 
 ---Prompt for database type selection
