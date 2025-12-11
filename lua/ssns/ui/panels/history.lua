@@ -310,111 +310,284 @@ local function delete_entry()
     vim.notify("History entry deleted", vim.log.levels.INFO)
     if multi_panel then multi_panel:render_all() end
   elseif multi_panel and multi_panel.focused_panel == "buffers" then
-    -- Delete entire buffer history
+    -- Delete entire buffer history - show confirmation dialog
     local count = #buffer_history.entries
-    vim.ui.input({
-      prompt = string.format("Delete buffer '%s' with %d entries? (y/N): ", buffer_history.buffer_name, count)
-    }, function(input)
-      if input and input:lower() == "y" then
-        QueryHistory.clear_buffer_history(buffer_history.buffer_id)
+    local confirm_win = UiFloat.create({
+      title = "Delete Buffer History",
+      width = 50,
+      height = 8,
+      center = true,
+      content_builder = true,
+    })
 
-        -- Refresh
-        ui_state.buffer_histories = QueryHistory.get_all_buffer_histories()
+    if confirm_win then
+      local cb = confirm_win:get_content_builder()
+      cb:line("")
+      cb:line(string.format("  Delete buffer '%s'?", buffer_history.buffer_name), "WarningMsg")
+      cb:line(string.format("  Contains %d history entries.", count), "SsnsUiHint")
+      cb:line("")
+      cb:line("  Press <Enter> to confirm, <Esc> to cancel", "Comment")
+      confirm_win:render()
 
-        if #ui_state.buffer_histories == 0 then
-          UiHistory.close()
-          vim.notify("All history cleared", vim.log.levels.INFO)
-        else
-          if ui_state.selected_buffer_idx > #ui_state.buffer_histories then
-            ui_state.selected_buffer_idx = #ui_state.buffer_histories
+      local confirm_keymaps = {
+        ["<CR>"] = function()
+          confirm_win:close()
+          QueryHistory.clear_buffer_history(buffer_history.buffer_id)
+
+          -- Refresh
+          ui_state.buffer_histories = QueryHistory.get_all_buffer_histories()
+
+          if #ui_state.buffer_histories == 0 then
+            UiHistory.close()
+            vim.notify("All history cleared", vim.log.levels.INFO)
+          else
+            if ui_state.selected_buffer_idx > #ui_state.buffer_histories then
+              ui_state.selected_buffer_idx = #ui_state.buffer_histories
+            end
+            ui_state.selected_entry_idx = 1
+            if multi_panel then multi_panel:render_all() end
+            vim.notify("Buffer history deleted", vim.log.levels.INFO)
           end
-          ui_state.selected_entry_idx = 1
-          if multi_panel then multi_panel:render_all() end
-        end
+        end,
+        ["<Esc>"] = function() confirm_win:close() end,
+        ["q"] = function() confirm_win:close() end,
+        ["n"] = function() confirm_win:close() end,
+      }
+      for key, fn in pairs(confirm_keymaps) do
+        vim.keymap.set("n", key, fn, { buffer = confirm_win.buf, nowait = true })
       end
-    end)
+    end
   end
 end
 
 ---Clear all history
 local function clear_all()
   local stats = QueryHistory.get_stats()
-  vim.ui.input({
-    prompt = string.format("Clear ALL history (%d buffers, %d entries)? (y/N): ",
-      stats.total_buffers, stats.total_entries)
-  }, function(input)
-    if input and input:lower() == "y" then
-      QueryHistory.clear_all()
-      UiHistory.close()
+  local confirm_win = UiFloat.create({
+    title = "Clear All History",
+    width = 55,
+    height = 8,
+    center = true,
+    content_builder = true,
+  })
+
+  if confirm_win then
+    local cb = confirm_win:get_content_builder()
+    cb:line("")
+    cb:line("  ⚠ Clear ALL query history?", "WarningMsg")
+    cb:line(string.format("  %d buffers, %d entries will be deleted.", stats.total_buffers, stats.total_entries), "SsnsUiHint")
+    cb:line("")
+    cb:line("  Press <Enter> to confirm, <Esc> to cancel", "Comment")
+    confirm_win:render()
+
+    local confirm_keymaps = {
+      ["<CR>"] = function()
+        confirm_win:close()
+        QueryHistory.clear_all()
+        UiHistory.close()
+        vim.notify("All history cleared", vim.log.levels.INFO)
+      end,
+      ["<Esc>"] = function() confirm_win:close() end,
+      ["q"] = function() confirm_win:close() end,
+      ["n"] = function() confirm_win:close() end,
+    }
+    for key, fn in pairs(confirm_keymaps) do
+      vim.keymap.set("n", key, fn, { buffer = confirm_win.buf, nowait = true })
     end
-  end)
+  end
 end
 
 ---Export history
 local function export_history()
-  vim.ui.input({
-    prompt = "Export to file: ",
-    default = vim.fn.stdpath('data') .. '/ssns/history_export.txt',
-    completion = 'file',
-  }, function(filepath)
-    if filepath and filepath ~= "" then
-      local format = filepath:match("%.([^.]+)$") == "json" and "json" or "txt"
-      if QueryHistory.export(filepath, format) then
-        vim.notify("History exported to " .. filepath, vim.log.levels.INFO)
-      end
-    end
-  end)
-end
+  local default_path = vim.fn.stdpath('data') .. '/ssns/history_export.txt'
 
----Search history
-local function search_history()
-  vim.ui.input({ prompt = "Search query: " }, function(pattern)
-    if not pattern or pattern == "" then return end
+  local export_win = UiFloat.create({
+    title = "Export History",
+    width = 70,
+    height = 9,
+    center = true,
+    content_builder = true,
+    enable_inputs = true,
+  })
 
-    local results = QueryHistory.search(pattern, { case_sensitive = false })
-    if vim.tbl_isempty(results) then
-      vim.notify("No matching queries found", vim.log.levels.WARN)
-      return
-    end
+  if export_win then
+    local cb = export_win:get_content_builder()
+    cb:line("")
+    cb:line("  Export query history to file:", "SsnsUiTitle")
+    cb:line("")
+    cb:labeled_input("  File: ", "filepath", default_path, 50)
+    cb:line("")
+    cb:line("  Use .json extension for JSON format, otherwise plain text.", "Comment")
+    cb:line("")
+    cb:line("  <Enter>=Export | <Esc>=Cancel", "SsnsUiHint")
+    export_win:render()
 
-    -- Build results list
-    local result_items = {}
-    for buffer_id, entries in pairs(results) do
-      local buffer_history = QueryHistory.buffers[buffer_id]
-      if buffer_history then
-        for _, entry in ipairs(entries) do
-          table.insert(result_items, {
-            buffer_history = buffer_history,
-            entry = entry,
-          })
+    local function do_export()
+      local filepath = export_win:get_input_value("filepath")
+      export_win:close()
+
+      if filepath and filepath ~= "" then
+        local format = filepath:match("%.([^.]+)$") == "json" and "json" or "txt"
+        if QueryHistory.export(filepath, format) then
+          vim.notify("History exported to " .. filepath, vim.log.levels.INFO)
         end
       end
     end
 
-    -- Show results
-    vim.ui.select(result_items, {
-      prompt = string.format("Search results for '%s':", pattern),
-      format_item = function(item)
-        local status_icon = item.entry.status == "success" and "✓" or "✗"
-        local preview = item.entry.query:gsub("%s+", " "):sub(1, 50)
-        return string.format("%s [%s] %s | %s",
-          status_icon,
-          item.buffer_history.buffer_name,
-          item.entry.timestamp:sub(12, 19),
-          preview)
-      end,
-    }, function(choice)
-      if choice then
-        UiHistory.close()
-        UiQuery.create_query_buffer(choice.buffer_history.server_name, choice.buffer_history.database)
-        vim.schedule(function()
-          local query_buf = vim.api.nvim_get_current_buf()
-          vim.api.nvim_buf_set_option(query_buf, "modifiable", true)
-          vim.api.nvim_buf_set_lines(query_buf, 0, -1, false, vim.split(choice.entry.query, "\n"))
-        end)
+    vim.keymap.set("n", "<CR>", function()
+      export_win:enter_input()
+    end, { buffer = export_win.buf, nowait = true })
+
+    vim.keymap.set("n", "<Esc>", function()
+      export_win:close()
+    end, { buffer = export_win.buf, nowait = true })
+
+    vim.keymap.set("n", "q", function()
+      export_win:close()
+    end, { buffer = export_win.buf, nowait = true })
+
+    -- Submit binding when in input mode
+    export_win:on_input_submit(do_export)
+  end
+end
+
+---Search history
+local function search_history()
+  local search_win = UiFloat.create({
+    title = "Search History",
+    width = 60,
+    height = 8,
+    center = true,
+    content_builder = true,
+    enable_inputs = true,
+  })
+
+  if search_win then
+    local cb = search_win:get_content_builder()
+    cb:line("")
+    cb:line("  Search query history:", "SsnsUiTitle")
+    cb:line("")
+    cb:labeled_input("  Pattern: ", "pattern", "", 40)
+    cb:line("")
+    cb:line("  <Enter>=Search | <Esc>=Cancel", "SsnsUiHint")
+    search_win:render()
+
+    local function do_search()
+      local pattern = search_win:get_input_value("pattern")
+      search_win:close()
+
+      if not pattern or pattern == "" then return end
+
+      local results = QueryHistory.search(pattern, { case_sensitive = false })
+      if vim.tbl_isempty(results) then
+        vim.notify("No matching queries found", vim.log.levels.WARN)
+        return
       end
-    end)
-  end)
+
+      -- Build results list
+      local result_items = {}
+      for buffer_id, entries in pairs(results) do
+        local buffer_history = QueryHistory.buffers[buffer_id]
+        if buffer_history then
+          for _, entry in ipairs(entries) do
+            table.insert(result_items, {
+              buffer_history = buffer_history,
+              entry = entry,
+            })
+          end
+        end
+      end
+
+      -- Show results in a selection panel
+      local results_win = UiFloat.create({
+        title = string.format("Search Results for '%s'", pattern),
+        width = 80,
+        height = math.min(#result_items + 6, 20),
+        center = true,
+        content_builder = true,
+      })
+
+      if results_win then
+        local results_state = { selected_idx = 1 }
+        local rcb = results_win:get_content_builder()
+
+        local function render_results()
+          rcb:clear()
+          rcb:line("")
+          rcb:line(string.format("  Found %d matching entries:", #result_items), "SsnsUiHint")
+          rcb:line("")
+
+          for i, item in ipairs(result_items) do
+            local prefix = i == results_state.selected_idx and " ▶ " or "   "
+            local status_icon = item.entry.status == "success" and "✓" or "✗"
+            local preview = item.entry.query:gsub("%s+", " "):sub(1, 50)
+            local line = string.format("%s%s [%s] %s | %s",
+              prefix,
+              status_icon,
+              item.buffer_history.buffer_name,
+              item.entry.timestamp:sub(12, 19),
+              preview)
+            if i == results_state.selected_idx then
+              rcb:line(line, "SsnsFloatSelected")
+            else
+              rcb:line(line)
+            end
+          end
+
+          rcb:line("")
+          rcb:line("  j/k=Navigate | <Enter>=Load | <Esc>=Cancel", "SsnsUiHint")
+          results_win:render()
+        end
+
+        render_results()
+
+        local function navigate_results(dir)
+          results_state.selected_idx = results_state.selected_idx + dir
+          if results_state.selected_idx < 1 then results_state.selected_idx = #result_items end
+          if results_state.selected_idx > #result_items then results_state.selected_idx = 1 end
+          render_results()
+        end
+
+        local function load_result()
+          local choice = result_items[results_state.selected_idx]
+          results_win:close()
+
+          if choice then
+            UiHistory.close()
+            UiQuery.create_query_buffer(choice.buffer_history.server_name, choice.buffer_history.database)
+            vim.schedule(function()
+              local query_buf = vim.api.nvim_get_current_buf()
+              vim.api.nvim_buf_set_option(query_buf, "modifiable", true)
+              vim.api.nvim_buf_set_lines(query_buf, 0, -1, false, vim.split(choice.entry.query, "\n"))
+            end)
+          end
+        end
+
+        vim.keymap.set("n", "j", function() navigate_results(1) end, { buffer = results_win.buf, nowait = true })
+        vim.keymap.set("n", "k", function() navigate_results(-1) end, { buffer = results_win.buf, nowait = true })
+        vim.keymap.set("n", "<Down>", function() navigate_results(1) end, { buffer = results_win.buf, nowait = true })
+        vim.keymap.set("n", "<Up>", function() navigate_results(-1) end, { buffer = results_win.buf, nowait = true })
+        vim.keymap.set("n", "<CR>", load_result, { buffer = results_win.buf, nowait = true })
+        vim.keymap.set("n", "<Esc>", function() results_win:close() end, { buffer = results_win.buf, nowait = true })
+        vim.keymap.set("n", "q", function() results_win:close() end, { buffer = results_win.buf, nowait = true })
+      end
+    end
+
+    vim.keymap.set("n", "<CR>", function()
+      search_win:enter_input()
+    end, { buffer = search_win.buf, nowait = true })
+
+    vim.keymap.set("n", "<Esc>", function()
+      search_win:close()
+    end, { buffer = search_win.buf, nowait = true })
+
+    vim.keymap.set("n", "q", function()
+      search_win:close()
+    end, { buffer = search_win.buf, nowait = true })
+
+    -- Submit binding when in input mode
+    search_win:on_input_submit(do_search)
+  end
 end
 
 ---Show query history in 2-column layout using UiFloat multi-panel system

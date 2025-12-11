@@ -340,11 +340,33 @@ function ContentBuilder:input(key, opts)
 end
 
 ---Add an input field with label on same line
----@param key string Unique identifier
----@param label string Label text
----@param opts table? Options: { value = string?, placeholder = string?, width = number? }
+---Supports two call patterns:
+---  labeled_input(key, label, opts) -- original pattern
+---  labeled_input(label, key, value, width) -- convenience pattern
+---@param arg1 string First argument (key or label)
+---@param arg2 string Second argument (label or key)
+---@param arg3 table|string|nil Third argument (opts table, value string, or nil)
+---@param arg4 number? Fourth argument (width, only for convenience pattern)
 ---@return ContentBuilder self For chaining
-function ContentBuilder:labeled_input(key, label, opts)
+function ContentBuilder:labeled_input(arg1, arg2, arg3, arg4)
+  local key, label, opts
+  
+  -- Detect which call pattern is being used
+  if type(arg3) == "table" then
+    -- Original pattern: labeled_input(key, label, opts)
+    key = arg1
+    label = arg2
+    opts = arg3
+  else
+    -- Convenience pattern: labeled_input(label, key, value, width)
+    label = arg1
+    key = arg2
+    opts = {
+      value = arg3 or "",
+      width = arg4,
+    }
+  end
+  
   opts = opts or {}
   opts.label = label
   return self:input(key, opts)

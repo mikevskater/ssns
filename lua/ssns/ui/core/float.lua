@@ -47,23 +47,35 @@ FloatWindow.__index = FloatWindow
 local UiFloat = {}
 
 ---Create a new floating window
----@param lines string[]? Initial content lines (optional)
+---@param lines string[]|FloatConfig? Initial content lines OR config (for convenience)
 ---@param config FloatConfig? Configuration options
 ---@return FloatWindow instance
 function UiFloat.create(lines, config)
+  -- Handle convenience call pattern: UiFloat.create({ title = "...", ... })
+  -- If first arg is a table with config keys (not an array), treat it as config
+  if type(lines) == "table" and not vim.islist(lines) then
+    config = lines
+    lines = {}
+  end
+  
   lines = lines or {}
   config = config or {}
 
   -- Handle content_builder in config
   local content_builder = config.content_builder
+  local content_builder_is_new = false
+  
   if content_builder == true then
     -- Create a new ContentBuilder if boolean true passed
+    -- Don't build lines yet - user will populate it and call render()
     local ContentBuilder = require('ssns.ui.core.content_builder')
     content_builder = ContentBuilder.new()
     config.content_builder = content_builder
-  end
-  
-  if content_builder and type(content_builder) == "table" and content_builder.build_lines then
+    content_builder_is_new = true
+    -- Start with empty lines - will be populated on render()
+    lines = {""}
+  elseif content_builder and type(content_builder) == "table" and content_builder.build_lines then
+    -- Pre-populated ContentBuilder was passed, use its lines
     lines = content_builder:build_lines()
   end
 
@@ -405,6 +417,41 @@ end
 ---@return ContentBuilder?
 function FloatWindow:get_content_builder()
   return self._content_builder
+end
+
+---Render/update content from content builder
+---Call this after modifying the content builder to refresh the display
+function FloatWindow:render()
+  if not self:is_valid() then return end
+  
+  local cb = self._content_builder
+  if not cb then return end
+  
+  -- Build lines from content builder
+  local lines = cb:build_lines()
+  
+  -- Make buffer modifiable temporarily
+  vim.api.nvim_buf_set_option(self.bufnr, 'modifiable', true)
+  
+  -- Set content
+  vim.api.nvim_buf_set_lines(self.bufnr, 0, -1, false, lines)
+  
+  -- Apply highlights
+  local ns_id = self._content_ns or vim.api.nvim_create_namespace("ssns_float_content")
+  self._content_ns = ns_id
+  vim.api.nvim_buf_clear_namespace(self.bufnr, ns_id, 0, -1)
+  cb:apply_to_buffer(self.bufnr, ns_id)
+  
+  -- Setup inputs if enabled
+  if self.config.enable_inputs then
+    self:_setup_input_manager(cb)
+  end
+  
+  -- Restore modifiable state
+  vim.api.nvim_buf_set_option(self.bufnr, 'modifiable', self.config.modifiable or false)
+  
+  -- Update stored lines
+  self.lines = lines
 end
 
 -- ============================================================================
