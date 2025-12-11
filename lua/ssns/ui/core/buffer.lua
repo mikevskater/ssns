@@ -695,47 +695,54 @@ end
 ---Show help in floating window
 function UiBuffer.show_help()
   local UiFloat = require('ssns.ui.core.float')
+  local ContentBuilder = require('ssns.ui.core.content_builder')
 
-  local help_lines = {
-    "SSNS - SQL Server NeoVim Studio",
-    "",
-    "Navigation:",
-    "  <CR>, o      - Expand/collapse node",
-    "  g            - Toggle parent group (collapse from child)",
-    "  j, k         - Move cursor up/down",
-    "  <C-[>        - Go to first child in group",
-    "  <C-]>        - Go to last child in group",
-    "  q            - Close SSNS window",
-    "",
-    "Mouse:",
-    "  Click        - Select node",
-    "  Click icon   - Expand/collapse node",
-    "  Double-click - Expand/collapse node",
-    "",
-    "Actions:",
-    "  a            - Add server connection",
-    "  *            - Toggle favorite (server)",
-    "  r            - Refresh current node",
-    "  R            - Refresh all servers",
-    "  d            - Toggle connection",
-    "  <C-n>        - New query buffer with USE statement",
-    "  <Leader>c    - Set lualine color (server/database)",
-    "",
-    "Filtering:",
-    "  f            - Open filter UI for group",
-    "  F            - Clear all filters on group",
-    "",
-    "Query History:",
-    "  <Leader>h    - Open query history panel",
-    "",
-    "Help:",
-    "  ?            - Show this help",
-  }
+  local cb = ContentBuilder.new()
+  
+  cb:header("SSNS - SQL Server NeoVim Studio")
+  cb:blank()
+  
+  cb:section("Navigation")
+  cb:spans({ { text = "  <CR>, o      ", style = "key" }, { text = "Expand/collapse node" } })
+  cb:spans({ { text = "  g            ", style = "key" }, { text = "Toggle parent group (collapse from child)" } })
+  cb:spans({ { text = "  j, k         ", style = "key" }, { text = "Move cursor up/down" } })
+  cb:spans({ { text = "  <C-[>        ", style = "key" }, { text = "Go to first child in group" } })
+  cb:spans({ { text = "  <C-]>        ", style = "key" }, { text = "Go to last child in group" } })
+  cb:spans({ { text = "  q            ", style = "key" }, { text = "Close SSNS window" } })
+  cb:blank()
+  
+  cb:section("Mouse")
+  cb:spans({ { text = "  Click        ", style = "key" }, { text = "Select node" } })
+  cb:spans({ { text = "  Click icon   ", style = "key" }, { text = "Expand/collapse node" } })
+  cb:spans({ { text = "  Double-click ", style = "key" }, { text = "Expand/collapse node" } })
+  cb:blank()
+  
+  cb:section("Actions")
+  cb:spans({ { text = "  a            ", style = "key" }, { text = "Add server connection" } })
+  cb:spans({ { text = "  *            ", style = "key" }, { text = "Toggle favorite (server)" } })
+  cb:spans({ { text = "  r            ", style = "key" }, { text = "Refresh current node" } })
+  cb:spans({ { text = "  R            ", style = "key" }, { text = "Refresh all servers" } })
+  cb:spans({ { text = "  d            ", style = "key" }, { text = "Toggle connection" } })
+  cb:spans({ { text = "  <C-n>        ", style = "key" }, { text = "New query buffer with USE statement" } })
+  cb:spans({ { text = "  <Leader>c    ", style = "key" }, { text = "Set lualine color (server/database)" } })
+  cb:blank()
+  
+  cb:section("Filtering")
+  cb:spans({ { text = "  f            ", style = "key" }, { text = "Open filter UI for group" } })
+  cb:spans({ { text = "  F            ", style = "key" }, { text = "Clear all filters on group" } })
+  cb:blank()
+  
+  cb:section("Query History")
+  cb:spans({ { text = "  <Leader>h    ", style = "key" }, { text = "Open query history panel" } })
+  cb:blank()
+  
+  cb:section("Help")
+  cb:spans({ { text = "  ?            ", style = "key" }, { text = "Show this help" } })
 
-  UiFloat.create(help_lines, {
+  UiFloat.create_styled(cb, {
     title = "SSNS Help",
     footer = "Press any key to close",
-    width = 50,
+    width = 55,
     keymaps = {
       ['<CR>'] = function()
         vim.cmd('close')
