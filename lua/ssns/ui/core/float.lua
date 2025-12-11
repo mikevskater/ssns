@@ -444,4 +444,52 @@ function UiFloat.select(items, on_select, title)
   })
 end
 
+---Create a styled floating window using ContentBuilder
+---@param content_builder ContentBuilder ContentBuilder instance with styled content
+---@param config FloatConfig? Configuration options
+---@return FloatWindow instance
+function UiFloat.create_styled(content_builder, config)
+  config = config or {}
+  
+  -- Get plain lines for initial content
+  local lines = content_builder:build_lines()
+  
+  -- Create the float window
+  local instance = UiFloat.create(lines, config)
+  
+  -- Apply highlights from ContentBuilder
+  if instance:is_valid() then
+    local ns_id = vim.api.nvim_create_namespace("ssns_float_content")
+    content_builder:apply_to_buffer(instance.bufnr, ns_id)
+    instance._content_ns = ns_id
+    instance._content_builder = content_builder
+  end
+  
+  return instance
+end
+
+---Update a styled window with new ContentBuilder content
+---@param content_builder ContentBuilder New styled content
+function FloatWindow:update_styled(content_builder)
+  if not self:is_valid() then
+    return
+  end
+  
+  -- Update lines
+  local lines = content_builder:build_lines()
+  self:update_lines(lines)
+  
+  -- Reapply highlights
+  local ns_id = self._content_ns or vim.api.nvim_create_namespace("ssns_float_content")
+  content_builder:apply_to_buffer(self.bufnr, ns_id)
+  self._content_ns = ns_id
+  self._content_builder = content_builder
+end
+
+---Get the ContentBuilder module for convenience
+---@return ContentBuilder
+function UiFloat.ContentBuilder()
+  return require('ssns.ui.core.content_builder')
+end
+
 return UiFloat
