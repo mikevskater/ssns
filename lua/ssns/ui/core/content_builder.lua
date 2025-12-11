@@ -1,6 +1,7 @@
 ---@class ContentBuilder
 ---Build styled content for floating windows using theme colors
 ---Maps semantic content types to existing SSNS theme highlight groups
+---Supports input fields for interactive forms
 ---@module ssns.ui.core.content_builder
 local ContentBuilder = {}
 ContentBuilder.__index = ContentBuilder
@@ -51,6 +52,11 @@ local STYLE_MAPPINGS = {
   number = "SsnsNumber",
   operator = "SsnsOperator",
   
+  -- Input field styles
+  input = "SsnsFloatInput",         -- Input field background
+  input_active = "SsnsFloatInputActive", -- Active/focused input
+  input_placeholder = "SsnsUiHint", -- Placeholder text
+  
   -- Special
   normal = nil,                     -- No highlight, use default
   none = nil,                       -- Explicit no highlight
@@ -65,9 +71,21 @@ local STYLE_MAPPINGS = {
 ---@field col_end number 0-indexed end column
 ---@field style string Style name from STYLE_MAPPINGS
 
+---@class InputField
+---@field key string Unique identifier for the input
+---@field line number 1-indexed line number
+---@field col_start number 0-indexed start column of input value area
+---@field col_end number 0-indexed end column of input value area
+---@field width number Total width of input field
+---@field value string Current value
+---@field default string Default/initial value
+---@field placeholder string Placeholder text when empty
+---@field label string? Optional label text before input
+
 ---@class ContentBuilderState
 ---@field lines ContentLine[] Built content lines
 ---@field namespace number|nil Highlight namespace
+---@field inputs table<string, InputField> Map of input key -> field info
 
 ---Create a new ContentBuilder instance
 ---@return ContentBuilder
@@ -75,6 +93,8 @@ function ContentBuilder.new()
   local self = setmetatable({}, ContentBuilder)
   self._lines = {}  -- Array of { text = string, highlights = {} }
   self._namespace = nil
+  self._inputs = {}  -- Map of key -> InputField
+  self._input_order = {}  -- Ordered list of input keys for Tab navigation
   return self
 end
 
@@ -222,6 +242,142 @@ function ContentBuilder:spans(spans)
     text = table.concat(text_parts, ""),
     highlights = highlights,
   })
+  return self
+end
+
+---Add an input field
+---@param key string Unique identifier for retrieving the value
+---@param opts table Options: { label = string?, value = string?, placeholder = string?, width = number?, label_style = string? }
+---@return ContentBuilder self For chaining
+function ContentBuilder:input(key, opts)
+  opts = opts or {}
+  local label = opts.label or ""
+  local value = opts.value or ""
+  local placeholder = opts.placeholder or ""
+  local width = opts.width or 20
+  local label_style = opts.label_style or "label"
+  local separator = opts.separator or ": "
+  
+  -- Build the line text
+  local prefix = ""
+  if label ~= "" then
+    prefix = label .. separator
+  end
+  
+  -- Display value or placeholder
+  local display_text = value
+  local is_placeholder = false
+  if value == "" and placeholder ~= "" then
+    display_text = placeholder
+    is_placeholder = true
+  end
+  
+  -- Pad or truncate display text to fit width
+  if #display_text < width then
+    display_text = display_text .. string.rep(" ", width - #display_text)
+  elseif #display_text > width then
+    display_text = display_text:sub(1, width)
+  end
+  
+  -- Build full line: "Label: [value_______]"
+  local input_start = #prefix
+  local text = prefix .. "[" .. display_text .. "]"
+  local input_value_start = input_start + 1  -- After "["
+  local input_value_end = input_value_start + width  -- Before "]"
+  
+  local line = {
+    text = text,
+    highlights = {},
+  }
+  
+  -- Highlight label
+  if label ~= "" and STYLE_MAPPINGS[label_style] then
+    table.insert(line.highlights, {
+      col_start = 0,
+      col_end = #label,
+      style = label_style,
+    })
+  end
+  
+  -- Highlight brackets
+  table.insert(line.highlights, {
+    col_start = input_start,
+    col_end = input_start + 1,
+    style = "muted",
+  })
+  table.insert(line.highlights, {
+    col_start = input_value_end,
+    col_end = input_value_end + 1,
+    style = "muted",
+  })
+  
+  -- Highlight input value area
+  local value_style = is_placeholder and "input_placeholder" or "input"
+  table.insert(line.highlights, {
+    col_start = input_value_start,
+    col_end = input_value_end,
+    style = value_style,
+  })
+  
+  table.insert(self._lines, line)
+  
+  -- Store input field info
+  local line_num = #self._lines
+  self._inputs[key] = {
+    key = key,
+    line = line_num,
+    col_start = input_value_start,
+    col_end = input_value_end,
+    width = width,
+    value = value,
+    default = value,
+    placeholder = placeholder,
+    label = label,
+  }
+  table.insert(self._input_order, key)
+  
+  return self
+end
+
+---Add an input field with label on same line
+---@param key string Unique identifier
+---@param label string Label text
+---@param opts table? Options: { value = string?, placeholder = string?, width = number? }
+---@return ContentBuilder self For chaining
+function ContentBuilder:labeled_input(key, label, opts)
+  opts = opts or {}
+  opts.label = label
+  return self:input(key, opts)
+end
+
+---Get all input field definitions
+---@return table<string, InputField> inputs Map of key -> InputField
+function ContentBuilder:get_inputs()
+  return self._inputs
+end
+
+---Get ordered list of input keys (for Tab navigation)
+---@return string[] keys Ordered input keys
+function ContentBuilder:get_input_order()
+  return self._input_order
+end
+
+---Get a specific input field
+---@param key string Input key
+---@return InputField? field Input field or nil
+function ContentBuilder:get_input(key)
+  return self._inputs[key]
+end
+
+---Update an input field's value (for re-rendering)
+---@param key string Input key
+---@param value string New value
+---@return ContentBuilder self For chaining
+function ContentBuilder:set_input_value(key, value)
+  local input = self._inputs[key]
+  if input then
+    input.value = value
+  end
   return self
 end
 
