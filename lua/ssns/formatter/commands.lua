@@ -116,14 +116,44 @@ end
 function FormatterCommands.show_stats()
   local Stats = require('ssns.formatter.stats')
   local UiFloat = require('ssns.ui.core.float')
+  local ContentBuilder = require('ssns.ui.core.content_builder')
+  
   local output = Stats.format_summary()
-  local lines = vim.split(output, "\n")
+  local raw_lines = vim.split(output, "\n")
+  
+  -- Build styled content
+  local cb = ContentBuilder.new()
+  
+  for _, line in ipairs(raw_lines) do
+    -- Style headers
+    if line:match("^===") or line:match("^%-%-%-") then
+      cb:styled(line, "muted")
+    elseif line:match("^[A-Z][a-z]+:$") then
+      cb:section(line)
+    elseif line:match("^  [A-Za-z]+:") then
+      -- Key-value style lines
+      local key, value = line:match("^  ([^:]+):%s*(.+)$")
+      if key and value then
+        cb:spans({
+          { text = "  " },
+          { text = key, style = "label" },
+          { text = ": " },
+          { text = value, style = "value" },
+        })
+      else
+        cb:line(line)
+      end
+    elseif line == "" then
+      cb:blank()
+    else
+      cb:line(line)
+    end
+  end
 
-  UiFloat.create(lines, {
+  UiFloat.create_styled(cb, {
     title = "Formatter Stats",
     min_width = 60,
     max_height = 25,
-    filetype = 'text',
     footer = "q/Esc: close",
   })
 end
