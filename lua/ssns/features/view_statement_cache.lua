@@ -5,6 +5,7 @@
 local ViewStatementCache = {}
 
 local UiFloat = require('ssns.ui.core.float')
+local ContentBuilder = require('ssns.ui.core.content_builder')
 local JsonUtils = require('ssns.utils.json')
 local StatementCache = require('ssns.completion.statement_cache')
 
@@ -33,48 +34,73 @@ function ViewStatementCache.view_cache()
   local cache = StatementCache.get_or_build_cache(bufnr)
   local stats = StatementCache.get_stats()
 
-  -- Build display content
-  local display_lines = {}
+  -- Build styled content
+  local cb = ContentBuilder.new()
 
-  table.insert(display_lines, "Statement Cache")
-  table.insert(display_lines, string.rep("=", 50))
-  table.insert(display_lines, "")
+  cb:header("Statement Cache")
+  cb:separator("=", 50)
+  cb:blank()
 
   -- Buffer info
-  table.insert(display_lines, "Buffer Info")
-  table.insert(display_lines, string.rep("-", 30))
-  table.insert(display_lines, string.format("  Buffer: %d", bufnr))
-  table.insert(display_lines, string.format("  File: %s", bufname ~= "" and vim.fn.fnamemodify(bufname, ":t") or "[No Name]"))
-  table.insert(display_lines, "")
+  cb:section("Buffer Info")
+  cb:separator("-", 30)
+  cb:spans({
+    { text = "  Buffer: ", style = "label" },
+    { text = tostring(bufnr), style = "number" },
+  })
+  cb:spans({
+    { text = "  File: ", style = "label" },
+    { text = bufname ~= "" and vim.fn.fnamemodify(bufname, ":t") or "[No Name]", style = "value" },
+  })
+  cb:blank()
 
   if not cache then
-    table.insert(display_lines, "  (No cache for this buffer - not a SQL buffer?)")
-    table.insert(display_lines, "")
+    cb:styled("  (No cache for this buffer - not a SQL buffer?)", "muted")
+    cb:blank()
   else
     -- Cache freshness
-    table.insert(display_lines, "Cache Status")
-    table.insert(display_lines, string.rep("-", 30))
+    cb:section("Cache Status")
+    cb:separator("-", 30)
     local current_tick = vim.api.nvim_buf_get_changedtick(bufnr)
     local is_fresh = cache.buffer_tick == current_tick
-    table.insert(display_lines, string.format("  Fresh: %s", is_fresh and "Yes" or "No (stale)"))
-    table.insert(display_lines, string.format("  Buffer tick: %d (current: %d)", cache.buffer_tick or 0, current_tick))
-    table.insert(display_lines, string.format("  Last update: %.3f seconds ago", os.clock() - (cache.last_update or 0)))
-    table.insert(display_lines, "")
+    cb:spans({
+      { text = "  Fresh: ", style = "label" },
+      { text = is_fresh and "Yes" or "No (stale)", style = is_fresh and "success" or "warning" },
+    })
+    cb:spans({
+      { text = "  Buffer tick: ", style = "label" },
+      { text = tostring(cache.buffer_tick or 0), style = "number" },
+      { text = " (current: " },
+      { text = tostring(current_tick), style = "number" },
+      { text = ")" },
+    })
+    cb:spans({
+      { text = "  Last update: ", style = "label" },
+      { text = string.format("%.3f", os.clock() - (cache.last_update or 0)), style = "number" },
+      { text = " seconds ago" },
+    })
+    cb:blank()
 
     -- GO batch boundaries
-    table.insert(display_lines, "GO Batch Boundaries")
-    table.insert(display_lines, string.rep("-", 30))
+    cb:section("GO Batch Boundaries")
+    cb:separator("-", 30)
     if cache.go_boundaries and #cache.go_boundaries > 0 then
-      table.insert(display_lines, string.format("  Batches: %d", #cache.go_boundaries + 1))
-      table.insert(display_lines, string.format("  GO lines: %s", table.concat(cache.go_boundaries, ", ")))
+      cb:spans({
+        { text = "  Batches: ", style = "label" },
+        { text = tostring(#cache.go_boundaries + 1), style = "number" },
+      })
+      cb:spans({
+        { text = "  GO lines: ", style = "label" },
+        { text = table.concat(cache.go_boundaries, ", "), style = "keyword" },
+      })
     else
-      table.insert(display_lines, "  Single batch (no GO statements)")
+      cb:styled("  Single batch (no GO statements)", "muted")
     end
-    table.insert(display_lines, "")
+    cb:blank()
 
     -- Temp tables
-    table.insert(display_lines, "Temp Tables")
-    table.insert(display_lines, string.rep("-", 30))
+    cb:section("Temp Tables")
+    cb:separator("-", 30)
     if cache.temp_tables and next(cache.temp_tables) then
       local sorted_temps = {}
       for name in pairs(cache.temp_tables) do
@@ -89,8 +115,18 @@ function ViewStatementCache.view_cache()
         local col_count = info.columns and #info.columns or 0
         local dropped = info.dropped_at_line and string.format(" (dropped L%d)", info.dropped_at_line) or ""
 
-        table.insert(display_lines, string.format("  %s [%s, %s, %d cols]%s",
-          name, scope, batch, col_count, dropped))
+        cb:spans({
+          { text = "  " },
+          { text = name, style = "warning" },
+          { text = " [" },
+          { text = scope, style = "muted" },
+          { text = ", " },
+          { text = batch, style = "muted" },
+          { text = ", " },
+          { text = tostring(col_count), style = "number" },
+          { text = " cols]" },
+          { text = dropped, style = "error" },
+        })
 
         -- Show columns
         if info.columns and #info.columns > 0 then
@@ -98,24 +134,35 @@ function ViewStatementCache.view_cache()
             local col_name = col.name or col
             if type(col) == "table" then
               local src = col.source_table and (col.source_table .. ".") or ""
-              table.insert(display_lines, string.format("    - %s%s", src, col_name))
+              cb:spans({
+                { text = "    - " },
+                { text = src, style = "table" },
+                { text = col_name, style = "column" },
+              })
             else
-              table.insert(display_lines, string.format("    - %s", col_name))
+              cb:spans({
+                { text = "    - " },
+                { text = col_name, style = "column" },
+              })
             end
           end
         end
       end
     else
-      table.insert(display_lines, "  (No temp tables)")
+      cb:styled("  (No temp tables)", "muted")
     end
-    table.insert(display_lines, "")
+    cb:blank()
 
     -- Statement chunks summary
-    table.insert(display_lines, "Statement Chunks")
-    table.insert(display_lines, string.rep("-", 30))
+    cb:section("Statement Chunks")
+    cb:separator("-", 30)
     if cache.chunks and #cache.chunks > 0 then
-      table.insert(display_lines, string.format("  Total: %d chunks", #cache.chunks))
-      table.insert(display_lines, "")
+      cb:spans({
+        { text = "  Total: ", style = "label" },
+        { text = tostring(#cache.chunks), style = "number" },
+        { text = " chunks" },
+      })
+      cb:blank()
 
       -- Count by type
       local type_counts = {}
@@ -124,62 +171,98 @@ function ViewStatementCache.view_cache()
         type_counts[t] = (type_counts[t] or 0) + 1
       end
 
-      table.insert(display_lines, "  By type:")
+      cb:styled("  By type:", "label")
       local sorted_types = {}
       for t in pairs(type_counts) do
         table.insert(sorted_types, t)
       end
       table.sort(sorted_types)
       for _, t in ipairs(sorted_types) do
-        table.insert(display_lines, string.format("    %s: %d", t, type_counts[t]))
+        cb:spans({
+          { text = "    " },
+          { text = t, style = "keyword" },
+          { text = ": " },
+          { text = tostring(type_counts[t]), style = "number" },
+        })
       end
-      table.insert(display_lines, "")
+      cb:blank()
 
       -- List each chunk
-      table.insert(display_lines, "  Chunk List:")
+      cb:styled("  Chunk List:", "label")
       for i, chunk in ipairs(cache.chunks) do
         local tables_count = chunk.tables and #chunk.tables or 0
         local cols_count = chunk.columns and #chunk.columns or 0
         local ctes_count = chunk.ctes and #chunk.ctes or 0
 
-        table.insert(display_lines, string.format("    [%d] %s (L%d-%d, batch %d)",
-          i,
-          chunk.statement_type or "?",
-          chunk.start_line or 0,
-          chunk.end_line or 0,
-          chunk.go_batch_index or 0))
-        table.insert(display_lines, string.format("        tables=%d, cols=%d, ctes=%d",
-          tables_count, cols_count, ctes_count))
+        cb:spans({
+          { text = "    [" },
+          { text = tostring(i), style = "number" },
+          { text = "] " },
+          { text = chunk.statement_type or "?", style = "keyword" },
+          { text = " (L" },
+          { text = tostring(chunk.start_line or 0), style = "number" },
+          { text = "-" },
+          { text = tostring(chunk.end_line or 0), style = "number" },
+          { text = ", batch " },
+          { text = tostring(chunk.go_batch_index or 0), style = "number" },
+          { text = ")" },
+        })
+        cb:spans({
+          { text = "        tables=" },
+          { text = tostring(tables_count), style = "number" },
+          { text = ", cols=" },
+          { text = tostring(cols_count), style = "number" },
+          { text = ", ctes=" },
+          { text = tostring(ctes_count), style = "number" },
+        })
 
         -- Show CTEs if any
         if chunk.ctes and #chunk.ctes > 0 then
           for _, cte in ipairs(chunk.ctes) do
             local cte_cols = cte.columns and #cte.columns or 0
-            table.insert(display_lines, string.format("        CTE: %s (%d cols)", cte.name, cte_cols))
+            cb:spans({
+              { text = "        CTE: " },
+              { text = cte.name, style = "view" },
+              { text = " (" },
+              { text = tostring(cte_cols), style = "number" },
+              { text = " cols)" },
+            })
           end
         end
       end
     else
-      table.insert(display_lines, "  (No chunks parsed)")
+      cb:styled("  (No chunks parsed)", "muted")
     end
-    table.insert(display_lines, "")
+    cb:blank()
   end
 
   -- Global stats
-  table.insert(display_lines, "Global Cache Stats")
-  table.insert(display_lines, string.rep("-", 30))
-  table.insert(display_lines, string.format("  Cached buffers: %d", stats.cached_buffers or 0))
-  table.insert(display_lines, string.format("  Total chunks: %d", stats.total_chunks or 0))
-  table.insert(display_lines, string.format("  Total temp tables: %d", stats.total_temp_tables or 0))
-  table.insert(display_lines, string.format("  Pending updates: %d", stats.pending_updates or 0))
-  table.insert(display_lines, "")
+  cb:section("Global Cache Stats")
+  cb:separator("-", 30)
+  cb:spans({
+    { text = "  Cached buffers: ", style = "label" },
+    { text = tostring(stats.cached_buffers or 0), style = "number" },
+  })
+  cb:spans({
+    { text = "  Total chunks: ", style = "label" },
+    { text = tostring(stats.total_chunks or 0), style = "number" },
+  })
+  cb:spans({
+    { text = "  Total temp tables: ", style = "label" },
+    { text = tostring(stats.total_temp_tables or 0), style = "number" },
+  })
+  cb:spans({
+    { text = "  Pending updates: ", style = "label" },
+    { text = tostring(stats.pending_updates or 0), style = stats.pending_updates > 0 and "warning" or "number" },
+  })
+  cb:blank()
 
   -- JSON output for current buffer cache
   if cache then
-    table.insert(display_lines, "")
-    table.insert(display_lines, "Full JSON Output (Current Buffer)")
-    table.insert(display_lines, string.rep("=", 50))
-    table.insert(display_lines, "")
+    cb:blank()
+    cb:header("Full JSON Output (Current Buffer)")
+    cb:separator("=", 50)
+    cb:blank()
 
     -- Create a cleaned version for JSON (limit chunk details)
     local json_cache = {
@@ -209,18 +292,16 @@ function ViewStatementCache.view_cache()
 
     local json_lines = JsonUtils.prettify_lines(json_cache)
     for _, line in ipairs(json_lines) do
-      table.insert(display_lines, line)
+      cb:line(line)
     end
   end
 
   -- Create floating window
-  current_float = UiFloat.create(display_lines, {
+  current_float = UiFloat.create_styled(cb, {
     title = "Statement Cache",
     border = "rounded",
-    filetype = "json",
     min_width = 60,
     max_width = 100,
-    max_height = 45,
     wrap = false,
     keymaps = {
       ['r'] = function()
