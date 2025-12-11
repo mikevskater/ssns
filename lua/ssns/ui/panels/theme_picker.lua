@@ -4,7 +4,7 @@ local ThemePicker = {}
 
 local UiFloatMultiPanel = require('ssns.ui.base.float_multipanel')
 local UiFloatBase = require('ssns.ui.base.float_base')
-local ThemeManager = require('ssns.ui.themes.theme_manager')
+local ThemeManager = require('ssns.ui.theme_manager')
 local KeymapManager = require('ssns.keymap_manager')
 
 ---@type table? Current state

@@ -91,8 +91,8 @@ local function get_theme_files(dir)
     if not name then break end
 
     if type == "file" and name:match("%.lua$") then
-      -- Skip init.lua and base.lua
-      if name ~= "init.lua" and name ~= "base.lua" then
+      -- Skip init.lua, base.lua, and theme_manager.lua
+      if name ~= "init.lua" and name ~= "base.lua" and name ~= "theme_manager.lua" then
         local theme_name = name:gsub("%.lua$", "")
         table.insert(files, theme_name)
       end
