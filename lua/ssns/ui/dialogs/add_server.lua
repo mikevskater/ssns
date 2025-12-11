@@ -775,58 +775,6 @@ function AddServerUI.prompt_db_type(form_state, edit_connection)
   end)
 end
 
----Prompt for connection name
----@param form_state table Current form values
----@param edit_connection ConnectionData? Original connection being edited
-function AddServerUI.prompt_name(form_state, edit_connection)
-  vim.ui.input({
-    prompt = "Connection Name: ",
-    default = form_state.name,
-  }, function(input)
-    if input and input ~= "" then
-      form_state.name = input
-      AddServerUI.show_new_connection_form_with_state(form_state, edit_connection)
-    end
-  end)
-end
-
----Prompt for server path
----@param form_state table Current form values
----@param edit_connection ConnectionData? Original connection being edited
-function AddServerUI.prompt_server_path(form_state, edit_connection)
-  local hint = PATH_HINTS[form_state.db_type] or ""
-  local prompt = form_state.db_type == "sqlite" and "Database File" or "Server"
-  if hint ~= "" then
-    prompt = prompt .. " (e.g. " .. hint:match("^([^%s]+)") .. ")"
-  end
-  prompt = prompt .. ": "
-
-  vim.ui.input({
-    prompt = prompt,
-    default = form_state.server_path,
-  }, function(input)
-    if input then
-      form_state.server_path = input
-      AddServerUI.show_new_connection_form_with_state(form_state, edit_connection)
-    end
-  end)
-end
-
----Prompt for database name
----@param form_state table Current form values
----@param edit_connection ConnectionData? Original connection being edited
-function AddServerUI.prompt_database(form_state, edit_connection)
-  vim.ui.input({
-    prompt = "Database (leave empty for default): ",
-    default = form_state.database,
-  }, function(input)
-    if input ~= nil then
-      form_state.database = input
-      AddServerUI.show_new_connection_form_with_state(form_state, edit_connection)
-    end
-  end)
-end
-
 ---Prompt for auth type selection
 ---@param form_state table Current form values
 ---@param edit_connection ConnectionData? Original connection being edited
@@ -853,36 +801,6 @@ function AddServerUI.prompt_auth_type(form_state, edit_connection)
         form_state.username = ""
         form_state.password = ""
       end
-      AddServerUI.show_new_connection_form_with_state(form_state, edit_connection)
-    end
-  end)
-end
-
----Prompt for username
----@param form_state table Current form values
----@param edit_connection ConnectionData? Original connection being edited
-function AddServerUI.prompt_username(form_state, edit_connection)
-  vim.ui.input({
-    prompt = "Username: ",
-    default = form_state.username,
-  }, function(input)
-    if input ~= nil then
-      form_state.username = input
-      AddServerUI.show_new_connection_form_with_state(form_state, edit_connection)
-    end
-  end)
-end
-
----Prompt for password
----@param form_state table Current form values
----@param edit_connection ConnectionData? Original connection being edited
-function AddServerUI.prompt_password(form_state, edit_connection)
-  vim.ui.input({
-    prompt = "Password: ",
-    default = form_state.password,
-  }, function(input)
-    if input ~= nil then
-      form_state.password = input
       AddServerUI.show_new_connection_form_with_state(form_state, edit_connection)
     end
   end)
