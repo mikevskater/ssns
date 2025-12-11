@@ -383,7 +383,6 @@ function ThemeManager.apply_colors(colors)
   vim.api.nvim_set_hl(0, "SsnsFloatTitle", colors.ui_title or { link = "FloatTitle" })
   vim.api.nvim_set_hl(0, "SsnsFloatSelected", colors.ui_selected or { link = "PmenuSel" })
   vim.api.nvim_set_hl(0, "SsnsFloatHint", colors.ui_hint or { link = "Comment" })
-  vim.api.nvim_set_hl(0, "SsnsHiddenCursor", { blend = 100, nocombine = true })  -- Invisible cursor
 
   -- UI-specific highlights (optional, for theme picker preview)
   if colors.ui_border then

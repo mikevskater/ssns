@@ -702,9 +702,12 @@ function RulesEditor.show()
           ratio = 0.18,
           on_render = render_presets,
           on_focus = function()
-            if multi_panel then
+            if multi_panel and state then
               multi_panel:update_panel_title("presets", "Presets ●")
               multi_panel:update_panel_title("rules", RulesEditor._get_rules_title())
+              -- Position cursor on selected preset
+              local cursor_line = RulesEditor._get_preset_cursor_line(state.selected_preset_idx)
+              multi_panel:set_cursor("presets", cursor_line, 0)
             end
           end,
         },
@@ -714,9 +717,12 @@ function RulesEditor.show()
           ratio = 0.35,
           on_render = render_rules,
           on_focus = function()
-            if multi_panel then
+            if multi_panel and state then
               multi_panel:update_panel_title("presets", "Presets")
               multi_panel:update_panel_title("rules", RulesEditor._get_rules_title() .. " ●")
+              -- Position cursor on selected rule
+              local cursor_line = RulesEditor._get_rule_cursor_line(state.selected_rule_idx)
+              multi_panel:set_cursor("rules", cursor_line, 0)
             end
           end,
         },
@@ -765,6 +771,14 @@ function RulesEditor.show()
 
   -- Mark initial focus
   multi_panel:update_panel_title("presets", "Presets ●")
+
+  -- Position cursor on first preset (after render is complete)
+  vim.schedule(function()
+    if multi_panel and multi_panel:is_valid() and state then
+      local cursor_line = RulesEditor._get_preset_cursor_line(state.selected_preset_idx)
+      multi_panel:set_cursor("presets", cursor_line, 0)
+    end
+  end)
 end
 
 ---Apply semantic highlighting to preview
@@ -782,6 +796,77 @@ function RulesEditor._apply_preview_highlights()
       end
     end, 50)
   end
+end
+
+---Calculate cursor line for preset index
+---@param preset_idx number The preset index
+---@return number line The cursor line (1-indexed)
+function RulesEditor._get_preset_cursor_line(preset_idx)
+  if not state then return 1 end
+
+  -- Start after header (line 1 is empty)
+  local line = 2  -- "─── Built-in ───" header
+  line = line + 1  -- Empty line after header
+  line = line + 1  -- First preset starts here
+
+  -- Count lines to reach the selected preset
+  local builtin_added = false
+  local user_added = false
+
+  for i, preset in ipairs(state.available_presets) do
+    -- Account for section headers
+    if not preset.is_user and not builtin_added then
+      builtin_added = true
+      -- Already counted above for first preset
+    elseif preset.is_user and not user_added then
+      if builtin_added then
+        line = line + 1  -- Empty line between sections
+      end
+      line = line + 1  -- "─── User ───" header
+      line = line + 1  -- Empty line after header
+      user_added = true
+    end
+
+    if i == preset_idx then
+      return line
+    end
+    line = line + 1
+  end
+
+  return line
+end
+
+---Calculate cursor line for rule index
+---@param rule_idx number The rule index
+---@return number line The cursor line (1-indexed)
+function RulesEditor._get_rule_cursor_line(rule_idx)
+  if not state then return 1 end
+
+  -- Start after header (line 1 is empty)
+  local line = 2  -- First category header
+  line = line + 1  -- Empty line after header
+  line = line + 1  -- First rule starts here
+
+  local current_category = nil
+
+  for i, rule in ipairs(state.rule_definitions) do
+    -- Account for category headers
+    if rule.category ~= current_category then
+      if current_category ~= nil then
+        line = line + 1  -- Empty line before category
+        line = line + 1  -- Category header
+        line = line + 1  -- Empty line after header
+      end
+      current_category = rule.category
+    end
+
+    if i == rule_idx then
+      return line
+    end
+    line = line + 1
+  end
+
+  return line
 end
 
 ---Get dynamic title for rules panel
@@ -874,6 +959,10 @@ function RulesEditor._navigate_presets(direction)
   multi_panel:render_all()
   multi_panel:update_panel_title("rules", RulesEditor._get_rules_title())
 
+  -- Position cursor on selected preset
+  local cursor_line = RulesEditor._get_preset_cursor_line(state.selected_preset_idx)
+  multi_panel:set_cursor("presets", cursor_line, 0)
+
   -- Apply semantic highlighting to preview
   RulesEditor._apply_preview_highlights()
 end
@@ -895,8 +984,10 @@ function RulesEditor._select_preset()
     -- Apply semantic highlighting to preview
     RulesEditor._apply_preview_highlights()
 
-    -- Move to rules panel
+    -- Move to rules panel and position cursor
     multi_panel:focus_panel("rules")
+    local cursor_line = RulesEditor._get_rule_cursor_line(state.selected_rule_idx)
+    multi_panel:set_cursor("rules", cursor_line, 0)
   end
 end
 
@@ -914,6 +1005,10 @@ function RulesEditor._navigate_rules(direction)
   end
 
   multi_panel:render_panel("rules")
+
+  -- Position cursor on selected rule
+  local cursor_line = RulesEditor._get_rule_cursor_line(state.selected_rule_idx)
+  multi_panel:set_cursor("rules", cursor_line, 0)
 end
 
 ---Cycle the value of current rule

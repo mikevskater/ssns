@@ -867,17 +867,16 @@ function UiFloat.create_multi_panel(config)
     local winid = vim.api.nvim_open_win(bufnr, false, win_opts)
 
     -- Configure window options with themed highlights
-    -- Hide cursor since we use custom selection highlighting
     vim.api.nvim_set_option_value('number', false, { win = winid })
     vim.api.nvim_set_option_value('relativenumber', false, { win = winid })
     vim.api.nvim_set_option_value('wrap', false, { win = winid })
     vim.api.nvim_set_option_value('signcolumn', 'no', { win = winid })
     vim.api.nvim_set_option_value('winhighlight',
-      'Normal:Normal,FloatBorder:SsnsFloatBorder,FloatTitle:SsnsFloatTitle,Cursor:SsnsHiddenCursor',
+      'Normal:Normal,FloatBorder:SsnsFloatBorder,FloatTitle:SsnsFloatTitle,CursorLine:SsnsFloatSelected',
       { win = winid }
     )
 
-    -- Disable cursorline - we use custom selection highlighting instead
+    -- Cursorline only on focusable panels (start disabled, focus_panel will enable)
     vim.api.nvim_set_option_value('cursorline', false, { win = winid })
 
     -- Store panel info
@@ -943,6 +942,10 @@ function MultiPanelWindow:focus_panel(panel_name)
   -- Call blur on current panel
   local current_panel = self.panels[self.focused_panel]
   if current_panel and current_panel.definition.name ~= panel_name then
+    -- Disable cursorline on previous panel
+    if vim.api.nvim_win_is_valid(current_panel.winid) then
+      vim.api.nvim_set_option_value('cursorline', false, { win = current_panel.winid })
+    end
     if current_panel.definition.on_blur then
       current_panel.definition.on_blur(self)
     end
@@ -951,9 +954,12 @@ function MultiPanelWindow:focus_panel(panel_name)
   -- Update focused panel
   self.focused_panel = panel_name
 
-  -- Focus the window (cursor is hidden, we use custom selection highlighting)
+  -- Focus the window and enable cursorline
   if vim.api.nvim_win_is_valid(panel.winid) then
     vim.api.nvim_set_current_win(panel.winid)
+    if panel.definition.cursorline ~= false then
+      vim.api.nvim_set_option_value('cursorline', true, { win = panel.winid })
+    end
   end
 
   -- Call focus callback
