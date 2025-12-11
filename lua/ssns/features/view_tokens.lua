@@ -5,6 +5,7 @@
 local ViewTokens = {}
 
 local UiFloat = require('ssns.ui.core.float')
+local ContentBuilder = require('ssns.ui.core.content_builder')
 local JsonUtils = require('ssns.utils.json')
 local Tokenizer = require('ssns.completion.tokenizer')
 local StatementCache = require('ssns.completion.statement_cache')
@@ -51,17 +52,20 @@ function ViewTokens.view_tokens()
     return
   end
 
-  -- Build display content
-  local display_lines = {}
+  -- Build styled content
+  local cb = ContentBuilder.new()
 
-  table.insert(display_lines, "Tokenizer Output")
-  table.insert(display_lines, string.rep("=", 50))
-  table.insert(display_lines, "")
+  cb:header("Tokenizer Output")
+  cb:separator("=", 50)
+  cb:blank()
 
   -- Summary section
-  table.insert(display_lines, "Summary")
-  table.insert(display_lines, string.rep("-", 30))
-  table.insert(display_lines, string.format("  Total tokens: %d", #tokens))
+  cb:section("Summary")
+  cb:separator("-", 30)
+  cb:spans({
+    { text = "  Total tokens: ", style = "label" },
+    { text = tostring(#tokens), style = "number" },
+  })
 
   -- Count by type
   local type_counts = {}
@@ -76,22 +80,29 @@ function ViewTokens.view_tokens()
   end
   table.sort(sorted_types)
 
-  table.insert(display_lines, "")
-  table.insert(display_lines, "  By type:")
+  cb:blank()
+  cb:styled("  By type:", "label")
   for _, t in ipairs(sorted_types) do
-    table.insert(display_lines, string.format("    %s: %d", t, type_counts[t]))
+    cb:spans({
+      { text = "    " },
+      { text = t, style = "keyword" },
+      { text = ": " },
+      { text = tostring(type_counts[t]), style = "number" },
+    })
   end
-  table.insert(display_lines, "")
+  cb:blank()
 
   -- Token table section
-  table.insert(display_lines, "Token List")
-  table.insert(display_lines, string.rep("-", 30))
-  table.insert(display_lines, "")
+  cb:section("Token List")
+  cb:separator("-", 30)
+  cb:blank()
 
   -- Header
-  table.insert(display_lines, string.format("  %-4s  %-15s  %-5s  %-4s  %s",
-    "#", "Type", "Line", "Col", "Text"))
-  table.insert(display_lines, "  " .. string.rep("-", 60))
+  cb:spans({
+    { text = "  " },
+    { text = string.format("%-4s  %-15s  %-5s  %-4s  %s", "#", "Type", "Line", "Col", "Text"), style = "label" },
+  })
+  cb:line("  " .. string.rep("-", 60))
 
   -- Token rows (limit to first 500 for performance)
   local max_display = math.min(#tokens, 500)
@@ -105,26 +116,52 @@ function ViewTokens.view_tokens()
     -- Escape newlines for display
     text_display = text_display:gsub("\n", "\\n"):gsub("\r", "\\r")
 
+    local type_style = "muted"
+    if token.type == "KEYWORD" then
+      type_style = "keyword"
+    elseif token.type == "IDENTIFIER" then
+      type_style = "value"
+    elseif token.type == "STRING" then
+      type_style = "string"
+    elseif token.type == "NUMBER" then
+      type_style = "number"
+    elseif token.type == "OPERATOR" then
+      type_style = "emphasis"
+    elseif token.type == "COMMENT" then
+      type_style = "muted"
+    end
+
     local category_suffix = ""
     if token.keyword_category then
       category_suffix = string.format(" [%s]", token.keyword_category)
     end
 
-    table.insert(display_lines, string.format("  %-4d  %-15s  %-5d  %-4d  %s%s",
-      i, token.type, token.line, token.col, text_display, category_suffix))
+    cb:spans({
+      { text = "  " },
+      { text = string.format("%-4d  ", i), style = "muted" },
+      { text = string.format("%-15s  ", token.type), style = type_style },
+      { text = string.format("%-5d  ", token.line), style = "number" },
+      { text = string.format("%-4d  ", token.col), style = "number" },
+      { text = text_display, style = "value" },
+      { text = category_suffix, style = "muted" },
+    })
   end
 
   if #tokens > max_display then
-    table.insert(display_lines, "")
-    table.insert(display_lines, string.format("  ... and %d more tokens (truncated)", #tokens - max_display))
+    cb:blank()
+    cb:spans({
+      { text = "  ... and " },
+      { text = tostring(#tokens - max_display), style = "number" },
+      { text = " more tokens (truncated)", style = "muted" },
+    })
   end
 
   -- Add JSON section for full token list
-  table.insert(display_lines, "")
-  table.insert(display_lines, "")
-  table.insert(display_lines, "Full JSON Output")
-  table.insert(display_lines, string.rep("=", 50))
-  table.insert(display_lines, "")
+  cb:blank()
+  cb:blank()
+  cb:header("Full JSON Output")
+  cb:separator("=", 50)
+  cb:blank()
 
   -- Prettify the tokens (limit for JSON output too)
   local json_tokens = tokens
@@ -133,23 +170,25 @@ function ViewTokens.view_tokens()
     for i = 1, 100 do
       json_tokens[i] = tokens[i]
     end
-    table.insert(display_lines, string.format("(Showing first 100 of %d tokens)", #tokens))
-    table.insert(display_lines, "")
+    cb:spans({
+      { text = "(Showing first 100 of " },
+      { text = tostring(#tokens), style = "number" },
+      { text = " tokens)", style = "muted" },
+    })
+    cb:blank()
   end
 
   local json_lines = JsonUtils.prettify_lines(json_tokens)
   for _, line in ipairs(json_lines) do
-    table.insert(display_lines, line)
+    cb:line(line)
   end
 
   -- Create floating window
-  current_float = UiFloat.create(display_lines, {
+  current_float = UiFloat.create_styled(cb, {
     title = "Tokens",
     border = "rounded",
-    filetype = "json",
     min_width = 70,
     max_width = 120,
-    max_height = 40,
     wrap = false,
     keymaps = {
       ['r'] = function()
