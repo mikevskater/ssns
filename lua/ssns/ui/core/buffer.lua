@@ -539,31 +539,29 @@ function UiBuffer.setup_keymaps()
   if Config.get_ui().smart_cursor_positioning then
     local common = KeymapManager.get_group("common")
 
-    -- Save conflicts for j/k
-    KeymapManager.save_conflicts(bufnr, {
-      {"n", common.nav_down or "j"},
-      {"n", common.nav_up or "k"},
-    }, true)
+    -- Set j/k keymaps using KeymapManager (saves conflicts automatically)
+    local nav_keymaps = {
+      {
+        mode = "n",
+        lhs = common.nav_down or "j",
+        rhs = function()
+          local count = vim.v.count1
+          require('ssns.ui.core.buffer').move_cursor_down(count)
+        end,
+        desc = "Move down with smart positioning",
+      },
+      {
+        mode = "n",
+        lhs = common.nav_up or "k",
+        rhs = function()
+          local count = vim.v.count1
+          require('ssns.ui.core.buffer').move_cursor_up(count)
+        end,
+        desc = "Move up with smart positioning",
+      },
+    }
 
-    vim.keymap.set("n", common.nav_down or "j", function()
-      local count = vim.v.count1
-      require('ssns.ui.core.buffer').move_cursor_down(count)
-    end, {
-      buffer = bufnr,
-      noremap = true,
-      silent = true,
-      desc = "Move down with smart positioning",
-    })
-
-    vim.keymap.set("n", common.nav_up or "k", function()
-      local count = vim.v.count1
-      require('ssns.ui.core.buffer').move_cursor_up(count)
-    end, {
-      buffer = bufnr,
-      noremap = true,
-      silent = true,
-      desc = "Move up with smart positioning",
-    })
+    KeymapManager.set_multiple(bufnr, nav_keymaps, true)
   end
 end
 
