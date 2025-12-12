@@ -1136,7 +1136,11 @@ function RulesEditor._save_preset()
     cb:line("")
     cb:line("  Save current settings as preset:", "SsnsUiTitle")
     cb:line("")
-    cb:labeled_input("  Name: ", "name", default_name, 35)
+    cb:labeled_input("name", "  Name", {
+      value = default_name,
+      placeholder = "(enter preset name)",
+      width = 35,  -- Default width, expands for longer names
+    })
     cb:line("")
     cb:line("  <Enter>=Save | <Esc>=Cancel", "SsnsUiHint")
     save_win:render()
@@ -1256,7 +1260,11 @@ function RulesEditor._rename_preset()
     cb:line("")
     cb:line(string.format("  Rename preset '%s':", preset.name), "SsnsUiTitle")
     cb:line("")
-    cb:labeled_input("  New name: ", "name", preset.name, 32)
+    cb:labeled_input("name", "  New name", {
+      value = preset.name,
+      placeholder = "(enter new name)",
+      width = 32,  -- Default width, expands for longer names
+    })
     cb:line("")
     cb:line("  <Enter>=Rename | <Esc>=Cancel", "SsnsUiHint")
     rename_win:render()
