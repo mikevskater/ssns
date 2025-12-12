@@ -91,6 +91,10 @@ function UiFloat.create(lines, config)
     lines = content_builder:build_lines()
   end
 
+  -- Track whether user explicitly specified dimensions (vs auto-calculated)
+  local user_specified_width = config.width ~= nil
+  local user_specified_height = config.height ~= nil
+
   local instance = setmetatable({
     bufnr = nil,
     winid = nil,
@@ -98,6 +102,8 @@ function UiFloat.create(lines, config)
     lines = lines,
     _input_manager = nil,
     _content_builder = content_builder,
+    _user_specified_width = user_specified_width,
+    _user_specified_height = user_specified_height,
   }, FloatWindow)
 
   -- Apply defaults
@@ -374,10 +380,14 @@ function FloatWindow:_setup_keymaps()
   end
 end
 
----Setup autocmds for cleanup
+---Setup autocmds for cleanup and resize handling
 function FloatWindow:_setup_autocmds()
+  -- Create augroup for this window
+  self._augroup = vim.api.nvim_create_augroup("ssns_float_" .. self.bufnr, { clear = true })
+
   if self.config.on_close then
     vim.api.nvim_create_autocmd("BufWipeout", {
+      group = self._augroup,
       buffer = self.bufnr,
       once = true,
       callback = function()
@@ -386,6 +396,89 @@ function FloatWindow:_setup_autocmds()
         end
       end,
     })
+  end
+
+  -- Handle terminal resize
+  vim.api.nvim_create_autocmd("VimResized", {
+    group = self._augroup,
+    callback = function()
+      if self:is_valid() then
+        self:_recalculate_layout()
+      end
+    end,
+  })
+end
+
+---Recalculate layout after terminal resize
+function FloatWindow:_recalculate_layout()
+  if not self:is_valid() then return end
+
+  -- Update max constraints based on current terminal size
+  local screen_max_width = vim.o.columns - 4
+  local screen_max_height = vim.o.lines - 6
+
+  -- Always update max constraints to current screen size
+  self.config.max_width = screen_max_width
+  self.config.max_height = screen_max_height
+
+  -- For auto-sized windows, recalculate dimensions based on content
+  local width, height
+
+  if self._user_specified_width then
+    -- User specified width, keep it but constrain to screen
+    width = math.min(self.config.width, screen_max_width)
+  else
+    -- Auto-calculate width based on content
+    width = self.config.min_width or 60
+    local max_line_width = 0
+    for _, line in ipairs(self.lines) do
+      local line_width = vim.fn.strdisplaywidth(line)
+      if line_width > max_line_width then
+        max_line_width = line_width
+      end
+    end
+    if max_line_width > width then
+      width = max_line_width
+    end
+    -- Apply constraints
+    if self.config.min_width then
+      width = math.max(width, self.config.min_width)
+    end
+    width = math.min(width, screen_max_width)
+  end
+
+  if self._user_specified_height then
+    -- User specified height, keep it but constrain to screen
+    height = math.min(self.config.height, screen_max_height)
+  else
+    -- Auto-calculate height based on content, up to screen max
+    height = math.min(#self.lines, screen_max_height)
+    if self.config.min_height then
+      height = math.max(height, self.config.min_height)
+    end
+  end
+
+  -- Recalculate position
+  local row, col = self:_calculate_position(width, height)
+
+  -- Store updated geometry
+  self._win_row = row
+  self._win_col = col
+  self._win_width = width
+  self._win_height = height
+
+  -- Update window config
+  vim.api.nvim_win_set_config(self.winid, {
+    relative = self.config.relative,
+    width = width,
+    height = height,
+    row = row,
+    col = col,
+  })
+
+  -- Reposition scrollbar if enabled
+  if self.config.scrollbar then
+    self:_reposition_scrollbar()
   end
 end
 
