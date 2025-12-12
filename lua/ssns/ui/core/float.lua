@@ -629,10 +629,10 @@ function FloatWindow:_setup_scrollbar()
   vim.api.nvim_buf_set_option(self._scrollbar_bufnr, 'bufhidden', 'wipe')
   vim.api.nvim_buf_set_option(self._scrollbar_bufnr, 'swapfile', false)
 
-  -- Calculate scrollbar position (inside the border, right edge)
-  -- Account for border: +1 row for top border, +width for content, +1 for right border position
+  -- Calculate scrollbar position (inside content area, one column left of right border)
+  -- Account for border: +1 row for top border, +width-1 to be inside content area
   local scrollbar_row = self._win_row + 1  -- Inside top border
-  local scrollbar_col = self._win_col + self._win_width + 1  -- Right edge inside border
+  local scrollbar_col = self._win_col + self._win_width  -- Inside content, left of right border
 
   -- Create scrollbar window
   self._scrollbar_winid = vim.api.nvim_open_win(self._scrollbar_bufnr, false, {
@@ -686,44 +686,59 @@ function FloatWindow:_update_scrollbar()
   local scrollbar_lines = {}
   local track_height = win_height
 
-  -- Calculate thumb position and size
-  local visible_ratio = win_height / total_lines
-  local thumb_size = math.max(1, math.floor(track_height * visible_ratio))
-  local scroll_ratio = (top_line - 1) / math.max(1, total_lines - win_height)
-  local thumb_pos = math.floor(scroll_ratio * (track_height - thumb_size))
-
   -- Determine if we can scroll up/down
   local can_scroll_up = top_line > 1
   local can_scroll_down = bot_line < total_lines
 
-  for i = 1, track_height do
-    local char
-    if i == 1 then
-      -- Top position - show up arrow if scrollable
-      if can_scroll_up then
-        char = SCROLLBAR_CHARS.UP_ARROW
-      elseif i > thumb_pos and i <= thumb_pos + thumb_size then
-        char = SCROLLBAR_CHARS.THUMB
+  -- Calculate thumb position and size within the track area (excluding arrow rows)
+  -- Arrows are at row 1 and row track_height, so thumb lives in rows 2 to track_height-1
+  local thumb_track_height = track_height - 2  -- Exclude top and bottom arrow rows
+  
+  if thumb_track_height < 1 then
+    -- Window too small for thumb track, just show arrows
+    for i = 1, track_height do
+      if i == 1 then
+        table.insert(scrollbar_lines, SCROLLBAR_CHARS.UP_ARROW)
+      elseif i == track_height then
+        table.insert(scrollbar_lines, SCROLLBAR_CHARS.DOWN_ARROW)
       else
-        char = SCROLLBAR_CHARS.TRACK
+        table.insert(scrollbar_lines, SCROLLBAR_CHARS.TRACK)
       end
-    elseif i == track_height then
-      -- Bottom position - show down arrow if scrollable
-      if can_scroll_down then
-        char = SCROLLBAR_CHARS.DOWN_ARROW
-      elseif i > thumb_pos and i <= thumb_pos + thumb_size then
-        char = SCROLLBAR_CHARS.THUMB
-      else
-        char = SCROLLBAR_CHARS.TRACK
-      end
-    elseif i > thumb_pos and i <= thumb_pos + thumb_size then
-      -- Thumb position
-      char = SCROLLBAR_CHARS.THUMB
-    else
-      -- Track
-      char = SCROLLBAR_CHARS.TRACK
     end
-    table.insert(scrollbar_lines, char)
+  else
+    -- Calculate thumb size and position within the middle track
+    local visible_ratio = win_height / total_lines
+    local thumb_size = math.max(1, math.floor(thumb_track_height * visible_ratio))
+    thumb_size = math.min(thumb_size, thumb_track_height)  -- Don't exceed track
+    
+    -- Calculate scroll position (0 to 1)
+    local max_scroll = total_lines - win_height
+    local scroll_ratio = max_scroll > 0 and (top_line - 1) / max_scroll or 0
+    
+    -- Calculate thumb start position within track (0-indexed within thumb_track)
+    local thumb_start = math.floor(scroll_ratio * (thumb_track_height - thumb_size))
+    thumb_start = math.max(0, math.min(thumb_start, thumb_track_height - thumb_size))
+
+    for i = 1, track_height do
+      local char
+      if i == 1 then
+        -- Top row - always show up arrow
+        char = SCROLLBAR_CHARS.UP_ARROW
+      elseif i == track_height then
+        -- Bottom row - always show down arrow
+        char = SCROLLBAR_CHARS.DOWN_ARROW
+      else
+        -- Middle rows (track area) - rows 2 to track_height-1
+        -- Convert to 0-indexed position within thumb track
+        local track_pos = i - 2  -- Row 2 becomes pos 0, row 3 becomes pos 1, etc.
+        if track_pos >= thumb_start and track_pos < thumb_start + thumb_size then
+          char = SCROLLBAR_CHARS.THUMB
+        else
+          char = SCROLLBAR_CHARS.TRACK
+        end
+      end
+      table.insert(scrollbar_lines, char)
+    end
   end
 
   -- Update scrollbar buffer
