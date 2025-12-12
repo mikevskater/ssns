@@ -32,6 +32,15 @@
 ---@field style "minimal"|nil? Window style (default: "minimal")
 ---@field content_builder ContentBuilder? ContentBuilder instance for styled content with inputs
 ---@field enable_inputs boolean? Enable input field mode for the window
+---@field scrollbar boolean? Show scrollbar when content exceeds window height (default: true)
+
+---Scrollbar characters
+local SCROLLBAR_CHARS = {
+  UP_ARROW = "▲",
+  DOWN_ARROW = "▼",
+  THUMB = "█",
+  TRACK = "░",
+}
 
 ---@class FloatWindow
 ---A floating window instance
@@ -39,6 +48,9 @@
 ---@field winid number Window handle
 ---@field config FloatConfig Configuration used
 ---@field lines string[] Current content lines
+---@field _scrollbar_winid number? Scrollbar window handle
+---@field _scrollbar_bufnr number? Scrollbar buffer handle
+---@field _scrollbar_autocmd number? Autocmd ID for scroll tracking
 local FloatWindow = {}
 FloatWindow.__index = FloatWindow
 
@@ -103,6 +115,12 @@ function UiFloat.create(lines, config)
   -- Open window
   instance:_open_window(width, height, row, col)
 
+  -- Store window geometry for scrollbar
+  instance._win_row = row
+  instance._win_col = col
+  instance._win_width = width
+  instance._win_height = height
+
   -- Setup buffer and window options
   instance:_setup_options()
 
@@ -111,6 +129,11 @@ function UiFloat.create(lines, config)
 
   -- Setup autocmds
   instance:_setup_autocmds()
+
+  -- Setup scrollbar if enabled and content exceeds window height
+  if instance.config.scrollbar then
+    instance:_setup_scrollbar()
+  end
 
   -- Apply styled content if content_builder provided
   if content_builder and instance:is_valid() then
@@ -149,6 +172,7 @@ function FloatWindow:_apply_defaults()
   c.wrap = c.wrap or false
   c.zindex = c.zindex or 50
   c.style = c.style or "minimal"
+  c.scrollbar = c.scrollbar ~= false  -- Default true
 end
 
 ---Create the buffer
@@ -368,10 +392,18 @@ function FloatWindow:update_lines(lines)
   vim.api.nvim_buf_set_option(self.bufnr, 'modifiable', true)
   vim.api.nvim_buf_set_lines(self.bufnr, 0, -1, false, lines)
   vim.api.nvim_buf_set_option(self.bufnr, 'modifiable', self.config.modifiable)
+
+  -- Update scrollbar if enabled
+  if self.config.scrollbar then
+    self:_update_scrollbar()
+  end
 end
 
 ---Close the floating window
 function FloatWindow:close()
+  -- Clean up scrollbar first
+  self:_close_scrollbar()
+
   if self:is_valid() then
     if vim.api.nvim_buf_is_valid(self.bufnr) then
       vim.api.nvim_buf_delete(self.bufnr, { force = true })
@@ -452,6 +484,11 @@ function FloatWindow:render()
   
   -- Update stored lines
   self.lines = lines
+
+  -- Update scrollbar if enabled
+  if self.config.scrollbar then
+    self:_update_scrollbar()
+  end
 end
 
 -- ============================================================================
@@ -568,6 +605,168 @@ function FloatWindow:on_input_submit(callback)
   if self._input_manager then
     self._input_manager.on_submit = callback
   end
+end
+
+-- ============================================================================
+-- Scrollbar Support
+-- ============================================================================
+
+---Setup the scrollbar overlay window
+function FloatWindow:_setup_scrollbar()
+  if not self:is_valid() then return end
+
+  local total_lines = #self.lines
+  local win_height = self._win_height
+
+  -- Only show scrollbar if content exceeds window height
+  if total_lines <= win_height then
+    return
+  end
+
+  -- Create scrollbar buffer
+  self._scrollbar_bufnr = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_option(self._scrollbar_bufnr, 'buftype', 'nofile')
+  vim.api.nvim_buf_set_option(self._scrollbar_bufnr, 'bufhidden', 'wipe')
+  vim.api.nvim_buf_set_option(self._scrollbar_bufnr, 'swapfile', false)
+
+  -- Calculate scrollbar position (inside the border, right edge)
+  -- Account for border: +1 row for top border, +width for content, +1 for right border position
+  local scrollbar_row = self._win_row + 1  -- Inside top border
+  local scrollbar_col = self._win_col + self._win_width + 1  -- Right edge inside border
+
+  -- Create scrollbar window
+  self._scrollbar_winid = vim.api.nvim_open_win(self._scrollbar_bufnr, false, {
+    relative = "editor",
+    width = 1,
+    height = win_height,
+    row = scrollbar_row,
+    col = scrollbar_col,
+    style = "minimal",
+    focusable = false,
+    zindex = (self.config.zindex or 50) + 1,  -- Above main window
+  })
+
+  -- Set scrollbar window options
+  vim.api.nvim_set_option_value('winblend', self.config.winblend or 0, { win = self._scrollbar_winid })
+  vim.api.nvim_set_option_value('winhighlight', 'Normal:SsnsScrollbar,NormalFloat:SsnsScrollbar', { win = self._scrollbar_winid })
+
+  -- Initial scrollbar render
+  self:_update_scrollbar()
+
+  -- Setup autocmd to track scrolling in main window
+  self._scrollbar_autocmd = vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI", "WinScrolled" }, {
+    buffer = self.bufnr,
+    callback = function()
+      self:_update_scrollbar()
+    end,
+  })
+end
+
+---Update the scrollbar display based on current scroll position
+function FloatWindow:_update_scrollbar()
+  if not self._scrollbar_winid or not vim.api.nvim_win_is_valid(self._scrollbar_winid) then
+    return
+  end
+
+  local total_lines = #self.lines
+  local win_height = self._win_height
+
+  -- Don't show scrollbar if content fits
+  if total_lines <= win_height then
+    self:_close_scrollbar()
+    return
+  end
+
+  -- Get current scroll position
+  local win_info = vim.fn.getwininfo(self.winid)[1]
+  local top_line = win_info and win_info.topline or 1
+  local bot_line = math.min(top_line + win_height - 1, total_lines)
+
+  -- Build scrollbar content
+  local scrollbar_lines = {}
+  local track_height = win_height
+
+  -- Calculate thumb position and size
+  local visible_ratio = win_height / total_lines
+  local thumb_size = math.max(1, math.floor(track_height * visible_ratio))
+  local scroll_ratio = (top_line - 1) / math.max(1, total_lines - win_height)
+  local thumb_pos = math.floor(scroll_ratio * (track_height - thumb_size))
+
+  -- Determine if we can scroll up/down
+  local can_scroll_up = top_line > 1
+  local can_scroll_down = bot_line < total_lines
+
+  for i = 1, track_height do
+    local char
+    if i == 1 then
+      -- Top position - show up arrow if scrollable
+      if can_scroll_up then
+        char = SCROLLBAR_CHARS.UP_ARROW
+      elseif i > thumb_pos and i <= thumb_pos + thumb_size then
+        char = SCROLLBAR_CHARS.THUMB
+      else
+        char = SCROLLBAR_CHARS.TRACK
+      end
+    elseif i == track_height then
+      -- Bottom position - show down arrow if scrollable
+      if can_scroll_down then
+        char = SCROLLBAR_CHARS.DOWN_ARROW
+      elseif i > thumb_pos and i <= thumb_pos + thumb_size then
+        char = SCROLLBAR_CHARS.THUMB
+      else
+        char = SCROLLBAR_CHARS.TRACK
+      end
+    elseif i > thumb_pos and i <= thumb_pos + thumb_size then
+      -- Thumb position
+      char = SCROLLBAR_CHARS.THUMB
+    else
+      -- Track
+      char = SCROLLBAR_CHARS.TRACK
+    end
+    table.insert(scrollbar_lines, char)
+  end
+
+  -- Update scrollbar buffer
+  vim.api.nvim_buf_set_option(self._scrollbar_bufnr, 'modifiable', true)
+  vim.api.nvim_buf_set_lines(self._scrollbar_bufnr, 0, -1, false, scrollbar_lines)
+  vim.api.nvim_buf_set_option(self._scrollbar_bufnr, 'modifiable', false)
+
+  -- Apply highlights
+  local ns_id = vim.api.nvim_create_namespace("ssns_scrollbar")
+  vim.api.nvim_buf_clear_namespace(self._scrollbar_bufnr, ns_id, 0, -1)
+
+  for i, char in ipairs(scrollbar_lines) do
+    local hl_group
+    if char == SCROLLBAR_CHARS.UP_ARROW or char == SCROLLBAR_CHARS.DOWN_ARROW then
+      hl_group = "SsnsScrollbarArrow"
+    elseif char == SCROLLBAR_CHARS.THUMB then
+      hl_group = "SsnsScrollbarThumb"
+    else
+      hl_group = "SsnsScrollbarTrack"
+    end
+    vim.api.nvim_buf_add_highlight(self._scrollbar_bufnr, ns_id, hl_group, i - 1, 0, -1)
+  end
+end
+
+---Close the scrollbar window
+function FloatWindow:_close_scrollbar()
+  -- Remove autocmd
+  if self._scrollbar_autocmd then
+    pcall(vim.api.nvim_del_autocmd, self._scrollbar_autocmd)
+    self._scrollbar_autocmd = nil
+  end
+
+  -- Close scrollbar window
+  if self._scrollbar_winid and vim.api.nvim_win_is_valid(self._scrollbar_winid) then
+    vim.api.nvim_win_close(self._scrollbar_winid, true)
+  end
+  self._scrollbar_winid = nil
+
+  -- Delete scrollbar buffer
+  if self._scrollbar_bufnr and vim.api.nvim_buf_is_valid(self._scrollbar_bufnr) then
+    vim.api.nvim_buf_delete(self._scrollbar_bufnr, { force = true })
+  end
+  self._scrollbar_bufnr = nil
 end
 
 ---Create a simple confirmation dialog
