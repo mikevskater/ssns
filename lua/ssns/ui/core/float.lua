@@ -816,6 +816,33 @@ function FloatWindow:_close_scrollbar()
   self._scrollbar_bufnr = nil
 end
 
+---Reposition scrollbar after window geometry changes (e.g., on resize)
+function FloatWindow:_reposition_scrollbar()
+  if not self._scrollbar_winid or not vim.api.nvim_win_is_valid(self._scrollbar_winid) then
+    -- No scrollbar to reposition, try to set one up if needed
+    if self.config.scrollbar then
+      self:_setup_scrollbar()
+    end
+    return
+  end
+
+  -- Calculate new scrollbar position based on updated window geometry
+  local scrollbar_row = self._win_row + 1
+  local scrollbar_col = self._win_col + self._win_width - 1
+
+  -- Update scrollbar window position and height
+  vim.api.nvim_win_set_config(self._scrollbar_winid, {
+    relative = "editor",
+    width = 1,
+    height = self._win_height,
+    row = scrollbar_row,
+    col = scrollbar_col,
+  })
+
+  -- Update scrollbar content for new dimensions
+  self:_update_scrollbar()
+end
+
 ---Create a simple confirmation dialog
 ---@param message string|string[] Message to display
 ---@param on_confirm function Callback on confirmation
@@ -1662,6 +1689,11 @@ function MultiPanelWindow:_recalculate_layout()
         col = rect.x,
         border = border,
       })
+
+      -- Reposition scrollbar after window geometry update
+      if panel.float.config.scrollbar then
+        panel.float:_reposition_scrollbar()
+      end
     end
   end
 
