@@ -485,6 +485,12 @@ function ContentBuilder:indent(text, level, style)
   end
 end
 
+---Get current line count (0-indexed, useful for tracking line positions)
+---@return number count Current number of lines
+function ContentBuilder:line_count()
+  return #self._lines
+end
+
 ---Build and return the plain text lines (for buffer content)
 ---@return string[] lines Array of text lines
 function ContentBuilder:build_lines()

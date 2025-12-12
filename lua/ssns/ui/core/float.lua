@@ -201,6 +201,11 @@ function FloatWindow:_calculate_dimensions()
   local width = self.config.width
   local height = self.config.height
 
+  -- If both width and height are explicitly set, use them directly (for raw positioning)
+  if width and height then
+    return width, height
+  end
+
   -- Auto-calculate width if not specified
   if not width then
     width = self.config.min_width or 60
@@ -261,6 +266,11 @@ end
 ---@return number row, number col
 function FloatWindow:_calculate_position(width, height)
   local row, col
+
+  -- If row and col are explicitly set with centered=false, use them directly (for raw positioning)
+  if not self.config.centered and self.config.row and self.config.col then
+    return self.config.row, self.config.col
+  end
 
   if self.config.centered then
     -- Center on screen
@@ -618,8 +628,19 @@ function FloatWindow:_setup_scrollbar()
   local total_lines = #self.lines
   local win_height = self._win_height
 
+  -- Guard against nil win_height
+  if not win_height or win_height <= 0 then
+    return
+  end
+
   -- Only show scrollbar if content exceeds window height
   if total_lines <= win_height then
+    return
+  end
+
+  -- Don't create duplicate scrollbar
+  if self._scrollbar_winid and vim.api.nvim_win_is_valid(self._scrollbar_winid) then
+    -- Just update existing scrollbar
     return
   end
 
@@ -629,10 +650,13 @@ function FloatWindow:_setup_scrollbar()
   vim.api.nvim_buf_set_option(self._scrollbar_bufnr, 'bufhidden', 'wipe')
   vim.api.nvim_buf_set_option(self._scrollbar_bufnr, 'swapfile', false)
 
-  -- Calculate scrollbar position (inside content area, one column left of right border)
-  -- Account for border: +1 row for top border, +width-1 to be inside content area
-  local scrollbar_row = self._win_row + 1  -- Inside top border
-  local scrollbar_col = self._win_col + self._win_width  -- Inside content, left of right border
+  -- Calculate scrollbar position
+  -- For editor-relative floats, the window row/col is where content starts
+  -- Border is drawn around it visually but doesn't change the row/col values
+  -- We want scrollbar at the rightmost column of the visible content area
+  -- Add +1 to row to account for the top border
+  local scrollbar_row = self._win_row + 1
+  local scrollbar_col = self._win_col + self._win_width - 1  -- Last column of content area
 
   -- Create scrollbar window
   self._scrollbar_winid = vim.api.nvim_open_win(self._scrollbar_bufnr, false, {
@@ -664,7 +688,8 @@ end
 
 ---Update the scrollbar display based on current scroll position
 function FloatWindow:_update_scrollbar()
-  if not self._scrollbar_winid or not vim.api.nvim_win_is_valid(self._scrollbar_winid) then
+  -- Guard against nil geometry (shouldn't happen but be safe)
+  if not self._win_height or not self._win_width then
     return
   end
 
@@ -674,6 +699,13 @@ function FloatWindow:_update_scrollbar()
   -- Don't show scrollbar if content fits
   if total_lines <= win_height then
     self:_close_scrollbar()
+    return
+  end
+
+  -- Create scrollbar if it doesn't exist but should (content now exceeds window height)
+  if not self._scrollbar_winid or not vim.api.nvim_win_is_valid(self._scrollbar_winid) then
+    -- _setup_scrollbar will call _update_scrollbar at the end for rendering
+    self:_setup_scrollbar()
     return
   end
 
@@ -947,10 +979,10 @@ end
 
 ---@class PanelInfo
 ---Information about a single panel
----@field bufnr number Buffer handle
----@field winid number Window handle
----@field namespace number Highlight namespace
+---@field float FloatWindow FloatWindow instance for this panel
 ---@field definition LayoutNode Panel definition
+---@field rect LayoutRect Panel rectangle
+---@field namespace number Highlight namespace (for panel-specific highlights)
 
 ---@class MultiPanelWindow
 ---Multi-panel floating window instance
@@ -1241,62 +1273,43 @@ function UiFloat.create_multi_panel(config)
     },
   }, MultiPanelWindow)
 
-  -- Create panels
+  -- Create panels using FloatWindow
   for _, panel_layout in ipairs(layouts) do
     local def = panel_layout.definition
     local rect = panel_layout.rect
     local border = create_panel_border(panel_layout.border_pos)
 
-    -- Create buffer
-    local bufnr = vim.api.nvim_create_buf(false, true)
-    vim.api.nvim_buf_set_option(bufnr, 'buftype', 'nofile')
-    vim.api.nvim_buf_set_option(bufnr, 'swapfile', false)
-    vim.api.nvim_buf_set_option(bufnr, 'bufhidden', 'wipe')
-    vim.api.nvim_buf_set_option(bufnr, 'modifiable', false)
-
-    if def.filetype then
-      vim.api.nvim_buf_set_option(bufnr, 'filetype', def.filetype)
-    end
-
-    -- Create window
-    local win_opts = {
-      relative = "editor",
+    -- Create FloatWindow for this panel with explicit positioning
+    local float = UiFloat.create({}, {
+      -- Explicit positioning (no auto-calc, no centering)
+      centered = false,
       width = rect.width,
       height = rect.height,
       row = rect.y,
       col = rect.x,
-      style = "minimal",
+      -- Panel configuration
+      title = def.title,
       border = border,
-      zindex = 50,
+      filetype = def.filetype,
       focusable = def.focusable ~= false,
-    }
+      -- Don't enter panel windows on create, don't add default keymaps
+      enter = false,
+      default_keymaps = false,
+      -- Start with cursorline disabled (focus_panel will enable it)
+      cursorline = false,
+      -- Scrollbar support
+      scrollbar = true,
+      -- Standard panel options
+      modifiable = false,
+      readonly = true,
+    })
 
-    if def.title then
-      win_opts.title = string.format(" %s ", def.title)
-      win_opts.title_pos = "center"
-    end
-
-    local winid = vim.api.nvim_open_win(bufnr, false, win_opts)
-
-    -- Configure window options with themed highlights
-    vim.api.nvim_set_option_value('number', false, { win = winid })
-    vim.api.nvim_set_option_value('relativenumber', false, { win = winid })
-    vim.api.nvim_set_option_value('wrap', false, { win = winid })
-    vim.api.nvim_set_option_value('signcolumn', 'no', { win = winid })
-    vim.api.nvim_set_option_value('winhighlight',
-      'Normal:Normal,FloatBorder:SsnsFloatBorder,FloatTitle:SsnsFloatTitle,CursorLine:SsnsFloatSelected',
-      { win = winid }
-    )
-
-    -- Cursorline only on focusable panels (start disabled, focus_panel will enable)
-    vim.api.nvim_set_option_value('cursorline', false, { win = winid })
-
-    -- Store panel info
+    -- Store panel info with FloatWindow instance
     state.panels[def.name] = {
-      bufnr = bufnr,
-      winid = winid,
-      namespace = vim.api.nvim_create_namespace("ssns_panel_" .. def.name),
+      float = float,
       definition = def,
+      rect = rect,
+      namespace = vim.api.nvim_create_namespace("ssns_panel_" .. def.name),
     }
   end
 
@@ -1355,8 +1368,8 @@ function MultiPanelWindow:focus_panel(panel_name)
   local current_panel = self.panels[self.focused_panel]
   if current_panel and current_panel.definition.name ~= panel_name then
     -- Disable cursorline on previous panel
-    if vim.api.nvim_win_is_valid(current_panel.winid) then
-      vim.api.nvim_set_option_value('cursorline', false, { win = current_panel.winid })
+    if current_panel.float:is_valid() then
+      vim.api.nvim_set_option_value('cursorline', false, { win = current_panel.float.winid })
     end
     if current_panel.definition.on_blur then
       current_panel.definition.on_blur(self)
@@ -1367,10 +1380,10 @@ function MultiPanelWindow:focus_panel(panel_name)
   self.focused_panel = panel_name
 
   -- Focus the window and enable cursorline
-  if vim.api.nvim_win_is_valid(panel.winid) then
-    vim.api.nvim_set_current_win(panel.winid)
+  if panel.float:is_valid() then
+    vim.api.nvim_set_current_win(panel.float.winid)
     if panel.definition.cursorline ~= false then
-      vim.api.nvim_set_option_value('cursorline', true, { win = panel.winid })
+      vim.api.nvim_set_option_value('cursorline', true, { win = panel.float.winid })
     end
   end
 
@@ -1434,7 +1447,7 @@ function MultiPanelWindow:render_panel(panel_name)
   if self._closed then return end
 
   local panel = self.panels[panel_name]
-  if not panel then return end
+  if not panel or not panel.float:is_valid() then return end
 
   local def = panel.definition
   if not def.on_render then return end
@@ -1444,19 +1457,23 @@ function MultiPanelWindow:render_panel(panel_name)
   lines = lines or {}
   highlights = highlights or {}
 
-  -- Update buffer content
-  if vim.api.nvim_buf_is_valid(panel.bufnr) then
-    vim.api.nvim_buf_set_option(panel.bufnr, 'modifiable', true)
-    vim.api.nvim_buf_set_lines(panel.bufnr, 0, -1, false, lines)
-    vim.api.nvim_buf_set_option(panel.bufnr, 'modifiable', false)
+  -- Update buffer content using FloatWindow (handles scrollbar automatically)
+  panel.float:update_lines(lines)
 
-    -- Apply highlights
-    vim.api.nvim_buf_clear_namespace(panel.bufnr, panel.namespace, 0, -1)
-    for _, hl in ipairs(highlights) do
-      -- hl format: {line, col_start, col_end, hl_group}
+  -- Apply panel-specific highlights
+  vim.api.nvim_buf_clear_namespace(panel.float.bufnr, panel.namespace, 0, -1)
+  for _, hl in ipairs(highlights) do
+    -- Support both array format {line, col_start, col_end, hl_group} 
+    -- and named format {line=, col_start=, col_end=, hl_group=} from ContentBuilder
+    local line = hl.line or hl[1]
+    local col_start = hl.col_start or hl[2]
+    local col_end = hl.col_end or hl[3]
+    local hl_group = hl.hl_group or hl[4]
+    
+    if line and col_start and col_end and hl_group then
       vim.api.nvim_buf_add_highlight(
-        panel.bufnr, panel.namespace,
-        hl[4], hl[1], hl[2], hl[3]
+        panel.float.bufnr, panel.namespace,
+        hl_group, line, col_start, col_end
       )
     end
   end
@@ -1476,11 +1493,11 @@ function MultiPanelWindow:update_panel_title(panel_name, title)
   if self._closed then return end
 
   local panel = self.panels[panel_name]
-  if not panel or not vim.api.nvim_win_is_valid(panel.winid) then
+  if not panel or not panel.float:is_valid() then
     return
   end
 
-  vim.api.nvim_win_set_config(panel.winid, {
+  vim.api.nvim_win_set_config(panel.float.winid, {
     title = string.format(" %s ", title),
     title_pos = "center",
   })
@@ -1491,7 +1508,7 @@ end
 ---@return number? bufnr Buffer number or nil
 function MultiPanelWindow:get_panel_buffer(panel_name)
   local panel = self.panels[panel_name]
-  return panel and panel.bufnr or nil
+  return panel and panel.float and panel.float.bufnr or nil
 end
 
 ---Get panel window
@@ -1499,7 +1516,15 @@ end
 ---@return number? winid Window ID or nil
 function MultiPanelWindow:get_panel_window(panel_name)
   local panel = self.panels[panel_name]
-  return panel and panel.winid or nil
+  return panel and panel.float and panel.float.winid or nil
+end
+
+---Get the FloatWindow instance for a panel
+---@param panel_name string Panel name
+---@return FloatWindow? float FloatWindow instance or nil
+function MultiPanelWindow:get_panel_float(panel_name)
+  local panel = self.panels[panel_name]
+  return panel and panel.float or nil
 end
 
 ---Set cursor in panel
@@ -1510,11 +1535,8 @@ function MultiPanelWindow:set_cursor(panel_name, row, col)
   if self._closed then return end
 
   local panel = self.panels[panel_name]
-  if panel and vim.api.nvim_win_is_valid(panel.winid) then
-    -- Ensure row is within buffer bounds
-    local line_count = vim.api.nvim_buf_line_count(panel.bufnr)
-    row = math.max(1, math.min(row, line_count))
-    pcall(vim.api.nvim_win_set_cursor, panel.winid, {row, col or 0})
+  if panel and panel.float:is_valid() then
+    panel.float:set_cursor(row, col or 0)
   end
 end
 
@@ -1523,9 +1545,8 @@ end
 ---@return number row, number col
 function MultiPanelWindow:get_cursor(panel_name)
   local panel = self.panels[panel_name]
-  if panel and vim.api.nvim_win_is_valid(panel.winid) then
-    local pos = vim.api.nvim_win_get_cursor(panel.winid)
-    return pos[1], pos[2]
+  if panel and panel.float:is_valid() then
+    return panel.float:get_cursor()
   end
   return 1, 0
 end
@@ -1534,10 +1555,10 @@ end
 ---@param keymaps table<string, function> Keymaps to set on all focusable panels
 function MultiPanelWindow:set_keymaps(keymaps)
   for name, panel in pairs(self.panels) do
-    if panel.definition.focusable ~= false then
+    if panel.definition.focusable ~= false and panel.float:is_valid() then
       for lhs, handler in pairs(keymaps) do
         vim.keymap.set('n', lhs, handler, {
-          buffer = panel.bufnr,
+          buffer = panel.float.bufnr,
           noremap = true,
           silent = true,
         })
@@ -1551,11 +1572,11 @@ end
 ---@param keymaps table<string, function> Keymaps to set
 function MultiPanelWindow:set_panel_keymaps(panel_name, keymaps)
   local panel = self.panels[panel_name]
-  if not panel then return end
+  if not panel or not panel.float:is_valid() then return end
 
   for lhs, handler in pairs(keymaps) do
     vim.keymap.set('n', lhs, handler, {
-      buffer = panel.bufnr,
+      buffer = panel.float.bufnr,
       noremap = true,
       silent = true,
     })
@@ -1571,7 +1592,7 @@ function MultiPanelWindow:_setup_autocmds()
   for name, panel in pairs(self.panels) do
     vim.api.nvim_create_autocmd("WinClosed", {
       group = self._augroup,
-      pattern = tostring(panel.winid),
+      pattern = tostring(panel.float.winid),
       once = true,
       callback = function()
         self:close()
@@ -1611,8 +1632,16 @@ function MultiPanelWindow:_recalculate_layout()
     local rect = panel_layout.rect
     local border = create_panel_border(panel_layout.border_pos)
 
-    if panel and vim.api.nvim_win_is_valid(panel.winid) then
-      vim.api.nvim_win_set_config(panel.winid, {
+    if panel and panel.float:is_valid() then
+      -- Update stored rect
+      panel.rect = rect
+      -- Update FloatWindow's stored geometry for scrollbar
+      panel.float._win_row = rect.y
+      panel.float._win_col = rect.x
+      panel.float._win_width = rect.width
+      panel.float._win_height = rect.height
+      
+      vim.api.nvim_win_set_config(panel.float.winid, {
         relative = "editor",
         width = rect.width,
         height = rect.height,
@@ -1652,9 +1681,9 @@ end
 function MultiPanelWindow:is_valid()
   if self._closed then return false end
 
-  -- Check if any panel window is valid
+  -- Check if any panel FloatWindow is valid
   for _, panel in pairs(self.panels) do
-    if vim.api.nvim_win_is_valid(panel.winid) then
+    if panel.float and panel.float:is_valid() then
       return true
     end
   end
@@ -1674,7 +1703,7 @@ function MultiPanelWindow:setup_inputs(panel_name, content_builder, opts)
   opts = opts or {}
 
   local panel = self.panels[panel_name]
-  if not panel then return end
+  if not panel or not panel.float:is_valid() then return end
 
   local inputs = content_builder:get_inputs()
   local input_order = content_builder:get_input_order()
@@ -1682,12 +1711,12 @@ function MultiPanelWindow:setup_inputs(panel_name, content_builder, opts)
   -- Skip if no inputs
   if vim.tbl_isempty(inputs) then return end
 
-  -- Create input manager for this panel
+  -- Create input manager for this panel using FloatWindow's bufnr/winid
   local InputManager = require('ssns.ui.core.input_manager')
   
   panel.input_manager = InputManager.new({
-    bufnr = panel.bufnr,
-    winid = panel.winid,
+    bufnr = panel.float.bufnr,
+    winid = panel.float.winid,
     inputs = inputs,
     input_order = input_order,
     on_value_change = opts.on_value_change,
@@ -1766,23 +1795,23 @@ function MultiPanelWindow:close()
     pcall(self.config.on_close, self)
   end
 
-  -- Cleanup input managers
+  -- Cleanup input managers and close FloatWindows (handles scrollbar cleanup)
   for _, panel in pairs(self.panels) do
     if panel.input_manager then
       pcall(function() panel.input_manager:destroy() end)
     end
-  end
-
-  -- Close all panel windows
-  for _, panel in pairs(self.panels) do
-    if panel.winid and vim.api.nvim_win_is_valid(panel.winid) then
-      pcall(vim.api.nvim_win_close, panel.winid, true)
+    -- Close FloatWindow (handles scrollbar and window cleanup)
+    if panel.float then
+      pcall(function() panel.float:close() end)
     end
   end
 
   -- Close footer
   if self.footer_win and vim.api.nvim_win_is_valid(self.footer_win) then
     pcall(vim.api.nvim_win_close, self.footer_win, true)
+  end
+  if self.footer_buf and vim.api.nvim_buf_is_valid(self.footer_buf) then
+    pcall(vim.api.nvim_buf_delete, self.footer_buf, { force = true })
   end
 
   -- Clear autocmds
