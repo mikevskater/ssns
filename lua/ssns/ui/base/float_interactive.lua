@@ -11,6 +11,8 @@ local KeymapManager = require('ssns.keymap_manager')
 ---@field footer string? Footer text (default: "<CR> Select | <Esc> Cancel | j/k Navigate")
 ---@field width number? Window width (default: 60)
 ---@field height number? Window height (default: 20)
+---@field header_lines number? Number of header lines before selectable items (default: 0)
+---@field item_count number? Number of selectable items (if not provided, calculated from lines - header - 1)
 ---@field on_render fun(state: FloatInteractiveState): string[] Function to render current content
 ---@field on_select fun(state: FloatInteractiveState) Function called when item is selected
 ---@field on_navigate fun(state: FloatInteractiveState, direction: string)? Called after navigation (optional)
@@ -21,10 +23,11 @@ local KeymapManager = require('ssns.keymap_manager')
 ---@class FloatInteractiveState
 ---@field bufnr number Buffer number
 ---@field winid number Window ID
----@field selected_idx number Currently selected item index
+---@field selected_idx number Currently selected item index (1-based, within selectable items)
 ---@field data any Custom data provided by caller
 ---@field config FloatInteractiveConfig Configuration
----@field total_items number Total number of items
+---@field total_items number Total number of selectable items
+---@field header_lines number Number of header lines before selectable items
 
 ---Create a new interactive floating picker
 ---@param config FloatInteractiveConfig Configuration
@@ -59,6 +62,7 @@ function UiFloatInteractive.create(config)
     data = config.initial_data,
     config = config,
     total_items = 0,
+    header_lines = config.header_lines or 0,
   }
 
   -- Initial render
@@ -83,21 +87,31 @@ function UiFloatInteractive.render(state)
 
   -- Get lines from render callback
   local lines = state.config.on_render(state)
-  state.total_items = #lines
+  
+  -- Use item_count from config if provided, otherwise calculate from lines
+  if state.config.item_count then
+    state.total_items = state.config.item_count
+  else
+    -- Calculate total selectable items (total lines minus header lines minus footer lines)
+    local selectable_items = #lines - state.header_lines - 1
+    if selectable_items < 0 then selectable_items = 0 end
+    state.total_items = selectable_items
+  end
 
   -- Clamp selected_idx
   if state.selected_idx < 1 then
     state.selected_idx = 1
-  elseif state.selected_idx > state.total_items then
+  elseif state.total_items > 0 and state.selected_idx > state.total_items then
     state.selected_idx = state.total_items
   end
 
   -- Write to buffer using base
   UiFloatBase.set_buffer_lines(state.bufnr, lines)
 
-  -- Position cursor using base
+  -- Position cursor on the correct line (header_lines + selected_idx)
   if state.total_items > 0 then
-    UiFloatBase.set_cursor(state.winid, state.selected_idx, 0)
+    local cursor_line = state.header_lines + state.selected_idx
+    UiFloatBase.set_cursor(state.winid, cursor_line, 0)
   end
 end
 

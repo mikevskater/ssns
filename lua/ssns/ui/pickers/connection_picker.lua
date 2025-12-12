@@ -135,6 +135,14 @@ local function attach_connection_to_buffer(bufnr, connection, callback)
     vim.notify(string.format("SSNS: Buffer attached to %s (database from context)", connection.server_name), vim.log.levels.INFO)
   end
 
+  -- Refresh statusline to show connection info
+  vim.cmd('redrawstatus')
+
+  -- Also try to refresh lualine if available
+  pcall(function()
+    require('lualine').refresh()
+  end)
+
   if callback then
     callback()
   end
@@ -171,6 +179,8 @@ function UiConnectionPicker.show(bufnr)
     footer = " <CR> Attach | <Esc> Cancel | j/k Navigate ",
     width = 50,
     height = math.min(#servers + 10, 25),
+    header_lines = 7,  -- Number of lines before selectable items
+    item_count = #servers,  -- Number of selectable items
     initial_data = {
       servers = servers,
       target_bufnr = bufnr,
@@ -271,6 +281,8 @@ function UiConnectionPicker.show_hierarchical(bufnr)
     footer = " <CR> Next | <Esc> Cancel | j/k Navigate ",
     width = 50,
     height = math.min(#servers + 8, 25),
+    header_lines = 4,  -- Empty, legend, separator, empty
+    item_count = #servers,
     initial_data = {
       mode = "server",
       servers = servers,
@@ -359,6 +371,16 @@ function UiConnectionPicker.show_hierarchical(bufnr)
           server_info.connected = true
         end
 
+        -- Load databases if not yet loaded
+        if not server.databases or #server.databases == 0 then
+          vim.notify(string.format("SSNS: Loading databases from %s...", server_info.server_name), vim.log.levels.INFO)
+          local load_success = server:load()
+          if not load_success then
+            vim.notify(string.format("SSNS: Failed to load databases: %s", server.error_message or "Unknown error"), vim.log.levels.ERROR)
+            return
+          end
+        end
+
         local databases = server.databases or {}
         if #databases == 0 then
           vim.notify("SSNS: No databases found on server", vim.log.levels.WARN)
@@ -370,6 +392,8 @@ function UiConnectionPicker.show_hierarchical(bufnr)
         st.data.databases = databases
         st.data.server_info = server_info
         st.selected_idx = 1
+        st.config.item_count = #databases  -- Update item count for database list
+        st.config.header_lines = 4  -- Empty, server name, separator, empty
 
         -- Update UI
         UiFloatInteractive.update_title(st, string.format(" %s - Select Database ", server_info.server_name))
@@ -403,6 +427,8 @@ function UiConnectionPicker.show_hierarchical(bufnr)
         if st.data.mode == "database" then
           st.data.mode = "server"
           st.selected_idx = 1
+          st.config.item_count = #st.data.servers  -- Restore server item count
+          st.config.header_lines = 4  -- Empty, legend, separator, empty
           UiFloatInteractive.update_title(st, " Select Server ")
           UiFloatInteractive.update_footer(st, " <CR> Next | <Esc> Cancel | j/k Navigate ")
           UiFloatInteractive.render(st)
@@ -472,6 +498,16 @@ function UiConnectionPicker.show_database_picker(bufnr)
     end
   end
 
+  -- Load databases if not yet loaded
+  if not server.databases or #server.databases == 0 then
+    vim.notify(string.format("SSNS: Loading databases from %s...", server.name), vim.log.levels.INFO)
+    local load_success = server:load()
+    if not load_success then
+      vim.notify(string.format("SSNS: Failed to load databases: %s", server.error_message or "Unknown error"), vim.log.levels.ERROR)
+      return
+    end
+  end
+
   -- Get databases
   local databases = server.databases or {}
   if #databases == 0 then
@@ -497,11 +533,14 @@ function UiConnectionPicker.show_database_picker(bufnr)
     footer = " <CR> Switch | <Esc> Cancel | j/k Navigate ",
     width = 45,
     height = math.min(#databases + 8, 25),
+    header_lines = 4,  -- Empty, server name, separator, empty
+    item_count = #databases,
     initial_data = {
       databases = databases,
       server = server,
       target_bufnr = bufnr,
       current_db = current_db,
+      initial_idx = initial_idx,
     },
     on_render = function(st)
       local lines = {}
