@@ -20,6 +20,7 @@
 ---@field float_title boolean? Show title in float mode (default: true)
 ---@field float_title_text string? Custom title text for float window (default: " SSNS ")
 ---@field float_zindex number? Window z-index for float layering (default: 50)
+---@field tree_auto_expand boolean? Auto-expand tree width to fit content (default: false)
 ---@field ssms_style boolean Use SSMS-style UI
 ---@field show_schema_prefix boolean Show schema prefix in object names
 ---@field auto_expand_depth number? Auto-expand tree to this depth on load
@@ -375,6 +376,7 @@ local default_config = {
     float_title = true,           -- Show title bar
     float_title_text = " SSNS ",  -- Title text
     float_zindex = 50,            -- Window z-index (layering)
+    tree_auto_expand = false,     -- Auto-expand tree width to fit content
 
     ssms_style = true,
     show_schema_prefix = true,

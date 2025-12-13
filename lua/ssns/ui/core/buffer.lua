@@ -764,6 +764,74 @@ function UiBuffer.set_lines(lines)
 
   -- Make buffer read-only again
   vim.api.nvim_buf_set_option(UiBuffer.bufnr, "modifiable", false)
+
+  -- Auto-expand width if enabled
+  UiBuffer.auto_expand_width(lines)
+end
+
+---Auto-expand tree window width to fit content if enabled
+---@param lines string[] The lines currently displayed
+function UiBuffer.auto_expand_width(lines)
+  if not UiBuffer.is_open() then
+    return
+  end
+
+  local Config = require('ssns.config')
+  local ui_config = Config.get_ui()
+
+  -- Check if auto-expand is enabled
+  if not ui_config.tree_auto_expand then
+    return
+  end
+
+  -- Calculate max line width (using display width to handle unicode)
+  local max_width = 0
+  for _, line in ipairs(lines) do
+    local line_width = vim.fn.strdisplaywidth(line)
+    if line_width > max_width then
+      max_width = line_width
+    end
+  end
+
+  -- Add some padding (2 for border if float, 1 for scrollbar margin)
+  local padding = UiBuffer._is_float and 4 or 2
+  local desired_width = max_width + padding
+
+  -- Get config width as minimum
+  local config_width = ui_config.width or 40
+  if config_width <= 1 then
+    config_width = math.floor(vim.o.columns * config_width)
+  end
+
+  -- Use the larger of config width and content width
+  local new_width = math.max(config_width, desired_width)
+
+  -- Apply screen constraints
+  local max_screen_width = vim.o.columns - 4
+  new_width = math.min(new_width, max_screen_width)
+  new_width = math.max(new_width, 20)  -- Minimum width
+
+  -- Get current width
+  local current_width = vim.api.nvim_win_get_width(UiBuffer.winid)
+
+  -- Only resize if width actually changed
+  if new_width ~= current_width then
+    if UiBuffer._is_float then
+      -- For float windows, update the window config
+      local current_config = vim.api.nvim_win_get_config(UiBuffer.winid)
+      local new_col = math.floor((vim.o.columns - new_width) / 2)
+      vim.api.nvim_win_set_config(UiBuffer.winid, {
+        relative = current_config.relative,
+        width = new_width,
+        height = current_config.height,
+        row = current_config.row,
+        col = new_col,
+      })
+    else
+      -- For docked/split windows, just set the width
+      vim.api.nvim_win_set_width(UiBuffer.winid, new_width)
+    end
+  end
 end
 
 ---Get current line number
