@@ -155,7 +155,12 @@ function InputManager:enter_input_mode(key)
   
   -- Make buffer modifiable
   vim.api.nvim_buf_set_option(self.bufnr, 'modifiable', true)
-  
+
+  -- Disable autocompletion in input buffer
+  vim.b[self.bufnr].cmp_enabled = false      -- nvim-cmp
+  vim.b[self.bufnr].blink_cmp_enable = false -- blink.cmp
+  vim.b[self.bufnr].completion = false       -- generic
+
   -- If showing placeholder, clear it to blank spaces for editing
   local value = self.values[key] or ""
   if input.is_showing_placeholder then

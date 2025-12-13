@@ -9,30 +9,61 @@ local Cache = require('ssns.cache')
 local KeymapManager = require('ssns.keymap_manager')
 
 ---@class HistoryUIState
----@field buffer_histories QueryBufferHistory[] All buffer histories
+---@field all_buffer_histories QueryBufferHistory[] Unfiltered buffer histories
+---@field buffer_histories QueryBufferHistory[] Filtered buffer histories (for display)
 ---@field selected_buffer_idx number Currently selected buffer index
 ---@field selected_entry_idx number Currently selected entry index
+---@field search_term string Committed search term
+---@field search_term_before_edit string Search term before current edit (for ESC revert)
+---@field search_editing boolean Whether user is currently editing search
+---@field search_case_sensitive boolean Case sensitive search
+---@field search_use_regex boolean Use regex for search (vs literal)
 
 ---@type MultiPanelState?
 local multi_panel = nil
 
+---@type number?
+local search_augroup = nil
+
+---Namespace for search virtual text
+local search_virt_ns = vim.api.nvim_create_namespace("ssns_search_virt")
+
 ---@type HistoryUIState
 local ui_state = {
+  all_buffer_histories = {},
   buffer_histories = {},
   selected_buffer_idx = 1,
   selected_entry_idx = 1,
+  search_term = "",
+  search_term_before_edit = "",
+  search_editing = false,
+  search_case_sensitive = false,
+  search_use_regex = true,
 }
 
 ---Close the history window
 function UiHistory.close()
+  -- Clean up search autocmds
+  if search_augroup then
+    pcall(vim.api.nvim_del_augroup_by_id, search_augroup)
+    search_augroup = nil
+  end
+
   if multi_panel then
     multi_panel:close()
     multi_panel = nil
   end
+
   ui_state = {
+    all_buffer_histories = {},
     buffer_histories = {},
     selected_buffer_idx = 1,
     selected_entry_idx = 1,
+    search_term = "",
+    search_term_before_edit = "",
+    search_editing = false,
+    search_case_sensitive = false,
+    search_use_regex = true,
   }
 end
 
@@ -194,6 +225,352 @@ local function render_preview(state)
   end
 
   return lines, highlights
+end
+
+---Build the search settings hint line
+---@return string line, table[] highlights (relative to this line)
+local function build_search_settings_line()
+  local case_state = ui_state.search_case_sensitive and "On" or "Off"
+  local regex_state = ui_state.search_use_regex and "On" or "Off"
+
+  -- Format: " ^c Case:Off | ^r Regex:On"
+  local line = string.format(" ^c Case:%s | ^r Regex:%s", case_state, regex_state)
+  local highlights = {}
+
+  -- Highlight the key hints
+  table.insert(highlights, {0, 1, 3, "SsnsUiHint"})  -- ^c
+  table.insert(highlights, {0, 4, 8, "Comment"})     -- Case
+  -- Highlight state based on value
+  local case_hl = ui_state.search_case_sensitive and "SsnsStatusConnected" or "Comment"
+  table.insert(highlights, {0, 9, 9 + #case_state, case_hl})
+
+  local regex_start = 9 + #case_state + 3  -- " | "
+  table.insert(highlights, {0, regex_start, regex_start + 2, "SsnsUiHint"})  -- ^r
+  table.insert(highlights, {0, regex_start + 3, regex_start + 8, "Comment"})  -- Regex
+  local regex_hl = ui_state.search_use_regex and "SsnsStatusConnected" or "Comment"
+  table.insert(highlights, {0, regex_start + 9, regex_start + 9 + #regex_state, regex_hl})
+
+  return line, highlights
+end
+
+---Render the search panel
+---@param state MultiPanelState
+---@return string[] lines, table[] highlights
+local function render_search(state)
+  local lines = {}
+  local highlights = {}
+
+  if ui_state.search_editing then
+    -- Don't render while editing - buffer content is live
+    -- Settings line will be shown via virtual text in activate_search
+    return {""}, {}
+  end
+
+  -- Line 1: Search term or placeholder
+  if ui_state.search_term == "" then
+    table.insert(lines, " Press / to search")
+    table.insert(highlights, {0, 0, -1, "Comment"})
+  else
+    table.insert(lines, " " .. ui_state.search_term)
+    table.insert(highlights, {0, 0, -1, "SsnsUiHint"})
+  end
+
+  -- Line 2: Settings hints
+  local settings_line, settings_hl = build_search_settings_line()
+  table.insert(lines, settings_line)
+  -- Adjust highlight line numbers for line 2
+  for _, hl in ipairs(settings_hl) do
+    hl[1] = 1  -- Line index 1 (second line)
+    table.insert(highlights, hl)
+  end
+
+  return lines, highlights
+end
+
+---Check if a query matches the search pattern
+---@param query string The query text to search in
+---@param pattern string The search pattern
+---@param regex table? Compiled regex (if using regex mode)
+---@return boolean
+local function query_matches_pattern(query, pattern, regex)
+  if ui_state.search_use_regex and regex then
+    -- Regex mode
+    return regex:match_str(query) ~= nil
+  else
+    -- Plain text mode
+    local search_in = query
+    local search_for = pattern
+    if not ui_state.search_case_sensitive then
+      search_in = query:lower()
+      search_for = pattern:lower()
+    end
+    return search_in:find(search_for, 1, true) ~= nil
+  end
+end
+
+---Apply search filter to buffer histories
+---@param pattern string Search pattern (regex or plain text)
+local function apply_search_filter(pattern)
+  if not pattern or pattern == "" then
+    ui_state.buffer_histories = ui_state.all_buffer_histories
+    return
+  end
+
+  local filtered = {}
+  local regex = nil
+
+  -- Compile regex if in regex mode
+  if ui_state.search_use_regex then
+    -- Add case insensitivity flag if needed
+    local regex_pattern = pattern
+    if not ui_state.search_case_sensitive then
+      regex_pattern = "\\c" .. pattern
+    end
+    local ok, compiled = pcall(vim.regex, regex_pattern)
+    if ok then
+      regex = compiled
+    else
+      -- Invalid regex - fall back to literal match for this search
+      regex = nil
+    end
+  end
+
+  for _, buffer_history in ipairs(ui_state.all_buffer_histories) do
+    local matches = false
+    for _, entry in ipairs(buffer_history.entries) do
+      if query_matches_pattern(entry.query, pattern, regex) then
+        matches = true
+        break
+      end
+    end
+    if matches then
+      table.insert(filtered, buffer_history)
+    end
+  end
+
+  ui_state.buffer_histories = filtered
+
+  -- Reset selection if current selection is now invalid
+  if ui_state.selected_buffer_idx > #ui_state.buffer_histories then
+    ui_state.selected_buffer_idx = math.max(1, #ui_state.buffer_histories)
+  end
+  ui_state.selected_entry_idx = 1
+end
+
+---Finalize search exit (called after insert mode exits)
+local function finalize_search_exit()
+  ui_state.search_editing = false
+
+  local search_buf = multi_panel and multi_panel:get_panel_buffer("search")
+  if search_buf and vim.api.nvim_buf_is_valid(search_buf) then
+    -- Clear virtual text
+    vim.api.nvim_buf_clear_namespace(search_buf, search_virt_ns, 0, -1)
+    vim.api.nvim_buf_set_option(search_buf, 'modifiable', false)
+  end
+
+  -- Clean up autocmds
+  if search_augroup then
+    pcall(vim.api.nvim_del_augroup_by_id, search_augroup)
+    search_augroup = nil
+  end
+
+  -- Re-render all panels to show committed state
+  if multi_panel then
+    multi_panel:render_panel("search")
+    multi_panel:render_panel("buffers")
+    multi_panel:render_panel("history")
+    multi_panel:render_panel("preview")
+  end
+
+  -- Return focus to buffers panel (scheduled to ensure it happens after mode change completes)
+  vim.schedule(function()
+    if multi_panel and multi_panel:is_valid() then
+      multi_panel:focus_panel("buffers")
+    end
+  end)
+end
+
+---Cancel search and revert to previous state
+local function cancel_search()
+  ui_state.search_term = ui_state.search_term_before_edit
+  apply_search_filter(ui_state.search_term)
+  vim.cmd('stopinsert')
+end
+
+---Commit current search text
+local function commit_search()
+  local search_buf = multi_panel and multi_panel:get_panel_buffer("search")
+  if search_buf and vim.api.nvim_buf_is_valid(search_buf) then
+    local lines = vim.api.nvim_buf_get_lines(search_buf, 0, 1, false)
+    ui_state.search_term = (lines[1] or ""):gsub("^%s+", "")  -- Trim leading space
+  end
+  vim.cmd('stopinsert')
+end
+
+---Update the virtual text settings line in search buffer during editing
+local function update_search_settings_virt_text()
+  local search_buf = multi_panel and multi_panel:get_panel_buffer("search")
+  if not search_buf or not vim.api.nvim_buf_is_valid(search_buf) then return end
+
+  -- Clear existing virtual text
+  vim.api.nvim_buf_clear_namespace(search_buf, search_virt_ns, 0, -1)
+
+  -- Build the settings line
+  local settings_line, _ = build_search_settings_line()
+
+  -- Add as virtual line below line 0
+  vim.api.nvim_buf_set_extmark(search_buf, search_virt_ns, 0, 0, {
+    virt_lines = {{
+      {settings_line, "Comment"},
+    }},
+    virt_lines_above = false,
+  })
+end
+
+---Toggle case sensitivity and re-filter
+local function toggle_case_sensitive()
+  ui_state.search_case_sensitive = not ui_state.search_case_sensitive
+
+  -- Re-apply filter with current search text
+  local search_buf = multi_panel and multi_panel:get_panel_buffer("search")
+  if search_buf and vim.api.nvim_buf_is_valid(search_buf) then
+    local lines = vim.api.nvim_buf_get_lines(search_buf, 0, 1, false)
+    local text = (lines[1] or ""):gsub("^%s+", "")
+    apply_search_filter(text)
+  end
+
+  -- Update virtual text to show new state
+  update_search_settings_virt_text()
+
+  -- Re-render panels
+  if multi_panel then
+    multi_panel:render_panel("buffers")
+    multi_panel:render_panel("history")
+    multi_panel:render_panel("preview")
+  end
+end
+
+---Toggle regex mode and re-filter
+local function toggle_regex_mode()
+  ui_state.search_use_regex = not ui_state.search_use_regex
+
+  -- Re-apply filter with current search text
+  local search_buf = multi_panel and multi_panel:get_panel_buffer("search")
+  if search_buf and vim.api.nvim_buf_is_valid(search_buf) then
+    local lines = vim.api.nvim_buf_get_lines(search_buf, 0, 1, false)
+    local text = (lines[1] or ""):gsub("^%s+", "")
+    apply_search_filter(text)
+  end
+
+  -- Update virtual text to show new state
+  update_search_settings_virt_text()
+
+  -- Re-render panels
+  if multi_panel then
+    multi_panel:render_panel("buffers")
+    multi_panel:render_panel("history")
+    multi_panel:render_panel("preview")
+  end
+end
+
+---Setup autocmds for search mode
+local function setup_search_autocmds()
+  local search_buf = multi_panel and multi_panel:get_panel_buffer("search")
+  if not search_buf then return end
+
+  -- Clean up existing autocmds
+  if search_augroup then
+    pcall(vim.api.nvim_del_augroup_by_id, search_augroup)
+  end
+
+  search_augroup = vim.api.nvim_create_augroup("SSNSHistorySearch", { clear = true })
+
+  -- Live filtering on text change
+  vim.api.nvim_create_autocmd({"TextChangedI", "TextChanged"}, {
+    group = search_augroup,
+    buffer = search_buf,
+    callback = function()
+      local lines = vim.api.nvim_buf_get_lines(search_buf, 0, 1, false)
+      local text = (lines[1] or ""):gsub("^%s+", "")  -- Trim leading space
+      apply_search_filter(text)
+      if multi_panel then
+        multi_panel:render_panel("buffers")
+        multi_panel:render_panel("history")
+        multi_panel:render_panel("preview")
+      end
+    end,
+  })
+
+  -- Handle insert mode exit
+  vim.api.nvim_create_autocmd("InsertLeave", {
+    group = search_augroup,
+    buffer = search_buf,
+    once = true,
+    callback = function()
+      -- This fires after ESC/TAB/CR keymap handlers
+      finalize_search_exit()
+    end,
+  })
+
+  -- Setup insert mode keymaps
+  vim.keymap.set('i', '<Esc>', function()
+    cancel_search()
+  end, { buffer = search_buf, nowait = true })
+
+  vim.keymap.set('i', '<Tab>', function()
+    commit_search()
+  end, { buffer = search_buf, nowait = true })
+
+  vim.keymap.set('i', '<CR>', function()
+    commit_search()
+  end, { buffer = search_buf, nowait = true })
+
+  -- Toggle search settings keymaps
+  vim.keymap.set('i', '<C-c>', function()
+    toggle_case_sensitive()
+  end, { buffer = search_buf, nowait = true })
+
+  vim.keymap.set('i', '<C-r>', function()
+    toggle_regex_mode()
+  end, { buffer = search_buf, nowait = true })
+end
+
+---Activate search mode
+local function activate_search()
+  if not multi_panel then return end
+
+  -- Capture current state for ESC revert
+  ui_state.search_term_before_edit = ui_state.search_term
+  ui_state.search_editing = true
+
+  local search_buf = multi_panel:get_panel_buffer("search")
+  if not search_buf then return end
+
+  -- Make buffer modifiable
+  vim.api.nvim_buf_set_option(search_buf, 'modifiable', true)
+
+  -- Disable autocompletion in search buffer
+  vim.b[search_buf].cmp_enabled = false      -- nvim-cmp
+  vim.b[search_buf].blink_cmp_enable = false -- blink.cmp
+  vim.b[search_buf].completion = false       -- generic
+
+  -- Set content: existing search term or empty (with leading space for padding)
+  local initial_text = ui_state.search_term ~= "" and (" " .. ui_state.search_term) or " "
+  vim.api.nvim_buf_set_lines(search_buf, 0, -1, false, {initial_text})
+
+  -- Focus search window and enter insert mode at end
+  local search_win = multi_panel:get_panel_window("search")
+  if search_win and vim.api.nvim_win_is_valid(search_win) then
+    vim.api.nvim_set_current_win(search_win)
+    vim.api.nvim_win_set_cursor(search_win, {1, #initial_text})
+    vim.cmd('startinsert!')
+  end
+
+  -- Setup autocmds for live filtering and exit handling
+  setup_search_autocmds()
+
+  -- Show settings line as virtual text during editing
+  update_search_settings_virt_text()
 end
 
 ---Navigate in buffers panel
@@ -455,149 +832,6 @@ local function export_history()
   end
 end
 
----Search history
-local function search_history()
-  local search_win = UiFloat.create({
-    title = "Search History",
-    width = 60,
-    height = 8,
-    center = true,
-    content_builder = true,
-    enable_inputs = true,
-  })
-
-  if search_win then
-    local cb = search_win:get_content_builder()
-    cb:line("")
-    cb:line("  Search query history:", "SsnsUiTitle")
-    cb:line("")
-    cb:labeled_input("pattern", "  Pattern", {
-      value = "",
-      placeholder = "(enter search term)",
-      width = 40,  -- Default width, expands for longer patterns
-    })
-    cb:line("")
-    cb:line("  <Enter>=Search | <Esc>=Cancel", "SsnsUiHint")
-    search_win:render()
-
-    local function do_search()
-      local pattern = search_win:get_input_value("pattern")
-      search_win:close()
-
-      if not pattern or pattern == "" then return end
-
-      local results = QueryHistory.search(pattern, { case_sensitive = false })
-      if vim.tbl_isempty(results) then
-        vim.notify("No matching queries found", vim.log.levels.WARN)
-        return
-      end
-
-      -- Build results list
-      local result_items = {}
-      for buffer_id, entries in pairs(results) do
-        local buffer_history = QueryHistory.buffers[buffer_id]
-        if buffer_history then
-          for _, entry in ipairs(entries) do
-            table.insert(result_items, {
-              buffer_history = buffer_history,
-              entry = entry,
-            })
-          end
-        end
-      end
-
-      -- Show results in a selection panel
-      local results_win = UiFloat.create({
-        title = string.format("Search Results for '%s'", pattern),
-        width = 80,
-        height = math.min(#result_items + 6, 20),
-        center = true,
-        content_builder = true,
-      })
-
-      if results_win then
-        local results_state = { selected_idx = 1 }
-        local rcb = results_win:get_content_builder()
-
-        local function render_results()
-          rcb:clear()
-          rcb:line("")
-          rcb:line(string.format("  Found %d matching entries:", #result_items), "SsnsUiHint")
-          rcb:line("")
-
-          for i, item in ipairs(result_items) do
-            local prefix = i == results_state.selected_idx and " ▶ " or "   "
-            local status_icon = item.entry.status == "success" and "✓" or "✗"
-            local preview = item.entry.query:gsub("%s+", " "):sub(1, 50)
-            local line = string.format("%s%s [%s] %s | %s",
-              prefix,
-              status_icon,
-              item.buffer_history.buffer_name,
-              item.entry.timestamp:sub(12, 19),
-              preview)
-            if i == results_state.selected_idx then
-              rcb:line(line, "SsnsFloatSelected")
-            else
-              rcb:line(line)
-            end
-          end
-
-          rcb:line("")
-          rcb:line("  j/k=Navigate | <Enter>=Load | <Esc>=Cancel", "SsnsUiHint")
-          results_win:render()
-        end
-
-        render_results()
-
-        local function navigate_results(dir)
-          results_state.selected_idx = results_state.selected_idx + dir
-          if results_state.selected_idx < 1 then results_state.selected_idx = #result_items end
-          if results_state.selected_idx > #result_items then results_state.selected_idx = 1 end
-          render_results()
-        end
-
-        local function load_result()
-          local choice = result_items[results_state.selected_idx]
-          results_win:close()
-
-          if choice then
-            UiHistory.close()
-            UiQuery.create_query_buffer(choice.buffer_history.server_name, choice.buffer_history.database)
-            vim.schedule(function()
-              local query_buf = vim.api.nvim_get_current_buf()
-              vim.api.nvim_buf_set_option(query_buf, "modifiable", true)
-              vim.api.nvim_buf_set_lines(query_buf, 0, -1, false, vim.split(choice.entry.query, "\n"))
-            end)
-          end
-        end
-
-        vim.keymap.set("n", "j", function() navigate_results(1) end, { buffer = results_win.buf, nowait = true })
-        vim.keymap.set("n", "k", function() navigate_results(-1) end, { buffer = results_win.buf, nowait = true })
-        vim.keymap.set("n", "<Down>", function() navigate_results(1) end, { buffer = results_win.buf, nowait = true })
-        vim.keymap.set("n", "<Up>", function() navigate_results(-1) end, { buffer = results_win.buf, nowait = true })
-        vim.keymap.set("n", "<CR>", load_result, { buffer = results_win.buf, nowait = true })
-        vim.keymap.set("n", "<Esc>", function() results_win:close() end, { buffer = results_win.buf, nowait = true })
-        vim.keymap.set("n", "q", function() results_win:close() end, { buffer = results_win.buf, nowait = true })
-      end
-    end
-
-    vim.keymap.set("n", "<CR>", function()
-      search_win:enter_input()
-    end, { buffer = search_win.buf, nowait = true })
-
-    vim.keymap.set("n", "<Esc>", function()
-      search_win:close()
-    end, { buffer = search_win.buf, nowait = true })
-
-    vim.keymap.set("n", "q", function()
-      search_win:close()
-    end, { buffer = search_win.buf, nowait = true })
-
-    -- Submit binding when in input mode
-    search_win:on_input_submit(do_search)
-  end
-end
-
 ---Show query history in 2-column layout using UiFloat multi-panel system
 ---Layout: Left column (buffers on top, history on bottom) + Right column (preview full height)
 ---@param options table? Options {server: string?, database: string?}
@@ -639,9 +873,15 @@ function UiHistory.show_history(options)
 
   -- Initialize state
   ui_state = {
-    buffer_histories = buffer_histories,
+    all_buffer_histories = buffer_histories,
+    buffer_histories = buffer_histories,  -- Initially unfiltered
     selected_buffer_idx = 1,
     selected_entry_idx = 1,
+    search_term = "",
+    search_term_before_edit = "",
+    search_editing = false,
+    search_case_sensitive = false,
+    search_use_regex = true,
   }
 
   -- Get keymaps from config
@@ -650,21 +890,29 @@ function UiHistory.show_history(options)
 
   -- Create multi-panel window using UiFloat nested layout
   -- Layout: 2 columns
-  --   Left column (vertical split): Buffers on top, History on bottom
+  --   Left column (vertical split): Search on top, Buffers in middle, History on bottom
   --   Right column: Preview (full height)
   multi_panel = UiFloat.create_multi_panel({
     layout = {
       split = "horizontal",  -- Root split: left and right columns
       children = {
         {
-          -- Left column: vertically stacked (buffers on top, history on bottom)
+          -- Left column: vertically stacked (search, buffers, history)
           split = "vertical",
           ratio = 0.5,
           children = {
             {
+              name = "search",
+              title = "Search",
+              ratio = 0.12,  -- Ratio for 2 lines (search + settings hints)
+              focusable = false,  -- NOT in TAB cycle
+              cursorline = false,
+              on_render = render_search,
+            },
+            {
               name = "buffers",
               title = "Buffers",
-              ratio = 0.4,
+              ratio = 0.35,
               on_render = render_buffers,
               on_focus = function()
                 if multi_panel then
@@ -678,7 +926,7 @@ function UiHistory.show_history(options)
             {
               name = "history",
               title = "History",
-              ratio = 0.6,
+              ratio = 0.53,
               on_render = render_history,
               on_focus = function()
                 if multi_panel then
@@ -716,11 +964,22 @@ function UiHistory.show_history(options)
     initial_focus = "buffers",
     augroup_name = "SSNSQueryHistory",
     on_close = function()
+      -- Clean up search autocmds
+      if search_augroup then
+        pcall(vim.api.nvim_del_augroup_by_id, search_augroup)
+        search_augroup = nil
+      end
       multi_panel = nil
       ui_state = {
+        all_buffer_histories = {},
         buffer_histories = {},
         selected_buffer_idx = 1,
         selected_entry_idx = 1,
+        search_term = "",
+        search_term_before_edit = "",
+        search_editing = false,
+        search_case_sensitive = false,
+        search_use_regex = true,
       }
     end,
   })
@@ -746,7 +1005,7 @@ function UiHistory.show_history(options)
     [km.delete or "d"] = delete_entry,
     [km.clear_all or "c"] = clear_all,
     [km.export or "x"] = export_history,
-    [km.search or "/"] = search_history,
+    [km.search or "/"] = activate_search,
   })
 
   -- Setup keymaps for history panel
@@ -763,15 +1022,16 @@ function UiHistory.show_history(options)
     [km.delete or "d"] = delete_entry,
     [km.clear_all or "c"] = clear_all,
     [km.export or "x"] = export_history,
-    [km.search or "/"] = search_history,
+    [km.search or "/"] = activate_search,
   })
 
-  -- Setup keymaps for preview panel (limited - just close and navigate)
+  -- Setup keymaps for preview panel (limited - just close, navigate, and search)
   multi_panel:set_panel_keymaps("preview", {
     [common.close or "q"] = function() UiHistory.close() end,
     [common.cancel or "<Esc>"] = function() UiHistory.close() end,
     [common.next_field or "<Tab>"] = function() multi_panel:focus_next_panel() end,
     [common.prev_field or "<S-Tab>"] = function() multi_panel:focus_prev_panel() end,
+    [km.search or "/"] = activate_search,
   })
 
   -- Position cursor on first buffer (after render is complete)
