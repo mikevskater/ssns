@@ -808,6 +808,7 @@ local function delete_entry()
       height = 8,
       center = true,
       content_builder = true,
+      zindex = UiFloat.ZINDEX.MODAL,
     })
 
     if confirm_win then
@@ -859,6 +860,7 @@ local function clear_all()
     height = 8,
     center = true,
     content_builder = true,
+    zindex = UiFloat.ZINDEX.MODAL,
   })
 
   if confirm_win then
@@ -898,6 +900,7 @@ local function export_history()
     center = true,
     content_builder = true,
     enable_inputs = true,
+    zindex = UiFloat.ZINDEX.MODAL,
   })
 
   if export_win then

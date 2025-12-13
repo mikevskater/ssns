@@ -293,6 +293,7 @@ function ViewUsageWeights.view_weights()
           height = 8,
           center = true,
           content_builder = true,
+          zindex = UiFloat.ZINDEX.MODAL,
         })
 
         if confirm_win then

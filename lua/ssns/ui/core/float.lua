@@ -58,6 +58,16 @@ FloatWindow.__index = FloatWindow
 ---Floating window utility module
 local UiFloat = {}
 
+---Z-index layers for proper window stacking
+---Scrollbars are automatically +1 above their parent window
+---@class ZIndexLayers
+UiFloat.ZINDEX = {
+  BASE = 50,        -- Base floating windows (multi-panel, standard floats)
+  OVERLAY = 100,    -- Overlay windows (popups, tooltips, pickers)
+  MODAL = 150,      -- Modal dialogs (confirmations, alerts)
+  DROPDOWN = 200,   -- Dropdowns and menus (highest priority)
+}
+
 ---Create a new floating window
 ---@param lines string[]|FloatConfig? Initial content lines OR config (for convenience)
 ---@param config FloatConfig? Configuration options

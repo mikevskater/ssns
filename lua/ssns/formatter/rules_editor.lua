@@ -1129,6 +1129,7 @@ function RulesEditor._save_preset()
     center = true,
     content_builder = true,
     enable_inputs = true,
+    zindex = UiFloat.ZINDEX.MODAL,
   })
 
   if save_win then
@@ -1253,6 +1254,7 @@ function RulesEditor._rename_preset()
     center = true,
     content_builder = true,
     enable_inputs = true,
+    zindex = UiFloat.ZINDEX.MODAL,
   })
 
   if rename_win then

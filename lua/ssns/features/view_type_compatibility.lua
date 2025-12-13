@@ -200,6 +200,7 @@ function ViewTypeCompatibility.view_compatibility()
           center = true,
           content_builder = true,
           enable_inputs = true,
+          zindex = UiFloat.ZINDEX.OVERLAY,
         })
 
         if test_win then

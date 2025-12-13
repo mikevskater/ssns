@@ -191,6 +191,7 @@ function ViewFuzzyMatcher.view_matcher()
           center = true,
           content_builder = true,
           enable_inputs = true,
+          zindex = UiFloat.ZINDEX.OVERLAY,
         })
 
         if test_win then

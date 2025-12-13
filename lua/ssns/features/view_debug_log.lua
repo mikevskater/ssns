@@ -200,6 +200,7 @@ function ViewDebugLog.view_log(filter)
           center = true,
           content_builder = true,
           enable_inputs = true,
+          zindex = UiFloat.ZINDEX.OVERLAY,
         })
 
         if filter_win then
