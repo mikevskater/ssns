@@ -50,6 +50,7 @@ local UiQuery = require('ssns.ui.core.query')
 ---@field search_names boolean Search in object names
 ---@field search_definitions boolean Search in definitions
 ---@field search_metadata boolean Search in metadata (columns/parameters)
+---@field show_system boolean Show system schemas/databases
 ---@field case_sensitive boolean Case sensitive search
 ---@field use_regex boolean Use regex for search
 ---@field whole_word boolean Match whole words only
@@ -85,6 +86,7 @@ local ui_state = {
   search_names = true,
   search_definitions = true,
   search_metadata = false,
+  show_system = false,
   case_sensitive = false,
   use_regex = false,
   whole_word = false,
@@ -93,9 +95,52 @@ local ui_state = {
   definitions_cache = {},
 }
 
+---System schemas to filter out when show_system is false
+local SYSTEM_SCHEMAS = {
+  ["sys"] = true,
+  ["INFORMATION_SCHEMA"] = true,
+  ["guest"] = true,
+  ["db_owner"] = true,
+  ["db_accessadmin"] = true,
+  ["db_securityadmin"] = true,
+  ["db_ddladmin"] = true,
+  ["db_backupoperator"] = true,
+  ["db_datareader"] = true,
+  ["db_datawriter"] = true,
+  ["db_denydatareader"] = true,
+  ["db_denydatawriter"] = true,
+}
+
+---System databases to filter out when show_system is false
+local SYSTEM_DATABASES = {
+  ["master"] = true,
+  ["model"] = true,
+  ["msdb"] = true,
+  ["tempdb"] = true,
+}
+
 -- ============================================================================
 -- Helper Functions
 -- ============================================================================
+
+---Check if a searchable object is a system object
+---@param searchable SearchableObject
+---@return boolean
+local function is_system_object(searchable)
+  -- Check if this is a schema object with a system schema name
+  if searchable.object_type == "schema" and searchable.name and SYSTEM_SCHEMAS[searchable.name] then
+    return true
+  end
+  -- Check if object belongs to a system schema
+  if searchable.schema_name and SYSTEM_SCHEMAS[searchable.schema_name] then
+    return true
+  end
+  -- Check if database is a system database
+  if searchable.database_name and SYSTEM_DATABASES[searchable.database_name] then
+    return true
+  end
+  return false
+end
 
 ---Reset UI state to defaults
 local function reset_state()
@@ -113,6 +158,7 @@ local function reset_state()
     search_names = true,
     search_definitions = true,
     search_metadata = false,
+    show_system = false,
     case_sensitive = false,
     use_regex = false,
     whole_word = false,
@@ -367,21 +413,8 @@ local function load_objects_for_databases(callback)
       ui_state.loading_progress = 100
       ui_state.loading_message = string.format("Loaded %d objects", #ui_state.loaded_objects)
 
-      -- Apply initial filter if there's a search term
-      if ui_state.search_term ~= "" then
-        UiObjectSearch._apply_search(ui_state.search_term)
-      else
-        ui_state.filtered_results = {}
-        for _, obj in ipairs(ui_state.loaded_objects) do
-          table.insert(ui_state.filtered_results, {
-            searchable = obj,
-            match_type = "none",
-            match_details = {},
-            display_name = build_display_name(obj),
-            sort_priority = 0,
-          })
-        end
-      end
+      -- Apply initial filter (always call _apply_search to apply system filter)
+      UiObjectSearch._apply_search(ui_state.search_term)
 
       if multi_panel then
         multi_panel:render_all()
@@ -611,15 +644,20 @@ function UiObjectSearch._apply_search(pattern)
     -- No search - show all objects (limited)
     ui_state.filtered_results = {}
     local max_results = 500
-    for i, obj in ipairs(ui_state.loaded_objects) do
-      if i > max_results then break end
-      table.insert(ui_state.filtered_results, {
-        searchable = obj,
-        match_type = "none",
-        match_details = {},
-        display_name = build_display_name(obj),
-        sort_priority = 0,
-      })
+    local count = 0
+    for _, obj in ipairs(ui_state.loaded_objects) do
+      if count >= max_results then break end
+      -- Filter system objects unless show_system is enabled
+      if ui_state.show_system or not is_system_object(obj) then
+        table.insert(ui_state.filtered_results, {
+          searchable = obj,
+          match_type = "none",
+          match_details = {},
+          display_name = build_display_name(obj),
+          sort_priority = 0,
+        })
+        count = count + 1
+      end
     end
     return
   end
@@ -649,6 +687,11 @@ function UiObjectSearch._apply_search(pattern)
 
   for _, searchable in ipairs(ui_state.loaded_objects) do
     if #filtered >= max_results then break end
+
+    -- Filter system objects unless show_system is enabled
+    if not ui_state.show_system and is_system_object(searchable) then
+      goto continue
+    end
 
     local match_details = {}
     local matched_name = false
@@ -716,6 +759,8 @@ function UiObjectSearch._apply_search(pattern)
         sort_priority = sort_priority,
       })
     end
+
+    ::continue::
   end
 
   -- Sort by priority (name matches first)
@@ -759,8 +804,9 @@ local function build_search_context_line()
   local names_state = ui_state.search_names and "On" or "Off"
   local defs_state = ui_state.search_definitions and "On" or "Off"
   local meta_state = ui_state.search_metadata and "On" or "Off"
+  local sys_state = ui_state.show_system and "On" or "Off"
 
-  local line = string.format(" A-1 Names:%s | A-2 Defs:%s | A-3 Meta:%s", names_state, defs_state, meta_state)
+  local line = string.format(" A-1 Names:%s | A-2 Defs:%s | A-3 Meta:%s | A-s Sys:%s", names_state, defs_state, meta_state, sys_state)
   local highlights = {{0, 0, #line, "Comment"}}
 
   return line, highlights
@@ -1176,6 +1222,22 @@ local function toggle_search_metadata()
   end
 end
 
+local function toggle_show_system()
+  ui_state.show_system = not ui_state.show_system
+  local search_buf = multi_panel and multi_panel:get_panel_buffer("search")
+  if search_buf and vim.api.nvim_buf_is_valid(search_buf) then
+    local lines = vim.api.nvim_buf_get_lines(search_buf, 0, 1, false)
+    local text = (lines[1] or ""):gsub("^%s+", "")
+    UiObjectSearch._apply_search(text)
+  end
+  update_search_settings_virt_text()
+  if multi_panel then
+    multi_panel:render_panel("results")
+    multi_panel:render_panel("metadata")
+    multi_panel:render_panel("definition")
+  end
+end
+
 ---Setup search autocmds
 local function setup_search_autocmds()
   local search_buf = multi_panel and multi_panel:get_panel_buffer("search")
@@ -1227,6 +1289,7 @@ local function setup_search_autocmds()
   KeymapManager.set(search_buf, 'i', '<A-1>', toggle_search_names, { nowait = true })
   KeymapManager.set(search_buf, 'i', '<A-2>', toggle_search_definitions, { nowait = true })
   KeymapManager.set(search_buf, 'i', '<A-3>', toggle_search_metadata, { nowait = true })
+  KeymapManager.set(search_buf, 'i', '<A-s>', toggle_show_system, { nowait = true })
 
   KeymapManager.setup_auto_restore(search_buf)
 end
