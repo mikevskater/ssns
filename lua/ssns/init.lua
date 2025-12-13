@@ -332,6 +332,13 @@ function Ssns._register_commands()
     complete = "file",
   })
 
+  -- :SSNSSearch - Search database objects
+  vim.api.nvim_create_user_command("SSNSSearch", function()
+    Ssns.show_object_search()
+  end, {
+    desc = "Search database objects (tables, views, procedures, etc.)",
+  })
+
   -- :SSNSExportResults - Export query results to CSV
   vim.api.nvim_create_user_command("SSNSExportResults", function(opts)
     local Query = require('ssns.ui.core.query')
@@ -955,6 +962,12 @@ end
 function Ssns.show_history()
   local UiHistory = require('ssns.ui.panels.history')
   UiHistory.show_history()
+end
+
+---Show database object search UI
+function Ssns.show_object_search()
+  local UiObjectSearch = require('ssns.ui.panels.object_search')
+  UiObjectSearch.show()
 end
 
 ---Clear query history
