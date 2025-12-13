@@ -552,6 +552,9 @@ local default_config = {
       "SELECT 1",  -- Health check queries
       "SELECT @@",  -- Server variable queries
     },
+    -- Auto-save buffer content to history on edits (saves work-in-progress)
+    buffer_auto_save_delay_ms = -1,  -- Debounce delay in ms (-1 = disabled, 0+ = enabled with delay)
+    max_auto_saves_per_buffer = 50,  -- Maximum auto-save entries per buffer (older ones are removed)
   },
 
   keymaps = {

@@ -5,6 +5,7 @@
 ---@field timestamp string ISO 8601 timestamp (YYYY-MM-DD HH:MM:SS)
 ---@field execution_time_ms number Query execution time in milliseconds
 ---@field status "success"|"error" Execution status
+---@field source "executed"|"auto_save" Entry source (default: "executed")
 ---@field row_count number? Number of rows returned (success only)
 ---@field error_message string? Error message (error only)
 ---@field error_line number? Error line number (error only)
@@ -19,6 +20,7 @@
 ---@field last_accessed string Timestamp of last query execution
 ---@field entries QueryHistoryEntry[] Query executions for this buffer (newest first)
 ---@field next_entry_id number Next entry ID to assign
+---@field last_auto_save_content string? Last auto-saved content (for duplicate prevention)
 
 ---@class QueryHistoryConfig
 ---Configuration for query history
@@ -170,8 +172,9 @@ function QueryHistory.add_entry(bufnr, buffer_name, entry)
     entry.database
   )
 
-  -- Assign entry ID
+  -- Assign entry ID and default source
   entry.id = buffer_history.next_entry_id
+  entry.source = entry.source or "executed"
   buffer_history.next_entry_id = buffer_history.next_entry_id + 1
 
   -- Insert at front (newest first)
@@ -183,6 +186,78 @@ function QueryHistory.add_entry(bufnr, buffer_name, entry)
   end
 
   -- Auto-save if enabled
+  if QueryHistory.auto_persist then
+    QueryHistory.save_to_file()
+  end
+
+  return true
+end
+
+---@type number Maximum auto-save entries per buffer
+QueryHistory.max_auto_saves_per_buffer = 50
+
+---Add auto-save entry to buffer history
+---Skips if content is identical to last auto-save
+---@param bufnr number Buffer number
+---@param buffer_name string? Buffer name/path
+---@param content string Buffer content to save
+---@param server_name string Server name
+---@param database string? Database name
+---@return boolean success
+function QueryHistory.add_auto_save_entry(bufnr, buffer_name, content, server_name, database)
+  -- Skip empty content
+  if not content or content:match("^%s*$") then
+    return false
+  end
+
+  -- Get or create buffer history
+  local buffer_history = get_or_create_buffer_history(
+    bufnr,
+    buffer_name,
+    server_name,
+    database
+  )
+
+  -- Skip if content is identical to last auto-save
+  if buffer_history.last_auto_save_content == content then
+    return false
+  end
+
+  -- Create auto-save entry
+  local entry = {
+    id = buffer_history.next_entry_id,
+    query = content,
+    timestamp = os.date("%Y-%m-%d %H:%M:%S"),
+    execution_time_ms = 0,
+    status = "success",  -- Auto-saves are neutral, use success for display
+    source = "auto_save",
+  }
+  buffer_history.next_entry_id = buffer_history.next_entry_id + 1
+
+  -- Update last auto-save content
+  buffer_history.last_auto_save_content = content
+
+  -- Insert at front (newest first)
+  table.insert(buffer_history.entries, 1, entry)
+
+  -- Count and trim auto-save entries if exceeds max
+  local auto_save_count = 0
+  for i = #buffer_history.entries, 1, -1 do
+    local e = buffer_history.entries[i]
+    if e.source == "auto_save" then
+      auto_save_count = auto_save_count + 1
+      if auto_save_count > QueryHistory.max_auto_saves_per_buffer then
+        table.remove(buffer_history.entries, i)
+      end
+    end
+  end
+
+  -- Also trim total entries if exceeds max
+  while #buffer_history.entries > QueryHistory.max_entries_per_buffer do
+    table.remove(buffer_history.entries)
+  end
+
+  -- Auto-save to file if enabled
   if QueryHistory.auto_persist then
     QueryHistory.save_to_file()
   end

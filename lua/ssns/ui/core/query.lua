@@ -13,6 +13,10 @@ UiQuery.query_buffers = {}
 ---@type table<string, number>
 UiQuery.buffer_counter = {}
 
+---Track auto-save debounce timers per buffer
+---@type table<number, userdata>
+UiQuery.auto_save_timers = {}
+
 ---Store last query results for export and re-display
 ---@type {resultSets: table[]?, sql: string?, execution_time_ms: number?, metadata: table?}?
 UiQuery.last_results = nil
@@ -156,6 +160,9 @@ function UiQuery.create_query_buffer(server, database, sql, object_name)
   local SemanticHighlighter = require('ssns.highlighting.semantic')
   SemanticHighlighter.setup_buffer(bufnr)
 
+  -- Setup auto-save on buffer edits (if enabled)
+  UiQuery.setup_buffer_auto_save(bufnr)
+
   -- If SQL provided, prepend USE statement and set it in the buffer
   if sql then
     local final_sql = UiQuery.prepend_use_statement(sql, server, database)
@@ -263,6 +270,103 @@ function UiQuery.setup_query_keymaps(bufnr)
 
   KeymapManager.set_multiple(bufnr, keymaps, true)
   KeymapManager.mark_group_active(bufnr, "query")
+end
+
+---Setup auto-save on buffer edits (debounced)
+---@param bufnr number The buffer number
+function UiQuery.setup_buffer_auto_save(bufnr)
+  local Config = require('ssns.config')
+  local config = Config.get()
+  local delay_ms = config.query_history and config.query_history.buffer_auto_save_delay_ms or -1
+
+  -- Skip if disabled
+  if delay_ms < 0 then
+    return
+  end
+
+  -- Create autocmd namespace for this buffer
+  local augroup = vim.api.nvim_create_augroup('ssns_auto_save_' .. bufnr, { clear = true })
+
+  -- Debounce function
+  local function trigger_auto_save()
+    -- Cancel existing timer for this buffer
+    if UiQuery.auto_save_timers[bufnr] then
+      UiQuery.auto_save_timers[bufnr]:stop()
+      UiQuery.auto_save_timers[bufnr] = nil
+    end
+
+    -- Get buffer info
+    local buffer_info = UiQuery.query_buffers[bufnr]
+    if not buffer_info or not buffer_info.server then
+      return
+    end
+
+    -- Create new timer
+    local timer = vim.loop.new_timer()
+    UiQuery.auto_save_timers[bufnr] = timer
+
+    timer:start(delay_ms, 0, vim.schedule_wrap(function()
+      -- Check if buffer still exists
+      if not vim.api.nvim_buf_is_valid(bufnr) then
+        if UiQuery.auto_save_timers[bufnr] then
+          UiQuery.auto_save_timers[bufnr]:stop()
+          UiQuery.auto_save_timers[bufnr] = nil
+        end
+        return
+      end
+
+      -- Get buffer content
+      local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+      local content = table.concat(lines, "\n")
+
+      -- Get buffer name
+      local buffer_name = vim.api.nvim_buf_get_name(bufnr)
+      if buffer_name == "" then
+        buffer_name = string.format("Query Buffer %d", bufnr)
+      else
+        buffer_name = vim.fn.fnamemodify(buffer_name, ':t')
+      end
+
+      -- Get current database context
+      local current_database = buffer_info.last_database
+        or (buffer_info.database and buffer_info.database.db_name)
+        or "master"
+
+      -- Add auto-save entry
+      QueryHistory.add_auto_save_entry(
+        bufnr,
+        buffer_name,
+        content,
+        buffer_info.server.name,
+        current_database
+      )
+
+      -- Clear timer reference
+      UiQuery.auto_save_timers[bufnr] = nil
+    end))
+  end
+
+  -- Setup autocmds for text changes
+  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
+    group = augroup,
+    buffer = bufnr,
+    callback = trigger_auto_save,
+  })
+
+  -- Cleanup on buffer delete
+  vim.api.nvim_create_autocmd("BufDelete", {
+    group = augroup,
+    buffer = bufnr,
+    callback = function()
+      -- Cancel any pending timer
+      if UiQuery.auto_save_timers[bufnr] then
+        UiQuery.auto_save_timers[bufnr]:stop()
+        UiQuery.auto_save_timers[bufnr] = nil
+      end
+      -- Clean up the autocmd group
+      vim.api.nvim_del_augroup_by_id(augroup)
+    end,
+  })
 end
 
 ---Execute query in buffer

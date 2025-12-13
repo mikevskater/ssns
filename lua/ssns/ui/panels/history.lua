@@ -142,7 +142,26 @@ local function render_history(state)
 
   for i, entry in ipairs(buffer_history.entries) do
     local prefix = i == ui_state.selected_entry_idx and " ▶ " or "   "
-    local status_icon = entry.status == "success" and "✓" or "✗"
+
+    -- Determine icon based on source and status:
+    -- - Auto-save entries: [A]
+    -- - Executed success: ✓
+    -- - Executed error: ✗
+    local status_icon, icon_hl, icon_len
+    if entry.source == "auto_save" then
+      status_icon = "[A]"
+      icon_hl = "SsnsUiHint"
+      icon_len = 3
+    elseif entry.status == "success" then
+      status_icon = "✓"
+      icon_hl = "SsnsStatusConnected"
+      icon_len = 3  -- UTF-8 checkmark is 3 bytes
+    else
+      status_icon = "✗"
+      icon_hl = "SsnsStatusError"
+      icon_len = 3  -- UTF-8 cross is 3 bytes
+    end
+
     local query_preview = entry.query:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
     if #query_preview > 35 then
       query_preview = query_preview:sub(1, 35) .. "..."
@@ -164,9 +183,8 @@ local function render_history(state)
     end
 
     -- Highlight status icon
-    local hl_group = entry.status == "success" and "SsnsStatusConnected" or "SsnsStatusError"
     local icon_col = i == ui_state.selected_entry_idx and 4 or 3
-    table.insert(highlights, {line_idx, icon_col, icon_col + 3, hl_group})
+    table.insert(highlights, {line_idx, icon_col, icon_col + icon_len, icon_hl})
   end
 
   if #buffer_history.entries == 0 then
@@ -202,13 +220,19 @@ local function render_preview(state)
   table.insert(lines, string.format("-- Buffer: %s", buffer_history.buffer_name))
   table.insert(lines, string.format("-- Server: %s | Database: %s",
     buffer_history.server_name, buffer_history.database or "N/A"))
-  table.insert(lines, string.format("-- Time: %s | Duration: %dms | Status: %s",
-    entry.timestamp, entry.execution_time_ms or 0, entry.status))
 
-  if entry.status == "error" then
-    table.insert(lines, string.format("-- Error: %s", entry.error_message or "Unknown"))
-  elseif entry.row_count then
-    table.insert(lines, string.format("-- Rows: %d", entry.row_count))
+  -- Show different info based on source type
+  if entry.source == "auto_save" then
+    table.insert(lines, string.format("-- Time: %s | Type: Auto-Save", entry.timestamp))
+  else
+    table.insert(lines, string.format("-- Time: %s | Duration: %dms | Status: %s",
+      entry.timestamp, entry.execution_time_ms or 0, entry.status))
+
+    if entry.status == "error" then
+      table.insert(lines, string.format("-- Error: %s", entry.error_message or "Unknown"))
+    elseif entry.row_count then
+      table.insert(lines, string.format("-- Rows: %d", entry.row_count))
+    end
   end
 
   table.insert(lines, "")
