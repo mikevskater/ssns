@@ -18,6 +18,7 @@ local KeymapManager = require('ssns.keymap_manager')
 ---@field search_editing boolean Whether user is currently editing search
 ---@field search_case_sensitive boolean Case sensitive search
 ---@field search_use_regex boolean Use regex for search (vs literal)
+---@field search_whole_word boolean Match whole words only
 
 ---@type MultiPanelState?
 local multi_panel = nil
@@ -39,6 +40,7 @@ local ui_state = {
   search_editing = false,
   search_case_sensitive = false,
   search_use_regex = true,
+  search_whole_word = false,
 }
 
 ---Close the history window
@@ -64,6 +66,7 @@ function UiHistory.close()
     search_editing = false,
     search_case_sensitive = false,
     search_use_regex = true,
+    search_whole_word = false,
   }
 end
 
@@ -232,23 +235,15 @@ end
 local function build_search_settings_line()
   local case_state = ui_state.search_case_sensitive and "On" or "Off"
   local regex_state = ui_state.search_use_regex and "On" or "Off"
+  local word_state = ui_state.search_whole_word and "On" or "Off"
 
-  -- Format: " ^c Case:Off | ^r Regex:On"
-  local line = string.format(" ^c Case:%s | ^r Regex:%s", case_state, regex_state)
+  -- Format: " A-c Case:Off | A-r Regex:On | A-w Word:Off"
+  local line = string.format(" A-c:%s | A-r:%s | A-w:%s", case_state, regex_state, word_state)
+
+  -- Simple highlight - just highlight the whole line as Comment
+  -- States will be highlighted based on their value
   local highlights = {}
-
-  -- Highlight the key hints
-  table.insert(highlights, {0, 1, 3, "SsnsUiHint"})  -- ^c
-  table.insert(highlights, {0, 4, 8, "Comment"})     -- Case
-  -- Highlight state based on value
-  local case_hl = ui_state.search_case_sensitive and "SsnsStatusConnected" or "Comment"
-  table.insert(highlights, {0, 9, 9 + #case_state, case_hl})
-
-  local regex_start = 9 + #case_state + 3  -- " | "
-  table.insert(highlights, {0, regex_start, regex_start + 2, "SsnsUiHint"})  -- ^r
-  table.insert(highlights, {0, regex_start + 3, regex_start + 8, "Comment"})  -- Regex
-  local regex_hl = ui_state.search_use_regex and "SsnsStatusConnected" or "Comment"
-  table.insert(highlights, {0, regex_start + 9, regex_start + 9 + #regex_state, regex_hl})
+  table.insert(highlights, {0, 0, #line, "Comment"})
 
   return line, highlights
 end
@@ -289,12 +284,44 @@ end
 
 ---Check if a query matches the search pattern
 ---@param query string The query text to search in
+---Check if character is a word character (alphanumeric or underscore)
+---@param char string Single character
+---@return boolean
+local function is_word_char(char)
+  if not char or char == "" then return false end
+  return char:match("[%w_]") ~= nil
+end
+
+---Check if a match at position is a whole word match
+---@param text string The text being searched
+---@param match_start number 1-indexed start position of match
+---@param match_end number 1-indexed end position of match
+---@return boolean
+local function is_whole_word_match(text, match_start, match_end)
+  -- Check character before match
+  if match_start > 1 then
+    local char_before = text:sub(match_start - 1, match_start - 1)
+    if is_word_char(char_before) then
+      return false
+    end
+  end
+  -- Check character after match
+  if match_end < #text then
+    local char_after = text:sub(match_end + 1, match_end + 1)
+    if is_word_char(char_after) then
+      return false
+    end
+  end
+  return true
+end
+
+---@param query string The query text to search in
 ---@param pattern string The search pattern
 ---@param regex table? Compiled regex (if using regex mode)
 ---@return boolean
 local function query_matches_pattern(query, pattern, regex)
   if ui_state.search_use_regex and regex then
-    -- Regex mode
+    -- Regex mode (whole word is handled in regex pattern)
     return regex:match_str(query) ~= nil
   else
     -- Plain text mode
@@ -304,7 +331,23 @@ local function query_matches_pattern(query, pattern, regex)
       search_in = query:lower()
       search_for = pattern:lower()
     end
-    return search_in:find(search_for, 1, true) ~= nil
+
+    if ui_state.search_whole_word then
+      -- Find all occurrences and check if any is a whole word match
+      local start_pos = 1
+      while true do
+        local match_start, match_end = search_in:find(search_for, start_pos, true)
+        if not match_start then
+          return false
+        end
+        if is_whole_word_match(search_in, match_start, match_end) then
+          return true
+        end
+        start_pos = match_start + 1
+      end
+    else
+      return search_in:find(search_for, 1, true) ~= nil
+    end
   end
 end
 
@@ -321,11 +364,18 @@ local function apply_search_filter(pattern)
 
   -- Compile regex if in regex mode
   if ui_state.search_use_regex then
-    -- Add case insensitivity flag if needed
     local regex_pattern = pattern
-    if not ui_state.search_case_sensitive then
-      regex_pattern = "\\c" .. pattern
+
+    -- Add word boundary for whole word search
+    if ui_state.search_whole_word then
+      regex_pattern = "\\<" .. regex_pattern .. "\\>"
     end
+
+    -- Add case insensitivity flag if needed
+    if not ui_state.search_case_sensitive then
+      regex_pattern = "\\c" .. regex_pattern
+    end
+
     local ok, compiled = pcall(vim.regex, regex_pattern)
     if ok then
       regex = compiled
@@ -473,6 +523,29 @@ local function toggle_regex_mode()
   end
 end
 
+---Toggle whole word mode and re-filter
+local function toggle_whole_word()
+  ui_state.search_whole_word = not ui_state.search_whole_word
+
+  -- Re-apply filter with current search text
+  local search_buf = multi_panel and multi_panel:get_panel_buffer("search")
+  if search_buf and vim.api.nvim_buf_is_valid(search_buf) then
+    local lines = vim.api.nvim_buf_get_lines(search_buf, 0, 1, false)
+    local text = (lines[1] or ""):gsub("^%s+", "")
+    apply_search_filter(text)
+  end
+
+  -- Update virtual text to show new state
+  update_search_settings_virt_text()
+
+  -- Re-render panels
+  if multi_panel then
+    multi_panel:render_panel("buffers")
+    multi_panel:render_panel("history")
+    multi_panel:render_panel("preview")
+  end
+end
+
 ---Setup autocmds for search mode
 local function setup_search_autocmds()
   local search_buf = multi_panel and multi_panel:get_panel_buffer("search")
@@ -512,27 +585,34 @@ local function setup_search_autocmds()
     end,
   })
 
-  -- Setup insert mode keymaps
-  vim.keymap.set('i', '<Esc>', function()
+  -- Setup insert mode keymaps using KeymapManager to handle conflicts
+  KeymapManager.set(search_buf, 'i', '<Esc>', function()
     cancel_search()
-  end, { buffer = search_buf, nowait = true })
+  end, { nowait = true })
 
-  vim.keymap.set('i', '<Tab>', function()
+  KeymapManager.set(search_buf, 'i', '<Tab>', function()
     commit_search()
-  end, { buffer = search_buf, nowait = true })
+  end, { nowait = true })
 
-  vim.keymap.set('i', '<CR>', function()
+  KeymapManager.set(search_buf, 'i', '<CR>', function()
     commit_search()
-  end, { buffer = search_buf, nowait = true })
+  end, { nowait = true })
 
-  -- Toggle search settings keymaps
-  vim.keymap.set('i', '<C-c>', function()
+  -- Toggle search settings keymaps (using Alt keys to avoid conflicts)
+  KeymapManager.set(search_buf, 'i', '<A-c>', function()
     toggle_case_sensitive()
-  end, { buffer = search_buf, nowait = true })
+  end, { nowait = true })
 
-  vim.keymap.set('i', '<C-r>', function()
+  KeymapManager.set(search_buf, 'i', '<A-r>', function()
     toggle_regex_mode()
-  end, { buffer = search_buf, nowait = true })
+  end, { nowait = true })
+
+  KeymapManager.set(search_buf, 'i', '<A-w>', function()
+    toggle_whole_word()
+  end, { nowait = true })
+
+  -- Setup auto-restore for keymaps
+  KeymapManager.setup_auto_restore(search_buf)
 end
 
 ---Activate search mode
@@ -882,6 +962,7 @@ function UiHistory.show_history(options)
     search_editing = false,
     search_case_sensitive = false,
     search_use_regex = true,
+    search_whole_word = false,
   }
 
   -- Get keymaps from config
@@ -980,6 +1061,7 @@ function UiHistory.show_history(options)
         search_editing = false,
         search_case_sensitive = false,
         search_use_regex = true,
+        search_whole_word = false,
       }
     end,
   })
