@@ -264,6 +264,147 @@ ORDER BY o.name, c.column_id;
 ]], database_name, schema_name)
 end
 
+---Get query to retrieve ALL columns for ALL tables/views/TVFs in a database (no schema filter)
+---Combines table/view columns with table-valued function return columns in one query
+---Used for bulk metadata loading in object search
+---@param database_name string
+---@return string query
+function SqlServerAdapter:get_all_columns_bulk_query(database_name)
+  return string.format([[
+USE [%s];
+SET NOCOUNT ON;
+
+-- Table and View columns
+SELECT
+  s.name AS schema_name,
+  o.name AS table_name,
+  CASE o.type WHEN 'U' THEN 'table' WHEN 'V' THEN 'view' END AS object_type,
+  c.name AS column_name,
+  t.name AS data_type,
+  c.column_id AS sort_order
+FROM sys.columns c WITH (NOWAIT)
+INNER JOIN sys.types t WITH (NOWAIT) ON c.user_type_id = t.user_type_id
+INNER JOIN sys.objects o WITH (NOWAIT) ON c.object_id = o.object_id
+INNER JOIN sys.schemas s WITH (NOWAIT) ON o.schema_id = s.schema_id
+WHERE o.type IN ('U', 'V')  -- U = User Table, V = View
+  AND o.is_ms_shipped = 0
+
+UNION ALL
+
+-- Table-valued function return columns
+SELECT
+  s.name AS schema_name,
+  o.name AS table_name,
+  'function' AS object_type,
+  c.name AS column_name,
+  t.name AS data_type,
+  c.column_id AS sort_order
+FROM sys.columns c WITH (NOWAIT)
+INNER JOIN sys.types t WITH (NOWAIT) ON c.user_type_id = t.user_type_id
+INNER JOIN sys.objects o WITH (NOWAIT) ON c.object_id = o.object_id
+INNER JOIN sys.schemas s WITH (NOWAIT) ON o.schema_id = s.schema_id
+WHERE o.type IN ('IF', 'TF')  -- IF = Inline TVF, TF = Multi-Statement TVF
+  AND o.is_ms_shipped = 0
+
+--ORDER BY schema_name, table_name, sort_order;
+]], database_name)
+end
+
+---Get query to retrieve ALL parameters for ALL procedures/functions in a database
+---Used for bulk metadata loading in object search
+---@param database_name string
+---@return string query
+function SqlServerAdapter:get_all_parameters_bulk_query(database_name)
+  return string.format([[
+USE [%s];
+SET NOCOUNT ON;
+
+SELECT
+  s.name AS schema_name,
+  o.name AS routine_name,
+  CASE o.type
+    WHEN 'P' THEN 'procedure'
+    WHEN 'FN' THEN 'function'
+    WHEN 'IF' THEN 'function'
+    WHEN 'TF' THEN 'function'
+  END AS object_type,
+  CASE
+    WHEN p.parameter_id = 0 THEN 'RETURNS'
+    ELSE p.name
+  END AS parameter_name,
+  t.name AS data_type
+FROM sys.parameters p WITH (NOWAIT)
+INNER JOIN sys.types t WITH (NOWAIT) ON p.user_type_id = t.user_type_id
+INNER JOIN sys.objects o WITH (NOWAIT) ON p.object_id = o.object_id
+INNER JOIN sys.schemas s WITH (NOWAIT) ON o.schema_id = s.schema_id
+WHERE o.type IN ('P', 'FN', 'IF', 'TF')  -- P = Procedure, FN/IF/TF = Functions
+  AND o.is_ms_shipped = 0
+ORDER BY s.name, o.name, p.parameter_id;
+]], database_name)
+end
+
+---Parse bulk columns result into metadata map
+---@param result table Node.js result object
+---@return table<string, string> metadata Map of "schema.object_type.name" -> "col1 type1 col2 type2 ..."
+function SqlServerAdapter:parse_all_columns_bulk(result)
+  local metadata = {}
+
+  if result and result.success and result.resultSets and #result.resultSets > 0 then
+    local rows = result.resultSets[1].rows or {}
+    -- Group columns by table
+    local columns_by_table = {}
+    for _, row in ipairs(rows) do
+      if row.schema_name and row.table_name and row.column_name then
+        local key = string.format("%s.%s.%s", row.schema_name, row.object_type, row.table_name)
+        if not columns_by_table[key] then
+          columns_by_table[key] = {}
+        end
+        table.insert(columns_by_table[key], row.column_name)
+        if row.data_type then
+          table.insert(columns_by_table[key], row.data_type)
+        end
+      end
+    end
+    -- Concatenate column info into searchable text
+    for key, parts in pairs(columns_by_table) do
+      metadata[key] = table.concat(parts, " ")
+    end
+  end
+
+  return metadata
+end
+
+---Parse bulk parameters result into metadata map
+---@param result table Node.js result object
+---@return table<string, string> metadata Map of "schema.object_type.name" -> "param1 type1 param2 type2 ..."
+function SqlServerAdapter:parse_all_parameters_bulk(result)
+  local metadata = {}
+
+  if result and result.success and result.resultSets and #result.resultSets > 0 then
+    local rows = result.resultSets[1].rows or {}
+    -- Group parameters by routine
+    local params_by_routine = {}
+    for _, row in ipairs(rows) do
+      if row.schema_name and row.routine_name and row.parameter_name then
+        local key = string.format("%s.%s.%s", row.schema_name, row.object_type, row.routine_name)
+        if not params_by_routine[key] then
+          params_by_routine[key] = {}
+        end
+        table.insert(params_by_routine[key], row.parameter_name)
+        if row.data_type then
+          table.insert(params_by_routine[key], row.data_type)
+        end
+      end
+    end
+    -- Concatenate parameter info into searchable text
+    for key, parts in pairs(params_by_routine) do
+      metadata[key] = table.concat(parts, " ")
+    end
+  end
+
+  return metadata
+end
+
 ---Get query to list columns of a table-valued function (TVF)
 ---@param database_name string
 ---@param schema_name string?

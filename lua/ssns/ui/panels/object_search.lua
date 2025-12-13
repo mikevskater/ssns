@@ -402,6 +402,7 @@ local function load_objects_for_databases(callback)
     -- Bulk load objects for this database
     vim.schedule(function()
       local definitions_map = {}
+      local metadata_map = {}
 
       -- Load all object types
       local ok, err = pcall(function()
@@ -422,6 +423,11 @@ local function load_objects_for_databases(callback)
         if db.load_all_definitions_bulk then
           definitions_map = db:load_all_definitions_bulk()
         end
+
+        -- Bulk load metadata (columns for tables/views, parameters for procedures/functions)
+        if db.load_all_metadata_bulk then
+          metadata_map = db:load_all_metadata_bulk()
+        end
       end)
 
       if not ok then
@@ -431,15 +437,22 @@ local function load_objects_for_databases(callback)
       -- Flatten objects from this database
       local db_objects = flatten_database_objects(db, server)
       for _, obj in ipairs(db_objects) do
-        -- Apply bulk-loaded definition if available (tables, views, procedures, functions)
-        -- Skip schemas as they don't have definitions
+        -- Apply bulk-loaded definition and metadata if available
+        -- Skip schemas as they don't have definitions or metadata
         if obj.object_type ~= "schema" then
-          local def_key = string.format("%s.%s.%s", obj.schema_name or "dbo", obj.object_type, obj.name)
-          if definitions_map[def_key] then
-            obj.definition = definitions_map[def_key]
+          local key = string.format("%s.%s.%s", obj.schema_name or "dbo", obj.object_type, obj.name)
+
+          -- Apply definition
+          if definitions_map[key] then
+            obj.definition = definitions_map[key]
             obj.definition_loaded = true
-            -- Also cache it
-            ui_state.definitions_cache[obj.unique_id] = definitions_map[def_key]
+            ui_state.definitions_cache[obj.unique_id] = definitions_map[key]
+          end
+
+          -- Apply metadata (columns/parameters as searchable text)
+          if metadata_map[key] then
+            obj.metadata_text = metadata_map[key]
+            obj.metadata_loaded = true
           end
         end
         table.insert(ui_state.loaded_objects, obj)

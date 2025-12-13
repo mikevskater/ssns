@@ -506,6 +506,45 @@ function DbClass:load_all_definitions_bulk()
   return definitions
 end
 
+---Bulk load all metadata (columns for tables/views/TVFs, parameters for procedures/functions)
+---@return table<string, string> metadata Map of "schema.object_type.name" -> "col1 type1 col2 type2 ..."
+function DbClass:load_all_metadata_bulk()
+  local adapter = self:get_adapter()
+  local metadata = {}
+
+  -- Load columns for all tables/views and TVF return columns (combined query)
+  if adapter.get_all_columns_bulk_query then
+    local query = adapter:get_all_columns_bulk_query(self.db_name)
+    local results = adapter:execute(self:_get_db_connection_config(), query)
+    if adapter.parse_all_columns_bulk then
+      local columns_meta = adapter:parse_all_columns_bulk(results)
+      for k, v in pairs(columns_meta) do
+        metadata[k] = v
+      end
+    end
+  end
+
+  -- Load parameters for all procedures/functions
+  -- For TVFs, this appends input parameters to the return columns loaded above
+  if adapter.get_all_parameters_bulk_query then
+    local query = adapter:get_all_parameters_bulk_query(self.db_name)
+    local results = adapter:execute(self:_get_db_connection_config(), query)
+    if adapter.parse_all_parameters_bulk then
+      local params_meta = adapter:parse_all_parameters_bulk(results)
+      for k, v in pairs(params_meta) do
+        -- Append parameters to existing metadata (for TVFs that have both columns and params)
+        if metadata[k] then
+          metadata[k] = metadata[k] .. " " .. v
+        else
+          metadata[k] = v
+        end
+      end
+    end
+  end
+
+  return metadata
+end
+
 ---Get all tables (server-type aware - aggregates from schemas if needed)
 ---Uses bulk loading when tables haven't been loaded yet
 ---Supports lazy loading based on config.completion.eager_load setting
