@@ -856,11 +856,15 @@ end
 ---@param input_order string[] New input order
 ---@param dropdowns table<string, DropdownField>? New dropdown definitions
 ---@param dropdown_order string[]? New dropdown order
-function InputManager:update_inputs(inputs, input_order, dropdowns, dropdown_order)
+---@param multi_dropdowns table<string, MultiDropdownField>? New multi-dropdown definitions
+---@param multi_dropdown_order string[]? New multi-dropdown order
+function InputManager:update_inputs(inputs, input_order, dropdowns, dropdown_order, multi_dropdowns, multi_dropdown_order)
   self.inputs = inputs or {}
   self.input_order = input_order or {}
   self.dropdowns = dropdowns or self.dropdowns or {}
   self.dropdown_order = dropdown_order or self.dropdown_order or {}
+  self.multi_dropdowns = multi_dropdowns or self.multi_dropdowns or {}
+  self.multi_dropdown_order = multi_dropdown_order or self.multi_dropdown_order or {}
 
   -- Preserve existing values, add new ones, and track placeholder state
   for key, input in pairs(self.inputs) do
@@ -876,6 +880,13 @@ function InputManager:update_inputs(inputs, input_order, dropdowns, dropdown_ord
   for key, dropdown in pairs(self.dropdowns) do
     if not self.dropdown_values[key] then
       self.dropdown_values[key] = dropdown.value or ""
+    end
+  end
+
+  -- Preserve multi-dropdown values
+  for key, multi_dropdown in pairs(self.multi_dropdowns) do
+    if not self.multi_dropdown_values[key] then
+      self.multi_dropdown_values[key] = vim.deepcopy(multi_dropdown.values or {})
     end
   end
 
@@ -971,7 +982,12 @@ end
 ---@param key string Dropdown key
 function InputManager:_open_dropdown(key)
   local dropdown = self.dropdowns[key]
-  if not dropdown then return end
+  if not dropdown then
+    vim.notify(string.format("DEBUG _open_dropdown: dropdown '%s' not found!", key), vim.log.levels.WARN)
+    return
+  end
+
+  vim.notify(string.format("DEBUG _open_dropdown: key=%s, options=%d, current_value=%s", key, #(dropdown.options or {}), tostring(self.dropdown_values[key])), vim.log.levels.INFO)
 
   -- Store original value for cancel
   self._dropdown_original_value = self.dropdown_values[key]
@@ -988,6 +1004,8 @@ function InputManager:_open_dropdown(key)
       break
     end
   end
+
+  vim.notify(string.format("DEBUG _open_dropdown: selected_idx=%d, callback=%s", self._dropdown_selected_idx, self.on_dropdown_change and "yes" or "NO"), vim.log.levels.INFO)
 
   -- Calculate dropdown window position (below the dropdown field)
   local win_info = vim.fn.getwininfo(self.winid)[1]
@@ -1047,16 +1065,22 @@ function InputManager:_open_dropdown(key)
   self._dropdown_ns = vim.api.nvim_create_namespace("ssns_dropdown_content")
   cb:apply_to_buffer(self._dropdown_float.bufnr, self._dropdown_ns)
 
-  -- Position cursor on selected item
-  if self._dropdown_selected_idx <= height then
-    self._dropdown_float:set_cursor(self._dropdown_selected_idx, 0)
-  end
-
   -- Setup dropdown keymaps
   self:_setup_dropdown_keymaps()
 
   -- Setup autocmds for focus-lost detection
   self:_setup_dropdown_autocmds()
+
+  -- Position cursor on selected item (schedule to ensure window is fully ready)
+  local selected_idx = self._dropdown_selected_idx
+  local dropdown_float = self._dropdown_float
+  vim.schedule(function()
+    if dropdown_float and dropdown_float:is_valid() and selected_idx <= height then
+      dropdown_float:set_cursor(selected_idx, 0)
+      -- Force redraw to ensure cursorline is visible
+      vim.cmd('redraw')
+    end
+  end)
 end
 
 ---Build dropdown content using ContentBuilder
@@ -1162,13 +1186,24 @@ function InputManager:_select_dropdown()
   local filtered = self._dropdown_filtered_options or dropdown.options
   local selected_opt = filtered[self._dropdown_selected_idx]
 
+  vim.notify(string.format("DEBUG _select_dropdown: key=%s, idx=%d, opt=%s", key, self._dropdown_selected_idx, selected_opt and selected_opt.value or "nil"), vim.log.levels.INFO)
+
   if selected_opt then
-    local old_value = self.dropdown_values[key]
+    -- Compare against ORIGINAL value (from when dropdown opened), not current value
+    -- (current value may have been updated by live preview on cursor movement)
+    local original_value = self._dropdown_original_value
     self.dropdown_values[key] = selected_opt.value
 
-    -- Callback if value changed
-    if self.on_dropdown_change and selected_opt.value ~= old_value then
+    vim.notify(string.format("DEBUG _select_dropdown: original=%s, new=%s, callback=%s", tostring(original_value), selected_opt.value, self.on_dropdown_change and "yes" or "NO"), vim.log.levels.INFO)
+
+    -- Callback if value changed from original
+    if self.on_dropdown_change and selected_opt.value ~= original_value then
+      vim.notify("DEBUG _select_dropdown: Calling on_dropdown_change callback", vim.log.levels.INFO)
       self.on_dropdown_change(key, selected_opt.value)
+    elseif not self.on_dropdown_change then
+      vim.notify("DEBUG _select_dropdown: No callback set!", vim.log.levels.WARN)
+    elseif selected_opt.value == original_value then
+      vim.notify("DEBUG _select_dropdown: Value unchanged from original, skipping callback", vim.log.levels.INFO)
     end
   end
 

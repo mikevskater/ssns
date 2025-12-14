@@ -69,8 +69,6 @@ local multi_panel = nil
 ---@type number?
 local search_augroup = nil
 
----Namespace for search virtual text
-local search_virt_ns = vim.api.nvim_create_namespace("ssns_object_search_virt")
 
 ---@type ObjectSearchUIState
 local ui_state = {
@@ -784,36 +782,8 @@ end
 -- Render Functions
 -- ============================================================================
 
----Build search settings hint line
----@return string line
----@return table[] highlights
-local function build_search_settings_line()
-  local case_state = ui_state.case_sensitive and "On" or "Off"
-  local regex_state = ui_state.use_regex and "On" or "Off"
-  local word_state = ui_state.whole_word and "On" or "Off"
 
-  local line = string.format(" A-c:%s | A-r:%s | A-w:%s", case_state, regex_state, word_state)
-  local highlights = {{0, 0, #line, "Comment"}}
-
-  return line, highlights
-end
-
----Build search context hint line
----@return string line
----@return table[] highlights
-local function build_search_context_line()
-  local names_state = ui_state.search_names and "On" or "Off"
-  local defs_state = ui_state.search_definitions and "On" or "Off"
-  local meta_state = ui_state.search_metadata and "On" or "Off"
-  local sys_state = ui_state.show_system and "On" or "Off"
-
-  local line = string.format(" A-1 Names:%s | A-2 Defs:%s | A-3 Meta:%s | A-s Sys:%s", names_state, defs_state, meta_state, sys_state)
-  local highlights = {{0, 0, #line, "Comment"}}
-
-  return line, highlights
-end
-
----Render the search panel
+---Render the search panel (now just shows search input)
 ---@param state MultiPanelState
 ---@return string[] lines, table[] highlights
 local function render_search(state)
@@ -834,6 +804,163 @@ local function render_search(state)
   end
 
   return lines, highlights
+end
+
+---Build server dropdown options from cache and connections
+---@return DropdownOption[] options
+local function get_server_options()
+  local options = {}
+  local seen = {}
+
+  -- Connected servers first
+  for _, server in ipairs(Cache.servers) do
+    if not seen[server.name] then
+      seen[server.name] = true
+      local status = server:is_connected() and "● " or "○ "
+      table.insert(options, {
+        value = server.name,
+        label = status .. server.name,
+      })
+    end
+  end
+
+  -- Saved connections
+  local Connections = require('ssns.connections')
+  local saved_connections = Connections.load()
+  for _, conn in ipairs(saved_connections) do
+    if not seen[conn.name] then
+      seen[conn.name] = true
+      table.insert(options, {
+        value = conn.name,
+        label = "○ " .. conn.name,
+      })
+    end
+  end
+
+  -- Config connections
+  local Config = require('ssns.config')
+  local config_connections = Config.get_connections()
+  for name, _ in pairs(config_connections) do
+    if not seen[name] then
+      seen[name] = true
+      table.insert(options, {
+        value = name,
+        label = "○ " .. name,
+      })
+    end
+  end
+
+  return options
+end
+
+---Build database dropdown options from selected server
+---@return DropdownOption[] options
+local function get_database_options()
+  local options = {}
+
+  if not ui_state.selected_server then
+    return options
+  end
+
+  local server = ui_state.selected_server
+
+  -- Ensure server is connected
+  if not server:is_connected() then
+    return options
+  end
+
+  -- Load databases if needed (check return value)
+  if not server.is_loaded then
+    local ok = server:load()
+    if not ok then
+      return options
+    end
+  end
+
+  -- Get databases directly from server
+  local databases = server.databases or {}
+
+  for _, db in ipairs(databases) do
+    -- Skip system databases if show_system is false
+    if ui_state.show_system or not SYSTEM_DATABASES[db.db_name] then
+      table.insert(options, {
+        value = db.db_name,
+        label = db.db_name,
+      })
+    end
+  end
+
+  return options
+end
+
+---Get currently selected database names as array
+---@return string[] names
+local function get_selected_db_names()
+  local names = {}
+  for name, _ in pairs(ui_state.selected_databases) do
+    table.insert(names, name)
+  end
+  table.sort(names)
+  return names
+end
+
+---Render the settings panel with dropdowns and toggles
+---@param state MultiPanelState
+---@return ContentBuilder cb
+local function render_settings(state)
+  local cb = ContentBuilder.new()
+
+  -- Row 1: Server dropdown
+  cb:dropdown("server", {
+    label = "Server",
+    options = get_server_options(),
+    value = ui_state.selected_server and ui_state.selected_server.name or "",
+    placeholder = "(select server)",
+    width = 28,
+  })
+
+  -- Row 2: Database multi-dropdown
+  cb:multi_dropdown("databases", {
+    label = "Databases",
+    options = get_database_options(),
+    values = get_selected_db_names(),
+    display_mode = "count",
+    select_all_option = true,
+    placeholder = "(select databases)",
+    width = 28,
+  })
+
+  -- Row 3: Toggle options with key hints (Case, Regex)
+  local case_icon = ui_state.case_sensitive and "[Aa]" or "[  ]"
+  local regex_icon = ui_state.use_regex and "[.*]" or "[  ]"
+
+  cb:spans({
+    { text = " ", style = "muted" },
+    { text = case_icon, style = ui_state.case_sensitive and "success" or "muted" },
+    { text = " Case ", style = "muted" },
+    { text = "{c}", style = "comment" },
+    { text = "  ", style = "muted" },
+    { text = regex_icon, style = ui_state.use_regex and "success" or "muted" },
+    { text = " Regex    ", style = "muted" },
+    { text = "{x}", style = "comment" },
+  })
+
+  -- Row 4: Toggle options (Word, System)
+  local word_icon = ui_state.whole_word and "[W ]" or "[  ]"
+  local sys_icon = ui_state.show_system and "[S ]" or "[  ]"
+
+  cb:spans({
+    { text = " ", style = "muted" },
+    { text = word_icon, style = ui_state.whole_word and "success" or "muted" },
+    { text = " Word ", style = "muted" },
+    { text = "{w}", style = "comment" },
+    { text = "  ", style = "muted" },
+    { text = sys_icon, style = ui_state.show_system and "success" or "muted" },
+    { text = " Sys Objs ", style = "muted" },
+    { text = "{S}", style = "comment" },
+  })
+
+  return cb
 end
 
 ---Render the results panel
@@ -857,47 +984,37 @@ end
 local function render_results(state)
   local cb = ContentBuilder.new()
 
-  -- Header: Server and database info
-  cb:blank()
+  -- Sticky header: Search filter toggles (Name/Defs/Meta)
+  local name_icon = ui_state.search_names and "[N]" or "[ ]"
+  local defs_icon = ui_state.search_definitions and "[D]" or "[ ]"
+  local meta_icon = ui_state.search_metadata and "[M]" or "[ ]"
 
+  cb:spans({
+    { text = " ", style = "muted" },
+    { text = name_icon, style = ui_state.search_names and "success" or "muted" },
+    { text = " Name ", style = "muted" },
+    { text = "{1}", style = "comment" },
+    { text = "  ", style = "muted" },
+    { text = defs_icon, style = ui_state.search_definitions and "success" or "muted" },
+    { text = " Defs ", style = "muted" },
+    { text = "{2}", style = "comment" },
+    { text = "  ", style = "muted" },
+    { text = meta_icon, style = ui_state.search_metadata and "success" or "muted" },
+    { text = " Meta ", style = "muted" },
+    { text = "{3}", style = "comment" },
+  })
+
+  -- Header: Just show counts (server/database info is in settings panel)
   if ui_state.selected_server then
-    local db_count = 0
-    for _ in pairs(ui_state.selected_databases) do
-      db_count = db_count + 1
-    end
-
-    local db_names = {}
-    for name, _ in pairs(ui_state.selected_databases) do
-      table.insert(db_names, name)
-    end
-    table.sort(db_names)
-
-    local db_display = db_count > 2
-      and string.format("%s (+%d)", db_names[1], db_count - 1)
-      or table.concat(db_names, ", ")
-
-    cb:spans({
-      { text = " Server: ", style = "label" },
-      { text = ui_state.selected_server.name, style = "server" },
-    })
-
-    cb:spans({
-      { text = " Databases: ", style = "label" },
-      { text = db_display, style = "database" },
-    })
-
     cb:spans({
       { text = " Objects: ", style = "muted" },
       { text = tostring(#ui_state.loaded_objects), style = "value" },
-      { text = " | Results: ", style = "muted" },
+      { text = " | Matches: ", style = "muted" },
       { text = tostring(#ui_state.filtered_results), style = "value" },
     })
   else
-    cb:styled(" No server selected", "muted")
-    cb:styled(" Press 's' to select a server", "comment")
+    cb:styled(" Select a server to search", "muted")
   end
-
-  cb:blank()
 
   -- Loading indicator
   if ui_state.loading_status == "loading" then
@@ -1108,24 +1225,6 @@ end
 -- Search Mode Functions
 -- ============================================================================
 
----Update virtual text settings during search editing
-local function update_search_settings_virt_text()
-  local search_buf = multi_panel and multi_panel:get_panel_buffer("search")
-  if not search_buf or not vim.api.nvim_buf_is_valid(search_buf) then return end
-
-  vim.api.nvim_buf_clear_namespace(search_buf, search_virt_ns, 0, -1)
-
-  local settings_line, _ = build_search_settings_line()
-  local context_line, _ = build_search_context_line()
-
-  vim.api.nvim_buf_set_extmark(search_buf, search_virt_ns, 0, 0, {
-    virt_lines = {
-      {{settings_line, "Comment"}},
-      {{context_line, "Comment"}},
-    },
-    virt_lines_above = false,
-  })
-end
 
 ---Finalize search exit
 local function finalize_search_exit()
@@ -1133,7 +1232,6 @@ local function finalize_search_exit()
 
   local search_buf = multi_panel and multi_panel:get_panel_buffer("search")
   if search_buf and vim.api.nvim_buf_is_valid(search_buf) then
-    vim.api.nvim_buf_clear_namespace(search_buf, search_virt_ns, 0, -1)
     vim.api.nvim_buf_set_option(search_buf, 'modifiable', false)
   end
 
@@ -1170,117 +1268,84 @@ local function commit_search()
   vim.cmd('stopinsert')
 end
 
----Toggle functions for search settings
-local function toggle_case_sensitive()
-  ui_state.case_sensitive = not ui_state.case_sensitive
+---Helper to apply search from current search term or buffer
+local function apply_current_search()
   local search_buf = multi_panel and multi_panel:get_panel_buffer("search")
   if search_buf and vim.api.nvim_buf_is_valid(search_buf) then
     local lines = vim.api.nvim_buf_get_lines(search_buf, 0, 1, false)
     local text = (lines[1] or ""):gsub("^%s+", "")
     UiObjectSearch._apply_search(text)
-  end
-  update_search_settings_virt_text()
-  if multi_panel then
-    multi_panel:render_panel("results")
-    multi_panel:render_panel("metadata")
-    multi_panel:render_panel("definition")
+  else
+    UiObjectSearch._apply_search(ui_state.search_term)
   end
 end
 
-local function toggle_regex_mode()
-  ui_state.use_regex = not ui_state.use_regex
-  local search_buf = multi_panel and multi_panel:get_panel_buffer("search")
-  if search_buf and vim.api.nvim_buf_is_valid(search_buf) then
-    local lines = vim.api.nvim_buf_get_lines(search_buf, 0, 1, false)
-    local text = (lines[1] or ""):gsub("^%s+", "")
-    UiObjectSearch._apply_search(text)
-  end
-  update_search_settings_virt_text()
+---Toggle functions for search settings
+local function toggle_case_sensitive()
+  ui_state.case_sensitive = not ui_state.case_sensitive
+  apply_current_search()
   if multi_panel then
+    multi_panel:render_panel("settings")
     multi_panel:render_panel("results")
-    multi_panel:render_panel("metadata")
-    multi_panel:render_panel("definition")
   end
+  vim.notify("Case sensitive: " .. (ui_state.case_sensitive and "ON" or "OFF"), vim.log.levels.INFO)
+end
+
+local function toggle_regex()
+  ui_state.use_regex = not ui_state.use_regex
+  apply_current_search()
+  if multi_panel then
+    multi_panel:render_panel("settings")
+    multi_panel:render_panel("results")
+  end
+  vim.notify("Regex: " .. (ui_state.use_regex and "ON" or "OFF"), vim.log.levels.INFO)
 end
 
 local function toggle_whole_word()
   ui_state.whole_word = not ui_state.whole_word
-  local search_buf = multi_panel and multi_panel:get_panel_buffer("search")
-  if search_buf and vim.api.nvim_buf_is_valid(search_buf) then
-    local lines = vim.api.nvim_buf_get_lines(search_buf, 0, 1, false)
-    local text = (lines[1] or ""):gsub("^%s+", "")
-    UiObjectSearch._apply_search(text)
-  end
-  update_search_settings_virt_text()
+  apply_current_search()
   if multi_panel then
+    multi_panel:render_panel("settings")
     multi_panel:render_panel("results")
-    multi_panel:render_panel("metadata")
-    multi_panel:render_panel("definition")
   end
+  vim.notify("Whole word: " .. (ui_state.whole_word and "ON" or "OFF"), vim.log.levels.INFO)
 end
 
 local function toggle_search_names()
   ui_state.search_names = not ui_state.search_names
-  local search_buf = multi_panel and multi_panel:get_panel_buffer("search")
-  if search_buf and vim.api.nvim_buf_is_valid(search_buf) then
-    local lines = vim.api.nvim_buf_get_lines(search_buf, 0, 1, false)
-    local text = (lines[1] or ""):gsub("^%s+", "")
-    UiObjectSearch._apply_search(text)
-  end
-  update_search_settings_virt_text()
+  apply_current_search()
   if multi_panel then
     multi_panel:render_panel("results")
-    multi_panel:render_panel("metadata")
-    multi_panel:render_panel("definition")
   end
+  vim.notify("Search names: " .. (ui_state.search_names and "ON" or "OFF"), vim.log.levels.INFO)
 end
 
-local function toggle_search_definitions()
+local function toggle_search_defs()
   ui_state.search_definitions = not ui_state.search_definitions
-  local search_buf = multi_panel and multi_panel:get_panel_buffer("search")
-  if search_buf and vim.api.nvim_buf_is_valid(search_buf) then
-    local lines = vim.api.nvim_buf_get_lines(search_buf, 0, 1, false)
-    local text = (lines[1] or ""):gsub("^%s+", "")
-    UiObjectSearch._apply_search(text)
-  end
-  update_search_settings_virt_text()
+  apply_current_search()
   if multi_panel then
     multi_panel:render_panel("results")
-    multi_panel:render_panel("metadata")
-    multi_panel:render_panel("definition")
   end
+  vim.notify("Search definitions: " .. (ui_state.search_definitions and "ON" or "OFF"), vim.log.levels.INFO)
 end
 
-local function toggle_search_metadata()
+local function toggle_search_meta()
   ui_state.search_metadata = not ui_state.search_metadata
-  local search_buf = multi_panel and multi_panel:get_panel_buffer("search")
-  if search_buf and vim.api.nvim_buf_is_valid(search_buf) then
-    local lines = vim.api.nvim_buf_get_lines(search_buf, 0, 1, false)
-    local text = (lines[1] or ""):gsub("^%s+", "")
-    UiObjectSearch._apply_search(text)
-  end
-  update_search_settings_virt_text()
+  apply_current_search()
   if multi_panel then
     multi_panel:render_panel("results")
-    multi_panel:render_panel("metadata")
-    multi_panel:render_panel("definition")
   end
+  vim.notify("Search metadata: " .. (ui_state.search_metadata and "ON" or "OFF"), vim.log.levels.INFO)
 end
 
-local function toggle_show_system()
+local function toggle_system()
   ui_state.show_system = not ui_state.show_system
-  local search_buf = multi_panel and multi_panel:get_panel_buffer("search")
-  if search_buf and vim.api.nvim_buf_is_valid(search_buf) then
-    local lines = vim.api.nvim_buf_get_lines(search_buf, 0, 1, false)
-    local text = (lines[1] or ""):gsub("^%s+", "")
-    UiObjectSearch._apply_search(text)
-  end
-  update_search_settings_virt_text()
+  apply_current_search()
   if multi_panel then
+    multi_panel:render_panel("settings")
     multi_panel:render_panel("results")
-    multi_panel:render_panel("metadata")
-    multi_panel:render_panel("definition")
   end
+  vim.notify("Show system: " .. (ui_state.show_system and "ON" or "OFF"), vim.log.levels.INFO)
 end
 
 ---Setup search autocmds
@@ -1327,14 +1392,14 @@ local function setup_search_autocmds()
 
   -- Search settings toggles
   KeymapManager.set(search_buf, 'i', '<A-c>', toggle_case_sensitive, { nowait = true })
-  KeymapManager.set(search_buf, 'i', '<A-r>', toggle_regex_mode, { nowait = true })
+  KeymapManager.set(search_buf, 'i', '<A-r>', toggle_regex, { nowait = true })
   KeymapManager.set(search_buf, 'i', '<A-w>', toggle_whole_word, { nowait = true })
 
   -- Search context toggles
   KeymapManager.set(search_buf, 'i', '<A-1>', toggle_search_names, { nowait = true })
-  KeymapManager.set(search_buf, 'i', '<A-2>', toggle_search_definitions, { nowait = true })
-  KeymapManager.set(search_buf, 'i', '<A-3>', toggle_search_metadata, { nowait = true })
-  KeymapManager.set(search_buf, 'i', '<A-s>', toggle_show_system, { nowait = true })
+  KeymapManager.set(search_buf, 'i', '<A-2>', toggle_search_defs, { nowait = true })
+  KeymapManager.set(search_buf, 'i', '<A-3>', toggle_search_meta, { nowait = true })
+  KeymapManager.set(search_buf, 'i', '<A-s>', toggle_system, { nowait = true })
 
   KeymapManager.setup_auto_restore(search_buf)
 end
@@ -1367,7 +1432,6 @@ local function activate_search()
   end
 
   setup_search_autocmds()
-  update_search_settings_virt_text()
 end
 
 -- ============================================================================
@@ -1391,7 +1455,15 @@ local function navigate_results(direction)
     multi_panel:render_panel("results")
     multi_panel:render_panel("metadata")
     multi_panel:render_panel("definition")
-    multi_panel:set_cursor("results", ui_state.selected_result_idx + 5, 0)
+    -- Results list starts at line 2 (line 1 is header)
+    -- Ensure cursor stays within buffer bounds
+    local results_buf = multi_panel:get_panel_buffer("results")
+    if results_buf and vim.api.nvim_buf_is_valid(results_buf) then
+      local line_count = vim.api.nvim_buf_line_count(results_buf)
+      local target_line = math.min(ui_state.selected_result_idx + 2, line_count)
+      target_line = math.max(1, target_line)
+      multi_panel:set_cursor("results", target_line, 0)
+    end
   end
 end
 
@@ -1761,80 +1833,139 @@ function UiObjectSearch.show(options)
   local common = KeymapManager.get_group("common")
 
   -- Create multi-panel window
+  -- Layout: Top row (search + settings) | Bottom (results + metadata/definition)
   multi_panel = UiFloat.create_multi_panel({
     layout = {
-      split = "horizontal",
+      split = "vertical",  -- Top section vs bottom section
       children = {
         {
-          -- Left column: search + results
-          split = "vertical",
-          ratio = 0.40,
+          -- Top row: search (left) + settings (right)
+          split = "horizontal",
+          ratio = 0.10,
+          min_height = 4,
           children = {
             {
               name = "search",
               title = "Search",
-              ratio = 0.10,
-              min_height = 2,
+              ratio = 0.40,
               focusable = false,
               cursorline = false,
               on_render = render_search,
             },
             {
-              name = "results",
-              title = "Results",
-              ratio = 0.90,
+              name = "settings",
+              title = "Settings",
+              ratio = 0.60,
               focusable = true,
-              cursorline = true,
-              on_render = render_results,
+              cursorline = false,
+              on_render = function(state)
+                local cb = render_settings(state)
+                return cb:build_lines(), cb:build_highlights()
+              end,
               on_focus = function()
                 if multi_panel then
-                  multi_panel:update_panel_title("results", "Results ●")
+                  multi_panel:update_panel_title("settings", "Settings ●")
+                  multi_panel:update_panel_title("results", "Results")
                   multi_panel:update_panel_title("metadata", "Metadata")
                   multi_panel:update_panel_title("definition", "Definition")
+                  -- Position cursor on the first dropdown (server)
+                  vim.schedule(function()
+                    if multi_panel and multi_panel:is_valid() then
+                      local settings_panel = multi_panel.panels["settings"]
+                      if settings_panel and settings_panel.input_manager then
+                        local dropdown_order = settings_panel.input_manager.dropdown_order
+                        if dropdown_order and #dropdown_order > 0 then
+                          local first_dropdown_key = dropdown_order[1]
+                          local dropdown = settings_panel.input_manager.dropdowns[first_dropdown_key]
+                          if dropdown and settings_panel.float:is_valid() then
+                            vim.api.nvim_win_set_cursor(settings_panel.float.winid, { dropdown.line, dropdown.col_start })
+                          end
+                        end
+                      end
+                    end
+                  end)
                 end
               end,
             },
           },
         },
         {
-          -- Right column: metadata + definition
-          split = "vertical",
-          ratio = 0.60,
+          -- Bottom section: results (left) + metadata/definition (right)
+          split = "horizontal",
+          ratio = 0.90,
           children = {
             {
-              name = "metadata",
-              title = "Metadata",
-              ratio = 0.25,
+              name = "results",
+              title = "Results",
+              ratio = 0.40,
               focusable = true,
-              cursorline = false,
-              on_render = render_metadata,
+              cursorline = true,
+              on_render = render_results,
               on_focus = function()
                 if multi_panel then
-                  multi_panel:update_panel_title("results", "Results")
-                  multi_panel:update_panel_title("metadata", "Metadata ●")
+                  multi_panel:update_panel_title("settings", "Settings")
+                  multi_panel:update_panel_title("results", "Results ●")
+                  multi_panel:update_panel_title("metadata", "Metadata")
                   multi_panel:update_panel_title("definition", "Definition")
+                  -- Position cursor on currently selected result
+                  vim.schedule(function()
+                    if multi_panel and multi_panel:is_valid() then
+                      local results_buf = multi_panel:get_panel_buffer("results")
+                      if results_buf and vim.api.nvim_buf_is_valid(results_buf) then
+                        local line_count = vim.api.nvim_buf_line_count(results_buf)
+                        -- Results start at line 2 (line 1 is header)
+                        local target_line = math.min(ui_state.selected_result_idx + 2, line_count)
+                        target_line = math.max(1, target_line)
+                        multi_panel:set_cursor("results", target_line, 0)
+                      end
+                    end
+                  end)
                 end
               end,
             },
             {
-              name = "definition",
-              title = "Definition",
-              ratio = 0.75,
-              filetype = "sql",
-              focusable = true,
-              cursorline = false,
-              on_render = render_definition,
-              on_pre_filetype = function(bufnr)
-                vim.b[bufnr].ssns_skip_semantic_highlight = true
-              end,
-              use_basic_highlighting = true,
-              on_focus = function()
-                if multi_panel then
-                  multi_panel:update_panel_title("results", "Results")
-                  multi_panel:update_panel_title("metadata", "Metadata")
-                  multi_panel:update_panel_title("definition", "Definition ●")
-                end
-              end,
+              -- Right column: metadata + definition
+              split = "vertical",
+              ratio = 0.60,
+              children = {
+                {
+                  name = "metadata",
+                  title = "Metadata",
+                  ratio = 0.25,
+                  focusable = true,
+                  cursorline = false,
+                  on_render = render_metadata,
+                  on_focus = function()
+                    if multi_panel then
+                      multi_panel:update_panel_title("settings", "Settings")
+                      multi_panel:update_panel_title("results", "Results")
+                      multi_panel:update_panel_title("metadata", "Metadata ●")
+                      multi_panel:update_panel_title("definition", "Definition")
+                    end
+                  end,
+                },
+                {
+                  name = "definition",
+                  title = "Definition",
+                  ratio = 0.75,
+                  filetype = "sql",
+                  focusable = true,
+                  cursorline = false,
+                  on_render = render_definition,
+                  on_pre_filetype = function(bufnr)
+                    vim.b[bufnr].ssns_skip_semantic_highlight = true
+                  end,
+                  use_basic_highlighting = true,
+                  on_focus = function()
+                    if multi_panel then
+                      multi_panel:update_panel_title("settings", "Settings")
+                      multi_panel:update_panel_title("results", "Results")
+                      multi_panel:update_panel_title("metadata", "Metadata")
+                      multi_panel:update_panel_title("definition", "Definition ●")
+                    end
+                  end,
+                },
+              },
             },
           },
         },
@@ -1842,8 +1973,8 @@ function UiObjectSearch.show(options)
     },
     total_width_ratio = 0.80,
     total_height_ratio = 0.80,
-    footer = " /=Search | s=Server | d=Databases | r=Refresh | o=Open | y=Yank | q=Close ",
-    initial_focus = "results",
+    footer = " /=Search | r=Refresh | q=Close ",
+    initial_focus = "settings",
     augroup_name = "SSNSObjectSearch",
     on_close = function()
       if search_augroup then
@@ -1862,51 +1993,157 @@ function UiObjectSearch.show(options)
   -- Render all panels
   multi_panel:render_all()
 
-  -- Setup keymaps for results panel
-  multi_panel:set_panel_keymaps("results", {
-    [common.close or "q"] = function() UiObjectSearch.close() end,
-    [common.cancel or "<Esc>"] = function() UiObjectSearch.close() end,
-    [common.nav_down or "j"] = function() navigate_results(1) end,
-    [common.nav_up or "k"] = function() navigate_results(-1) end,
-    ["<Down>"] = function() navigate_results(1) end,
-    ["<Up>"] = function() navigate_results(-1) end,
-    [common.confirm or "<CR>"] = open_in_buffer,
-    ["o"] = open_in_buffer,
-    [common.next_field or "<Tab>"] = function() multi_panel:focus_next_panel() end,
-    [common.prev_field or "<S-Tab>"] = function() multi_panel:focus_prev_panel() end,
-    ["/"] = activate_search,
-    ["s"] = show_server_picker,
-    ["d"] = show_database_picker,
-    ["r"] = refresh_objects,
-    ["y"] = yank_object_name,
+  -- Setup inputs for settings panel (enables dropdowns)
+  local settings_cb = render_settings(multi_panel)
+  multi_panel:setup_inputs("settings", settings_cb, {
+    on_dropdown_change = function(key, value)
+      if key == "server" then
+        -- Server changed - find or create server and connect
+        local server = Cache.find_server(value)
+
+        if not server then
+          local Connections = require('ssns.connections')
+          local conn = Connections.find_by_name(value)
+          if conn then
+            server = Cache.find_or_create_server(value, conn)
+          end
+        end
+
+        if server then
+          if not server:is_connected() then
+            vim.notify("Connecting to " .. value .. "...", vim.log.levels.INFO)
+            local ok, err = server:connect()
+            if not ok then
+              vim.notify("Failed to connect: " .. (err or "Unknown"), vim.log.levels.ERROR)
+              return
+            end
+          end
+
+          -- Explicitly load databases after connecting
+          if not server.is_loaded then
+            vim.notify("Loading databases...", vim.log.levels.INFO)
+            local ok = server:load()
+            if not ok then
+              vim.notify("Failed to load databases", vim.log.levels.WARN)
+            end
+          end
+
+          ui_state.selected_server = server
+          -- Reset databases
+          ui_state.selected_databases = {}
+          ui_state.all_databases_selected = false
+          ui_state.loaded_objects = {}
+          ui_state.filtered_results = {}
+
+          -- Refresh settings panel to show new database options
+          local new_cb = render_settings(multi_panel)
+          multi_panel:update_inputs("settings", new_cb)
+          multi_panel:render_panel("settings")
+          multi_panel:render_panel("results")
+        end
+      end
+    end,
+    on_multi_dropdown_change = function(key, values)
+      if key == "databases" then
+        -- Databases changed - update selected databases
+        ui_state.selected_databases = {}
+        for _, name in ipairs(values) do
+          if ui_state.selected_server then
+            local db = ui_state.selected_server:find_database(name)
+            if db then
+              ui_state.selected_databases[name] = db
+            end
+          end
+        end
+
+        -- Reload objects with new database selection
+        if next(ui_state.selected_databases) then
+          load_objects_for_databases()
+        else
+          -- Clear results if no databases selected
+          ui_state.loaded_objects = {}
+          ui_state.filtered_results = {}
+          multi_panel:render_panel("results")
+        end
+      end
+    end,
   })
 
-  -- Setup keymaps for metadata panel
-  multi_panel:set_panel_keymaps("metadata", {
-    [common.close or "q"] = function() UiObjectSearch.close() end,
-    [common.cancel or "<Esc>"] = function() UiObjectSearch.close() end,
-    [common.next_field or "<Tab>"] = function() multi_panel:focus_next_panel() end,
-    [common.prev_field or "<S-Tab>"] = function() multi_panel:focus_prev_panel() end,
-    ["/"] = activate_search,
-    ["s"] = show_server_picker,
-    ["d"] = show_database_picker,
-    ["r"] = refresh_objects,
-  })
+  -- Position cursor on the first dropdown (server) in settings panel
+  vim.schedule(function()
+    if multi_panel and multi_panel:is_valid() then
+      local settings_panel = multi_panel.panels["settings"]
+      if settings_panel and settings_panel.input_manager then
+        local dropdown_order = settings_panel.input_manager.dropdown_order
+        if dropdown_order and #dropdown_order > 0 then
+          local first_dropdown_key = dropdown_order[1]
+          local dropdown = settings_panel.input_manager.dropdowns[first_dropdown_key]
+          if dropdown and settings_panel.float:is_valid() then
+            vim.api.nvim_win_set_cursor(settings_panel.float.winid, { dropdown.line, dropdown.col_start })
+          end
+        end
+      end
+    end
+  end)
 
-  -- Setup keymaps for definition panel
-  multi_panel:set_panel_keymaps("definition", {
-    [common.close or "q"] = function() UiObjectSearch.close() end,
-    [common.cancel or "<Esc>"] = function() UiObjectSearch.close() end,
-    [common.next_field or "<Tab>"] = function() multi_panel:focus_next_panel() end,
-    [common.prev_field or "<S-Tab>"] = function() multi_panel:focus_prev_panel() end,
-    ["/"] = activate_search,
-    ["s"] = show_server_picker,
-    ["d"] = show_database_picker,
-    ["r"] = refresh_objects,
-  })
+  local function focus_server_dropdown()
+    multi_panel:focus_panel("settings")
+    -- TODO: Focus the server dropdown specifically via InputManager
+  end
 
-  -- Mark initial focus
-  multi_panel:update_panel_title("results", "Results ●")
+  local function focus_database_dropdown()
+    multi_panel:focus_panel("settings")
+    -- TODO: Focus the database dropdown specifically via InputManager
+  end
+
+  -- Common keymaps shared by all panels
+  local function get_common_keymaps()
+    return {
+      [common.close or "q"] = function() UiObjectSearch.close() end,
+      [common.cancel or "<Esc>"] = function() UiObjectSearch.close() end,
+      [common.next_field or "<Tab>"] = function() multi_panel:focus_next_panel() end,
+      [common.prev_field or "<S-Tab>"] = function() multi_panel:focus_prev_panel() end,
+      ["/"] = activate_search,
+      ["s"] = focus_server_dropdown,
+      ["d"] = focus_database_dropdown,
+      ["c"] = toggle_case_sensitive,
+      ["x"] = toggle_regex,
+      ["w"] = toggle_whole_word,
+      ["S"] = toggle_system,
+      ["1"] = toggle_search_names,
+      ["2"] = toggle_search_defs,
+      ["3"] = toggle_search_meta,
+      ["r"] = refresh_objects,
+    }
+  end
+
+  -- Setup keymaps for settings panel
+  multi_panel:set_panel_keymaps("settings", get_common_keymaps())
+
+  -- Setup keymaps for results panel (extends common with results-specific keymaps)
+  local results_keymaps = get_common_keymaps()
+  results_keymaps[common.nav_down or "j"] = function() navigate_results(1) end
+  results_keymaps[common.nav_up or "k"] = function() navigate_results(-1) end
+  results_keymaps["<Down>"] = function() navigate_results(1) end
+  results_keymaps["<Up>"] = function() navigate_results(-1) end
+  results_keymaps[common.confirm or "<CR>"] = open_in_buffer
+  results_keymaps["o"] = open_in_buffer
+  results_keymaps["y"] = yank_object_name
+  multi_panel:set_panel_keymaps("results", results_keymaps)
+
+  -- Setup keymaps for metadata and definition panels
+  multi_panel:set_panel_keymaps("metadata", get_common_keymaps())
+  multi_panel:set_panel_keymaps("definition", get_common_keymaps())
+
+  -- Mark initial focus (settings panel is focused initially)
+  multi_panel:update_panel_title("settings", "Settings ●")
+
+  -- Helper to refresh settings panel after state changes
+  local function refresh_settings_panel()
+    local new_cb = render_settings(multi_panel)
+    multi_panel:update_inputs("settings", new_cb)
+    multi_panel:render_panel("settings")
+  end
 
   -- Handle initial context
   if options.server then
@@ -1916,12 +2153,14 @@ function UiObjectSearch.show(options)
       ui_state.selected_databases[options.database.db_name] = options.database
       -- Start loading objects
       vim.schedule(function()
+        refresh_settings_panel()
         load_objects_for_databases()
       end)
     else
-      -- Show database picker
+      -- Refresh settings to show server, focus on settings for database selection
       vim.schedule(function()
-        show_database_picker()
+        refresh_settings_panel()
+        multi_panel:focus_panel("settings")
       end)
     end
   else
@@ -1941,24 +2180,26 @@ function UiObjectSearch.show(options)
             if database then
               ui_state.selected_databases[database.db_name] = database
               vim.schedule(function()
+                refresh_settings_panel()
                 load_objects_for_databases()
               end)
               return
             end
           end
 
-          -- Have server but no database - show picker
+          -- Have server but no database - focus settings for database selection
           vim.schedule(function()
-            show_database_picker()
+            refresh_settings_panel()
+            multi_panel:focus_panel("settings")
           end)
           return
         end
       end
     end
 
-    -- No context - show server picker
+    -- No context - focus settings panel for server/database selection
     vim.schedule(function()
-      show_server_picker()
+      multi_panel:focus_panel("settings")
     end)
   end
 end

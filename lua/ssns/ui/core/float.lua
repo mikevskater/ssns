@@ -1969,7 +1969,7 @@ end
 ---Setup input fields for a panel from a ContentBuilder
 ---@param panel_name string Panel name
 ---@param content_builder ContentBuilder ContentBuilder instance with inputs
----@param opts table? Options: { on_value_change = function?, on_input_enter = function?, on_input_exit = function? }
+---@param opts table? Options: { on_value_change?, on_input_enter?, on_input_exit?, on_dropdown_change?, on_multi_dropdown_change? }
 function MultiPanelWindow:setup_inputs(panel_name, content_builder, opts)
   if self._closed then return end
   opts = opts or {}
@@ -1979,22 +1979,45 @@ function MultiPanelWindow:setup_inputs(panel_name, content_builder, opts)
 
   local inputs = content_builder:get_inputs()
   local input_order = content_builder:get_input_order()
+  local dropdowns = content_builder:get_dropdowns()
+  local dropdown_order = content_builder:get_dropdown_order()
+  local multi_dropdowns = content_builder:get_multi_dropdowns()
+  local multi_dropdown_order = content_builder:get_multi_dropdown_order()
 
-  -- Skip if no inputs
-  if vim.tbl_isempty(inputs) then return end
+  -- Skip if no inputs or dropdowns
+  local has_inputs = not vim.tbl_isempty(inputs)
+  local has_dropdowns = not vim.tbl_isempty(dropdowns)
+  local has_multi_dropdowns = not vim.tbl_isempty(multi_dropdowns)
+  if not has_inputs and not has_dropdowns and not has_multi_dropdowns then return end
 
   -- Create input manager for this panel using FloatWindow's bufnr/winid
   local InputManager = require('ssns.ui.core.input_manager')
-  
+
   panel.input_manager = InputManager.new({
     bufnr = panel.float.bufnr,
     winid = panel.float.winid,
     inputs = inputs,
     input_order = input_order,
+    dropdowns = dropdowns,
+    dropdown_order = dropdown_order,
+    multi_dropdowns = multi_dropdowns,
+    multi_dropdown_order = multi_dropdown_order,
     on_value_change = opts.on_value_change,
     on_input_enter = opts.on_input_enter,
     on_input_exit = opts.on_input_exit,
   })
+
+  -- Set up dropdown change callbacks
+  if opts.on_dropdown_change then
+    panel.input_manager.on_dropdown_change = opts.on_dropdown_change
+    vim.notify(string.format("DEBUG setup_inputs: on_dropdown_change callback SET for panel '%s'", panel_name), vim.log.levels.INFO)
+  else
+    vim.notify(string.format("DEBUG setup_inputs: NO on_dropdown_change callback for panel '%s'", panel_name), vim.log.levels.WARN)
+  end
+  if opts.on_multi_dropdown_change then
+    panel.input_manager.on_multi_dropdown_change = opts.on_multi_dropdown_change
+    vim.notify(string.format("DEBUG setup_inputs: on_multi_dropdown_change callback SET for panel '%s'", panel_name), vim.log.levels.INFO)
+  end
 
   panel.input_manager:setup()
 end
@@ -2053,7 +2076,16 @@ function MultiPanelWindow:update_inputs(panel_name, content_builder)
   if panel and panel.input_manager then
     local inputs = content_builder:get_inputs()
     local input_order = content_builder:get_input_order()
-    panel.input_manager:update_inputs(inputs, input_order)
+    local dropdowns = content_builder:get_dropdowns()
+    local dropdown_order = content_builder:get_dropdown_order()
+    local multi_dropdowns = content_builder:get_multi_dropdowns()
+    local multi_dropdown_order = content_builder:get_multi_dropdown_order()
+
+    panel.input_manager:update_inputs(
+      inputs, input_order,
+      dropdowns, dropdown_order,
+      multi_dropdowns, multi_dropdown_order
+    )
   end
 end
 
