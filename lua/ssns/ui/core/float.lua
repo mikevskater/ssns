@@ -623,8 +623,10 @@ function FloatWindow:_setup_input_manager(content_builder)
   local input_order = content_builder:get_input_order()
   local dropdowns = content_builder:get_dropdowns()
   local dropdown_order = content_builder:get_dropdown_order()
+  local multi_dropdowns = content_builder:get_multi_dropdowns()
+  local multi_dropdown_order = content_builder:get_multi_dropdown_order()
 
-  -- Create input manager with both inputs and dropdowns
+  -- Create input manager with inputs, dropdowns, and multi-dropdowns
   self._input_manager = InputManager.new({
     bufnr = self.bufnr,
     winid = self.winid,
@@ -632,6 +634,8 @@ function FloatWindow:_setup_input_manager(content_builder)
     input_order = input_order,
     dropdowns = dropdowns,
     dropdown_order = dropdown_order,
+    multi_dropdowns = multi_dropdowns,
+    multi_dropdown_order = multi_dropdown_order,
   })
 
   -- Setup input mode handling
@@ -755,6 +759,33 @@ end
 function FloatWindow:on_dropdown_change(callback)
   if self._input_manager then
     self._input_manager.on_dropdown_change = callback
+  end
+end
+
+---Get values of a specific multi-dropdown
+---@param key string Multi-dropdown key
+---@return string[]? values Array of selected values
+function FloatWindow:get_multi_dropdown_values(key)
+  if self._input_manager then
+    return self._input_manager:get_multi_dropdown_values(key)
+  end
+  return nil
+end
+
+---Set values of a specific multi-dropdown
+---@param key string Multi-dropdown key
+---@param values string[] New selected values
+function FloatWindow:set_multi_dropdown_values(key, values)
+  if self._input_manager then
+    self._input_manager:set_multi_dropdown_values(key, values)
+  end
+end
+
+---Set callback for when multi-dropdown values change
+---@param callback function Callback function (key, values)
+function FloatWindow:on_multi_dropdown_change(callback)
+  if self._input_manager then
+    self._input_manager.on_multi_dropdown_change = callback
   end
 end
 

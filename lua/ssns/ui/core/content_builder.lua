@@ -109,6 +109,22 @@ local STYLE_MAPPINGS = {
 ---@field prefix_len number Length of label prefix (for line reconstruction)
 ---@field placeholder string? Placeholder text when no selection
 
+---@class MultiDropdownField
+---@field key string Unique identifier for the multi-dropdown
+---@field line number 1-indexed line number
+---@field col_start number 0-indexed start column of dropdown value area
+---@field col_end number 0-indexed end column of dropdown value area
+---@field width number Display width of dropdown field
+---@field values string[] Currently selected values (array)
+---@field default string[] Default/initial values
+---@field options DropdownOption[] Available options
+---@field max_height number Maximum visible items in dropdown (default: 6)
+---@field label string? Optional label text before dropdown
+---@field prefix_len number Length of label prefix (for line reconstruction)
+---@field placeholder string? Placeholder text when no selection
+---@field display_mode string? How to show selections: "count" (default) or "list"
+---@field select_all_option boolean? Whether to show "Select All" option (default: true)
+
 ---@class ContentBuilderState
 ---@field lines ContentLine[] Built content lines
 ---@field namespace number|nil Highlight namespace
@@ -124,6 +140,8 @@ function ContentBuilder.new()
   self._input_order = {}  -- Ordered list of input keys for Tab navigation
   self._dropdowns = {}  -- Map of key -> DropdownField
   self._dropdown_order = {}  -- Ordered list of dropdown keys
+  self._multi_dropdowns = {}  -- Map of key -> MultiDropdownField
+  self._multi_dropdown_order = {}  -- Ordered list of multi-dropdown keys
   return self
 end
 
@@ -135,6 +153,8 @@ function ContentBuilder:clear()
   self._input_order = {}
   self._dropdowns = {}
   self._dropdown_order = {}
+  self._multi_dropdowns = {}
+  self._multi_dropdown_order = {}
   return self
 end
 
@@ -651,6 +671,211 @@ function ContentBuilder:set_dropdown_value(key, value)
         break
       end
     end
+  end
+  return self
+end
+
+---Add a multi-select dropdown field
+---@param key string Unique identifier for retrieving the values
+---@param opts table Options: { label = string?, options = DropdownOption[], values = string[]?, placeholder = string?, width = number?, max_height = number?, display_mode = string?, select_all_option = boolean? }
+---@return ContentBuilder self For chaining
+function ContentBuilder:multi_dropdown(key, opts)
+  opts = opts or {}
+  local label = opts.label or ""
+  local options = opts.options or {}
+  local values = opts.values or {}  -- Array of selected values
+  local placeholder = opts.placeholder or "(none selected)"
+  local width = opts.width or 20
+  local max_height = opts.max_height or 8
+  local label_style = opts.label_style or "label"
+  local separator = opts.separator or ": "
+  local display_mode = opts.display_mode or "count"  -- "count" or "list"
+  local select_all_option = opts.select_all_option ~= false  -- Default true
+
+  -- Build display text based on selection count
+  local display_text
+  local is_placeholder = (#values == 0)
+
+  if #values == 0 then
+    display_text = placeholder
+  elseif display_mode == "count" then
+    if #values == #options then
+      display_text = "All (" .. #values .. ")"
+    else
+      display_text = #values .. " selected"
+    end
+  else  -- "list" mode
+    local labels = {}
+    for _, v in ipairs(values) do
+      for _, opt in ipairs(options) do
+        if opt.value == v then
+          table.insert(labels, opt.label)
+          break
+        end
+      end
+    end
+    display_text = table.concat(labels, ", ")
+  end
+
+  -- Build the line text
+  local prefix = ""
+  if label ~= "" then
+    prefix = label .. separator
+  end
+
+  -- Arrow indicator for multi-dropdown uses different symbol
+  local arrow = " ▾"  -- Smaller triangle to differentiate from single dropdown
+  local arrow_byte_len = #arrow
+  local arrow_display_len = 2
+
+  -- text_width is the area for the label text (excluding arrow)
+  local text_width = width - arrow_display_len
+  text_width = math.max(text_width, 1)
+
+  local effective_width = text_width + arrow_display_len
+
+  -- Pad or truncate display text
+  local display_len = vim.fn.strdisplaywidth(display_text)
+  if display_len < text_width then
+    display_text = display_text .. string.rep(" ", text_width - display_len)
+  elseif display_len > text_width then
+    -- Truncate with ellipsis
+    local truncated = ""
+    local current_width = 0
+    local char_idx = 0
+    while current_width < text_width - 1 do
+      local char = vim.fn.strcharpart(display_text, char_idx, 1)
+      if char == "" then break end
+      local char_width = vim.fn.strdisplaywidth(char)
+      if current_width + char_width > text_width - 1 then
+        break
+      end
+      truncated = truncated .. char
+      current_width = current_width + char_width
+      char_idx = char_idx + 1
+    end
+    local pad_needed = text_width - 1 - vim.fn.strdisplaywidth(truncated)
+    if pad_needed > 0 then
+      truncated = truncated .. string.rep(" ", pad_needed)
+    end
+    display_text = truncated .. "…"
+  end
+
+  -- Build full line
+  local input_start = #prefix
+  local text = prefix .. "[" .. display_text .. arrow .. "]"
+  local input_value_start = input_start + 1
+
+  local display_text_bytes = #display_text
+  local input_value_end = input_value_start + display_text_bytes + arrow_byte_len
+
+  local line = {
+    text = text,
+    highlights = {},
+  }
+
+  -- Highlight label
+  if label ~= "" and STYLE_MAPPINGS[label_style] then
+    table.insert(line.highlights, {
+      col_start = 0,
+      col_end = #label,
+      style = label_style,
+    })
+  end
+
+  -- Highlight brackets
+  table.insert(line.highlights, {
+    col_start = input_start,
+    col_end = input_start + 1,
+    style = "muted",
+  })
+  table.insert(line.highlights, {
+    col_start = input_value_end,
+    col_end = input_value_end + 1,
+    style = "muted",
+  })
+
+  -- Highlight dropdown value area
+  local value_style = is_placeholder and "input_placeholder" or "dropdown"
+  table.insert(line.highlights, {
+    col_start = input_value_start,
+    col_end = input_value_start + display_text_bytes,
+    style = value_style,
+  })
+
+  -- Highlight arrow
+  table.insert(line.highlights, {
+    col_start = input_value_start + display_text_bytes,
+    col_end = input_value_end,
+    style = "dropdown_arrow",
+  })
+
+  table.insert(self._lines, line)
+
+  -- Store multi-dropdown field info
+  local line_num = #self._lines
+  self._multi_dropdowns[key] = {
+    key = key,
+    line = line_num,
+    col_start = input_value_start,
+    col_end = input_value_end,
+    width = effective_width,
+    text_width = text_width,
+    values = vim.deepcopy(values),
+    default = vim.deepcopy(values),
+    options = options,
+    max_height = max_height,
+    label = label,
+    prefix_len = #prefix,
+    placeholder = placeholder,
+    is_placeholder = is_placeholder,
+    display_mode = display_mode,
+    select_all_option = select_all_option,
+  }
+  table.insert(self._multi_dropdown_order, key)
+
+  return self
+end
+
+---Add a multi-dropdown field with label (convenience method)
+---@param key string Unique identifier
+---@param label string Label text
+---@param opts table Options (same as multi_dropdown)
+---@return ContentBuilder self For chaining
+function ContentBuilder:labeled_multi_dropdown(key, label, opts)
+  opts = opts or {}
+  opts.label = label
+  return self:multi_dropdown(key, opts)
+end
+
+---Get all multi-dropdown field definitions
+---@return table<string, MultiDropdownField> multi_dropdowns
+function ContentBuilder:get_multi_dropdowns()
+  return self._multi_dropdowns
+end
+
+---Get ordered list of multi-dropdown keys
+---@return string[] keys
+function ContentBuilder:get_multi_dropdown_order()
+  return self._multi_dropdown_order
+end
+
+---Get a specific multi-dropdown field
+---@param key string Multi-dropdown key
+---@return MultiDropdownField? field
+function ContentBuilder:get_multi_dropdown(key)
+  return self._multi_dropdowns[key]
+end
+
+---Update a multi-dropdown field's values
+---@param key string Multi-dropdown key
+---@param values string[] New selected values
+---@return ContentBuilder self For chaining
+function ContentBuilder:set_multi_dropdown_values(key, values)
+  local multi_dropdown = self._multi_dropdowns[key]
+  if multi_dropdown then
+    multi_dropdown.values = vim.deepcopy(values)
+    multi_dropdown.is_placeholder = (#values == 0)
   end
   return self
 end

@@ -11,10 +11,13 @@ InputManager.__index = InputManager
 ---@field input_order string[] Ordered list of input keys
 ---@field dropdowns table<string, DropdownField>? Map of dropdown key -> field info
 ---@field dropdown_order string[]? Ordered list of dropdown keys
+---@field multi_dropdowns table<string, MultiDropdownField>? Map of multi-dropdown key -> field info
+---@field multi_dropdown_order string[]? Ordered list of multi-dropdown keys
 ---@field on_value_change fun(key: string, value: string)? Called when input value changes
 ---@field on_input_enter fun(key: string)? Called when entering input mode
 ---@field on_input_exit fun(key: string)? Called when exiting input mode
 ---@field on_dropdown_change fun(key: string, value: string)? Called when dropdown value changes
+---@field on_multi_dropdown_change fun(key: string, values: string[])? Called when multi-dropdown values change
 
 ---@class InputField (from content_builder)
 ---@field key string Unique identifier for the input
@@ -48,13 +51,16 @@ function InputManager.new(config)
   self.input_order = config.input_order or {}
   self.dropdowns = config.dropdowns or {}
   self.dropdown_order = config.dropdown_order or {}
+  self.multi_dropdowns = config.multi_dropdowns or {}
+  self.multi_dropdown_order = config.multi_dropdown_order or {}
   self.on_value_change = config.on_value_change
   self.on_input_enter = config.on_input_enter
   self.on_input_exit = config.on_input_exit
   self.on_dropdown_change = config.on_dropdown_change
+  self.on_multi_dropdown_change = config.on_multi_dropdown_change
 
-  -- Build combined field order (inputs and dropdowns interleaved by line number)
-  self._all_fields = {}  -- Array of { type = "input"|"dropdown", key = string, line = number }
+  -- Build combined field order (inputs, dropdowns, multi-dropdowns interleaved by line number)
+  self._all_fields = {}  -- Array of { type = "input"|"dropdown"|"multi_dropdown", key = string, line = number }
   self._field_order = {}  -- Ordered keys for navigation
 
   -- State
@@ -63,10 +69,11 @@ function InputManager.new(config)
   self.current_field_idx = 1  -- Track current field index for Tab navigation
   self.values = {}
   self.dropdown_values = {}
+  self.multi_dropdown_values = {}
   self._namespace = vim.api.nvim_create_namespace("ssns_input_manager")
   self._autocmd_group = nil
 
-  -- Dropdown state
+  -- Dropdown state (single-select)
   self._dropdown_open = false
   self._dropdown_key = nil
   self._dropdown_float = nil  -- FloatWindow instance
@@ -76,6 +83,16 @@ function InputManager.new(config)
   self._dropdown_filtered_options = nil
   self._dropdown_filter_text = ""
   self._dropdown_autocmd_group = nil
+
+  -- Multi-dropdown state
+  self._multi_dropdown_open = false
+  self._multi_dropdown_key = nil
+  self._multi_dropdown_float = nil
+  self._multi_dropdown_ns = nil
+  self._multi_dropdown_cursor_idx = 1
+  self._multi_dropdown_original_values = nil
+  self._multi_dropdown_pending_values = nil  -- Values being modified before confirm
+  self._multi_dropdown_autocmd_group = nil
 
   -- Initialize values from input definitions and track placeholder state
   for key, input in pairs(self.inputs) do
@@ -87,6 +104,11 @@ function InputManager.new(config)
   -- Initialize dropdown values
   for key, dropdown in pairs(self.dropdowns) do
     self.dropdown_values[key] = dropdown.value or ""
+  end
+
+  -- Initialize multi-dropdown values
+  for key, multi_dropdown in pairs(self.multi_dropdowns) do
+    self.multi_dropdown_values[key] = vim.deepcopy(multi_dropdown.values or {})
   end
 
   -- Build combined field order sorted by line number
@@ -123,6 +145,18 @@ function InputManager:_build_field_order()
     end
   end
 
+  -- Add multi-dropdowns
+  for _, key in ipairs(self.multi_dropdown_order) do
+    local multi_dropdown = self.multi_dropdowns[key]
+    if multi_dropdown then
+      table.insert(self._all_fields, {
+        type = "multi_dropdown",
+        key = key,
+        line = multi_dropdown.line,
+      })
+    end
+  end
+
   -- Sort by line number
   table.sort(self._all_fields, function(a, b)
     return a.line < b.line
@@ -135,14 +169,16 @@ function InputManager:_build_field_order()
   end
 end
 
----Get field info by key (input or dropdown)
+---Get field info by key (input, dropdown, or multi-dropdown)
 ---@param key string Field key
----@return table? field_info { type = "input"|"dropdown", field = InputField|DropdownField }
+---@return table? field_info { type = "input"|"dropdown"|"multi_dropdown", field = InputField|DropdownField|MultiDropdownField }
 function InputManager:_get_field(key)
   if self.inputs[key] then
     return { type = "input", field = self.inputs[key] }
   elseif self.dropdowns[key] then
     return { type = "dropdown", field = self.dropdowns[key] }
+  elseif self.multi_dropdowns[key] then
+    return { type = "multi_dropdown", field = self.multi_dropdowns[key] }
   end
   return nil
 end
@@ -457,6 +493,8 @@ function InputManager:_activate_field(key)
     self:enter_input_mode(key)
   elseif field_info.type == "dropdown" then
     self:_open_dropdown(key)
+  elseif field_info.type == "multi_dropdown" then
+    self:_open_multi_dropdown(key)
   end
 end
 
@@ -482,6 +520,14 @@ function InputManager:_setup_input_keymaps()
     for key, dropdown in pairs(self.dropdowns) do
       if dropdown.line == row and col >= dropdown.col_start and col < dropdown.col_end then
         self:_open_dropdown(key)
+        return
+      end
+    end
+
+    -- Check if cursor is directly on a multi-dropdown
+    for key, multi_dropdown in pairs(self.multi_dropdowns) do
+      if multi_dropdown.line == row and col >= multi_dropdown.col_start and col < multi_dropdown.col_end then
+        self:_open_multi_dropdown(key)
         return
       end
     end
@@ -837,7 +883,7 @@ function InputManager:update_inputs(inputs, input_order, dropdowns, dropdown_ord
   self:_build_field_order()
 end
 
----Highlight a field (input or dropdown)
+---Highlight a field (input, dropdown, or multi-dropdown)
 ---@param current_key string Key of currently focused field
 function InputManager:_highlight_current_field(current_key)
   -- Clear all and reapply with current highlighted
@@ -851,6 +897,11 @@ function InputManager:_highlight_current_field(current_key)
   -- Highlight dropdowns
   for key, _ in pairs(self.dropdowns) do
     self:_highlight_dropdown(key, key == current_key)
+  end
+
+  -- Highlight multi-dropdowns
+  for key, _ in pairs(self.multi_dropdowns) do
+    self:_highlight_multi_dropdown(key, key == current_key)
   end
 end
 
@@ -882,6 +933,37 @@ function InputManager:_highlight_dropdown(key, active)
   vim.api.nvim_buf_add_highlight(
     self.bufnr, self._namespace, "SsnsUiHint",
     dropdown.line - 1, dropdown.col_end - arrow_len, dropdown.col_end
+  )
+end
+
+---Highlight a multi-dropdown field
+---@param key string Multi-dropdown key
+---@param active boolean Whether multi-dropdown is active/focused
+function InputManager:_highlight_multi_dropdown(key, active)
+  local multi_dropdown = self.multi_dropdowns[key]
+  if not multi_dropdown then return end
+
+  -- Determine highlight group based on state
+  local hl_group
+  if active then
+    hl_group = "SsnsFloatInputActive"
+  elseif multi_dropdown.is_placeholder then
+    hl_group = "SsnsFloatInputPlaceholder"
+  else
+    hl_group = "SsnsFloatInput"
+  end
+
+  -- Highlight the multi-dropdown value area (excluding arrow)
+  local arrow_len = 4  -- " ▾" is 4 bytes
+  vim.api.nvim_buf_add_highlight(
+    self.bufnr, self._namespace, hl_group,
+    multi_dropdown.line - 1, multi_dropdown.col_start, multi_dropdown.col_end - arrow_len
+  )
+
+  -- Arrow always gets hint color
+  vim.api.nvim_buf_add_highlight(
+    self.bufnr, self._namespace, "SsnsUiHint",
+    multi_dropdown.line - 1, multi_dropdown.col_end - arrow_len, multi_dropdown.col_end
   )
 end
 
@@ -1390,11 +1472,522 @@ function InputManager:set_dropdown_value(key, value)
   self:_update_dropdown_display(key)
 end
 
+-- ============================================================================
+-- Multi-Dropdown Methods
+-- ============================================================================
+
+---Open multi-dropdown window
+---@param key string Multi-dropdown key
+function InputManager:_open_multi_dropdown(key)
+  local multi_dropdown = self.multi_dropdowns[key]
+  if not multi_dropdown then return end
+
+  -- Store original values for cancel
+  self._multi_dropdown_original_values = vim.deepcopy(self.multi_dropdown_values[key] or {})
+  self._multi_dropdown_pending_values = vim.deepcopy(self._multi_dropdown_original_values)
+  self._multi_dropdown_key = key
+  self._multi_dropdown_open = true
+  self._multi_dropdown_cursor_idx = 1
+
+  -- Calculate window position
+  local win_info = vim.fn.getwininfo(self.winid)[1]
+  if not win_info then return end
+
+  local parent_row = win_info.winrow
+  local parent_col = win_info.wincol
+
+  local dropdown_row = parent_row + multi_dropdown.line
+  local dropdown_col = parent_col + multi_dropdown.col_start - 1
+
+  -- Calculate dimensions
+  local width = (multi_dropdown.text_width or multi_dropdown.width) + 4  -- Extra space for checkbox
+  local option_count = #multi_dropdown.options
+  if multi_dropdown.select_all_option then
+    option_count = option_count + 2  -- "Select All" + separator
+  end
+  local height = math.min(option_count, multi_dropdown.max_height or 8)
+
+  -- Build content
+  local cb = self:_build_multi_dropdown_content()
+  local lines = cb:build_lines()
+
+  -- Create float
+  local UiFloat = require('ssns.ui.core.float')
+  self._multi_dropdown_float = UiFloat.create(lines, {
+    centered = false,
+    relative = "editor",
+    row = dropdown_row,
+    col = dropdown_col,
+    width = width,
+    height = height,
+    border = "rounded",
+    zindex = UiFloat.ZINDEX.DROPDOWN,
+    cursorline = true,
+    focusable = true,
+    enter = true,
+    wrap = false,
+    default_keymaps = false,
+    scrollbar = true,
+  })
+
+  if not self._multi_dropdown_float or not self._multi_dropdown_float:is_valid() then
+    self._multi_dropdown_open = false
+    self._multi_dropdown_key = nil
+    return
+  end
+
+  -- Apply highlights
+  self._multi_dropdown_ns = vim.api.nvim_create_namespace("ssns_multi_dropdown_content")
+  cb:apply_to_buffer(self._multi_dropdown_float.bufnr, self._multi_dropdown_ns)
+
+  -- Position cursor
+  self._multi_dropdown_float:set_cursor(1, 0)
+
+  -- Setup keymaps and autocmds
+  self:_setup_multi_dropdown_keymaps()
+  self:_setup_multi_dropdown_autocmds()
+end
+
+---Build multi-dropdown content using ContentBuilder
+---@return ContentBuilder cb
+function InputManager:_build_multi_dropdown_content()
+  local ContentBuilder = require('ssns.ui.core.content_builder')
+  local cb = ContentBuilder.new()
+
+  local key = self._multi_dropdown_key
+  local multi_dropdown = self.multi_dropdowns[key]
+  if not multi_dropdown then return cb end
+
+  local pending = self._multi_dropdown_pending_values or {}
+  local options = multi_dropdown.options
+
+  -- Helper to check if value is selected
+  local function is_selected(value)
+    for _, v in ipairs(pending) do
+      if v == value then return true end
+    end
+    return false
+  end
+
+  -- Calculate max label width
+  local max_label_len = 0
+  for _, opt in ipairs(options) do
+    max_label_len = math.max(max_label_len, #opt.label)
+  end
+  if multi_dropdown.select_all_option then
+    max_label_len = math.max(max_label_len, 10)  -- "Select All"
+  end
+
+  -- Add "Select All" option if enabled
+  if multi_dropdown.select_all_option then
+    local all_selected = (#pending == #options)
+    local checkbox = all_selected and "[x]" or "[ ]"
+    local label = "Select All"
+    local padded = label .. string.rep(" ", max_label_len - #label)
+
+    cb:spans({
+      { text = " " .. checkbox .. " ", style = all_selected and "success" or "muted" },
+      { text = padded, style = "emphasis" },
+    })
+
+    -- Separator
+    cb:styled(" " .. string.rep("─", max_label_len + 4), "muted")
+  end
+
+  -- Add options
+  for _, opt in ipairs(options) do
+    local selected = is_selected(opt.value)
+    local checkbox = selected and "[x]" or "[ ]"
+    local padded = opt.label .. string.rep(" ", max_label_len - #opt.label)
+
+    cb:spans({
+      { text = " " .. checkbox .. " ", style = selected and "success" or "muted" },
+      { text = padded, style = selected and "value" or "normal" },
+    })
+  end
+
+  return cb
+end
+
+---Render multi-dropdown content
+function InputManager:_render_multi_dropdown()
+  if not self._multi_dropdown_float or not self._multi_dropdown_float:is_valid() then return end
+
+  local cb = self:_build_multi_dropdown_content()
+  local lines = cb:build_lines()
+
+  self._multi_dropdown_float:update_lines(lines)
+
+  if self._multi_dropdown_ns then
+    cb:apply_to_buffer(self._multi_dropdown_float.bufnr, self._multi_dropdown_ns)
+  end
+end
+
+---Close multi-dropdown window
+---@param cancel boolean Whether to cancel (restore original values)
+function InputManager:_close_multi_dropdown(cancel)
+  if not self._multi_dropdown_open then return end
+
+  local key = self._multi_dropdown_key
+
+  -- Cancel = restore original values
+  if cancel and key and self._multi_dropdown_original_values then
+    self.multi_dropdown_values[key] = vim.deepcopy(self._multi_dropdown_original_values)
+  end
+
+  -- Clean up autocmds
+  if self._multi_dropdown_autocmd_group then
+    pcall(vim.api.nvim_del_augroup_by_id, self._multi_dropdown_autocmd_group)
+    self._multi_dropdown_autocmd_group = nil
+  end
+
+  -- Close float
+  if self._multi_dropdown_float then
+    pcall(function() self._multi_dropdown_float:close() end)
+  end
+
+  -- Reset state
+  self._multi_dropdown_open = false
+  self._multi_dropdown_key = nil
+  self._multi_dropdown_float = nil
+  self._multi_dropdown_ns = nil
+  self._multi_dropdown_cursor_idx = 1
+  self._multi_dropdown_original_values = nil
+  self._multi_dropdown_pending_values = nil
+
+  -- Return focus to parent
+  if vim.api.nvim_win_is_valid(self.winid) then
+    vim.api.nvim_set_current_win(self.winid)
+  end
+
+  -- Re-highlight current field
+  if key then
+    self:_highlight_current_field(key)
+  end
+end
+
+---Confirm multi-dropdown selection
+function InputManager:_confirm_multi_dropdown()
+  if not self._multi_dropdown_open or not self._multi_dropdown_key then return end
+
+  local key = self._multi_dropdown_key
+  local old_values = vim.deepcopy(self.multi_dropdown_values[key] or {})
+
+  -- Apply pending values
+  self.multi_dropdown_values[key] = vim.deepcopy(self._multi_dropdown_pending_values or {})
+
+  -- Update parent display
+  self:_update_multi_dropdown_display(key)
+
+  -- Callback if changed
+  if self.on_multi_dropdown_change then
+    local new_values = self.multi_dropdown_values[key]
+    -- Check if values changed
+    local changed = (#old_values ~= #new_values)
+    if not changed then
+      for i, v in ipairs(old_values) do
+        if new_values[i] ~= v then
+          changed = true
+          break
+        end
+      end
+    end
+    if changed then
+      self.on_multi_dropdown_change(key, new_values)
+    end
+  end
+
+  self:_close_multi_dropdown(false)
+end
+
+---Toggle option at current cursor position
+function InputManager:_toggle_multi_dropdown_option()
+  if not self._multi_dropdown_open or not self._multi_dropdown_key then return end
+
+  local multi_dropdown = self.multi_dropdowns[self._multi_dropdown_key]
+  if not multi_dropdown then return end
+
+  local cursor_idx = self._multi_dropdown_cursor_idx
+  local has_select_all = multi_dropdown.select_all_option
+
+  -- Determine which option is being toggled
+  if has_select_all then
+    if cursor_idx == 1 then
+      -- Toggle "Select All"
+      self:_toggle_select_all_multi_dropdown()
+      return
+    elseif cursor_idx == 2 then
+      -- Separator line, do nothing
+      return
+    else
+      -- Adjust for header rows
+      cursor_idx = cursor_idx - 2
+    end
+  end
+
+  -- Get the option
+  local opt = multi_dropdown.options[cursor_idx]
+  if not opt then return end
+
+  -- Toggle selection
+  local pending = self._multi_dropdown_pending_values or {}
+  local found_idx = nil
+  for i, v in ipairs(pending) do
+    if v == opt.value then
+      found_idx = i
+      break
+    end
+  end
+
+  if found_idx then
+    table.remove(pending, found_idx)
+  else
+    table.insert(pending, opt.value)
+  end
+
+  self._multi_dropdown_pending_values = pending
+
+  -- Re-render
+  self:_render_multi_dropdown()
+end
+
+---Toggle select all
+function InputManager:_toggle_select_all_multi_dropdown()
+  if not self._multi_dropdown_open or not self._multi_dropdown_key then return end
+
+  local multi_dropdown = self.multi_dropdowns[self._multi_dropdown_key]
+  if not multi_dropdown then return end
+
+  local pending = self._multi_dropdown_pending_values or {}
+  local all_selected = (#pending == #multi_dropdown.options)
+
+  if all_selected then
+    -- Deselect all
+    self._multi_dropdown_pending_values = {}
+  else
+    -- Select all
+    self._multi_dropdown_pending_values = {}
+    for _, opt in ipairs(multi_dropdown.options) do
+      table.insert(self._multi_dropdown_pending_values, opt.value)
+    end
+  end
+
+  -- Re-render
+  self:_render_multi_dropdown()
+end
+
+---Navigate multi-dropdown
+---@param direction number 1 for down, -1 for up
+function InputManager:_navigate_multi_dropdown(direction)
+  if not self._multi_dropdown_open then return end
+
+  local multi_dropdown = self.multi_dropdowns[self._multi_dropdown_key]
+  if not multi_dropdown then return end
+
+  -- Calculate total lines
+  local total_lines = #multi_dropdown.options
+  if multi_dropdown.select_all_option then
+    total_lines = total_lines + 2  -- Select All + separator
+  end
+
+  -- Update cursor
+  self._multi_dropdown_cursor_idx = self._multi_dropdown_cursor_idx + direction
+
+  -- Skip separator line
+  if multi_dropdown.select_all_option and self._multi_dropdown_cursor_idx == 2 then
+    self._multi_dropdown_cursor_idx = self._multi_dropdown_cursor_idx + direction
+  end
+
+  -- Wrap around
+  if self._multi_dropdown_cursor_idx < 1 then
+    self._multi_dropdown_cursor_idx = total_lines
+  elseif self._multi_dropdown_cursor_idx > total_lines then
+    self._multi_dropdown_cursor_idx = 1
+  end
+
+  -- Move cursor in window
+  if self._multi_dropdown_float and self._multi_dropdown_float:is_valid() then
+    self._multi_dropdown_float:set_cursor(self._multi_dropdown_cursor_idx, 0)
+  end
+end
+
+---Update multi-dropdown display in parent buffer
+---@param key string Multi-dropdown key
+function InputManager:_update_multi_dropdown_display(key)
+  local multi_dropdown = self.multi_dropdowns[key]
+  if not multi_dropdown then return end
+
+  local values = self.multi_dropdown_values[key] or {}
+
+  -- Build display text
+  local display_text
+  local is_placeholder = (#values == 0)
+
+  if #values == 0 then
+    display_text = multi_dropdown.placeholder or "(none selected)"
+  elseif multi_dropdown.display_mode == "list" then
+    local labels = {}
+    for _, v in ipairs(values) do
+      for _, opt in ipairs(multi_dropdown.options) do
+        if opt.value == v then
+          table.insert(labels, opt.label)
+          break
+        end
+      end
+    end
+    display_text = table.concat(labels, ", ")
+  else  -- "count" mode
+    if #values == #multi_dropdown.options then
+      display_text = "All (" .. #values .. ")"
+    else
+      display_text = #values .. " selected"
+    end
+  end
+
+  -- Pad or truncate
+  local arrow = " ▾"
+  local text_width = multi_dropdown.text_width or 18
+
+  local display_len = vim.fn.strdisplaywidth(display_text)
+  if display_len < text_width then
+    display_text = display_text .. string.rep(" ", text_width - display_len)
+  elseif display_len > text_width then
+    local truncated = ""
+    local current_width = 0
+    local char_idx = 0
+    while current_width < text_width - 1 do
+      local char = vim.fn.strcharpart(display_text, char_idx, 1)
+      if char == "" then break end
+      local char_width = vim.fn.strdisplaywidth(char)
+      if current_width + char_width > text_width - 1 then
+        break
+      end
+      truncated = truncated .. char
+      current_width = current_width + char_width
+      char_idx = char_idx + 1
+    end
+    local pad_needed = text_width - 1 - vim.fn.strdisplaywidth(truncated)
+    if pad_needed > 0 then
+      truncated = truncated .. string.rep(" ", pad_needed)
+    end
+    display_text = truncated .. "…"
+  end
+
+  -- Get current line
+  local lines = vim.api.nvim_buf_get_lines(self.bufnr, multi_dropdown.line - 1, multi_dropdown.line, false)
+  if #lines == 0 then return end
+
+  local line = lines[1]
+
+  -- Find brackets
+  local bracket_pos = line:find("%]", multi_dropdown.col_start + 1)
+  if not bracket_pos then return end
+
+  -- Reconstruct line
+  local before = line:sub(1, multi_dropdown.col_start)
+  local after = line:sub(bracket_pos + 1)
+  local new_line = before .. display_text .. arrow .. "]" .. after
+
+  -- Update buffer
+  local was_modifiable = vim.api.nvim_buf_get_option(self.bufnr, 'modifiable')
+  vim.api.nvim_buf_set_option(self.bufnr, 'modifiable', true)
+  vim.api.nvim_buf_set_lines(self.bufnr, multi_dropdown.line - 1, multi_dropdown.line, false, {new_line})
+  vim.api.nvim_buf_set_option(self.bufnr, 'modifiable', was_modifiable)
+
+  -- Update placeholder state
+  multi_dropdown.is_placeholder = is_placeholder
+end
+
+---Setup keymaps for multi-dropdown
+function InputManager:_setup_multi_dropdown_keymaps()
+  if not self._multi_dropdown_float or not self._multi_dropdown_float:is_valid() then return end
+
+  local bufnr = self._multi_dropdown_float.bufnr
+  local opts = { buffer = bufnr, noremap = true, silent = true, nowait = true }
+
+  -- Navigation
+  vim.keymap.set('n', 'j', function() self:_navigate_multi_dropdown(1) end, opts)
+  vim.keymap.set('n', 'k', function() self:_navigate_multi_dropdown(-1) end, opts)
+  vim.keymap.set('n', '<Down>', function() self:_navigate_multi_dropdown(1) end, opts)
+  vim.keymap.set('n', '<Up>', function() self:_navigate_multi_dropdown(-1) end, opts)
+
+  -- Toggle selection
+  vim.keymap.set('n', '<Space>', function() self:_toggle_multi_dropdown_option() end, opts)
+  vim.keymap.set('n', 'x', function() self:_toggle_multi_dropdown_option() end, opts)
+
+  -- Select all
+  vim.keymap.set('n', 'a', function() self:_toggle_select_all_multi_dropdown() end, opts)
+
+  -- Confirm
+  vim.keymap.set('n', '<CR>', function() self:_confirm_multi_dropdown() end, opts)
+
+  -- Cancel
+  vim.keymap.set('n', '<Esc>', function() self:_close_multi_dropdown(true) end, opts)
+  vim.keymap.set('n', 'q', function() self:_close_multi_dropdown(true) end, opts)
+end
+
+---Setup autocmds for multi-dropdown
+function InputManager:_setup_multi_dropdown_autocmds()
+  if not self._multi_dropdown_float or not self._multi_dropdown_float:is_valid() then return end
+
+  local bufnr = self._multi_dropdown_float.bufnr
+  self._multi_dropdown_autocmd_group = vim.api.nvim_create_augroup(
+    "SSNSMultiDropdown_" .. bufnr,
+    { clear = true }
+  )
+
+  vim.api.nvim_create_autocmd("WinLeave", {
+    group = self._multi_dropdown_autocmd_group,
+    buffer = bufnr,
+    callback = function()
+      vim.schedule(function()
+        local current_win = vim.api.nvim_get_current_win()
+        if current_win ~= self.winid then
+          self:_close_multi_dropdown(true)
+        end
+      end)
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("BufLeave", {
+    group = self._multi_dropdown_autocmd_group,
+    buffer = bufnr,
+    callback = function()
+      vim.schedule(function()
+        self:_close_multi_dropdown(true)
+      end)
+    end,
+  })
+end
+
+---Get multi-dropdown values
+---@param key string Multi-dropdown key
+---@return string[]? values
+function InputManager:get_multi_dropdown_values(key)
+  return self.multi_dropdown_values[key]
+end
+
+---Set multi-dropdown values
+---@param key string Multi-dropdown key
+---@param values string[] New values
+function InputManager:set_multi_dropdown_values(key, values)
+  local multi_dropdown = self.multi_dropdowns[key]
+  if not multi_dropdown then return end
+
+  self.multi_dropdown_values[key] = vim.deepcopy(values)
+  self:_update_multi_dropdown_display(key)
+end
+
 ---Cleanup the input manager
 function InputManager:destroy()
   -- Close any open dropdown first
   if self._dropdown_open then
     self:_close_dropdown(true)
+  end
+
+  -- Close any open multi-dropdown
+  if self._multi_dropdown_open then
+    self:_close_multi_dropdown(true)
   end
 
   if self._autocmd_group then
