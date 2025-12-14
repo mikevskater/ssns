@@ -948,6 +948,7 @@ function InputManager:_open_dropdown(key)
     cursorline = true,
     focusable = true,
     enter = true,
+    wrap = false,  -- Allow horizontal scrolling for long labels
     -- Disable default keymaps (we set our own)
     default_keymaps = false,
     -- Scrollbar for long lists
@@ -1304,23 +1305,28 @@ function InputManager:_setup_dropdown_keymaps()
 
   -- Select
   vim.keymap.set('n', '<CR>', function() self:_select_dropdown() end, opts)
-  vim.keymap.set('n', 'l', function() self:_select_dropdown() end, opts)
-  vim.keymap.set('n', '<Right>', function() self:_select_dropdown() end, opts)
 
   -- Cancel
   vim.keymap.set('n', '<Esc>', function() self:_close_dropdown(true) end, opts)
   vim.keymap.set('n', 'q', function() self:_close_dropdown(true) end, opts)
-  vim.keymap.set('n', 'h', function() self:_close_dropdown(true) end, opts)
-  vim.keymap.set('n', '<Left>', function() self:_close_dropdown(true) end, opts)
+
+  -- Note: h/l/w/b etc are NOT mapped so users can scroll horizontally to see long labels
 
   -- Clear filter
   vim.keymap.set('n', '<BS>', function() self:_clear_dropdown_filter() end, opts)
 
   -- Type-to-filter: handle printable characters
+  -- Skip navigation keys so they work normally for horizontal scrolling
+  local skip_chars = {
+    j = true, k = true,           -- Vertical navigation
+    h = true, l = true,           -- Horizontal navigation
+    w = true, b = true, e = true, -- Word navigation
+    ['0'] = true, ['$'] = true, ['^'] = true, -- Line navigation
+    q = true,                     -- Cancel
+  }
   for char_code = 32, 126 do  -- Printable ASCII
     local char = string.char(char_code)
-    -- Skip special keys that are already mapped
-    if char ~= 'j' and char ~= 'k' and char ~= 'l' and char ~= 'h' and char ~= 'q' then
+    if not skip_chars[char] then
       vim.keymap.set('n', char, function()
         self:_filter_dropdown(char)
       end, opts)
