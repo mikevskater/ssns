@@ -1542,6 +1542,8 @@ function UiFloat.create_multi_panel(config)
       col = rect.x,
       -- Panel configuration
       title = def.title,
+      footer = def.footer,
+      footer_pos = def.footer_pos,
       border = border,
       filetype = def.filetype,
       focusable = def.focusable ~= false,
@@ -1768,6 +1770,24 @@ function MultiPanelWindow:update_panel_title(panel_name, title)
   vim.api.nvim_win_set_config(panel.float.winid, {
     title = string.format(" %s ", title),
     title_pos = "center",
+  })
+end
+
+---Update panel footer
+---@param panel_name string Panel name
+---@param footer string New footer text
+---@param footer_pos? "left"|"center"|"right" Footer position (default: "center")
+function MultiPanelWindow:update_panel_footer(panel_name, footer, footer_pos)
+  if self._closed then return end
+
+  local panel = self.panels[panel_name]
+  if not panel or not panel.float:is_valid() then
+    return
+  end
+
+  vim.api.nvim_win_set_config(panel.float.winid, {
+    footer = string.format(" %s ", footer),
+    footer_pos = footer_pos or "center",
   })
 end
 

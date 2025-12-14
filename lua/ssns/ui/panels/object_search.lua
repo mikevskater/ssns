@@ -69,6 +69,9 @@ local multi_panel = nil
 ---@type number?
 local search_augroup = nil
 
+---@type string Last focused right panel ("definition" or "metadata")
+local last_right_panel = "definition"
+
 
 
 ---@type ObjectSearchUIState
@@ -83,9 +86,18 @@ local ui_state = {
   search_term = "",
   search_term_before_edit = "",
   search_editing = false,
+  -- Search target filters (what to search in)
   search_names = true,
   search_definitions = true,
   search_metadata = false,
+  -- Object type filters (what types to show)
+  show_tables = true,
+  show_views = true,
+  show_procedures = true,
+  show_functions = true,
+  show_synonyms = true,
+  show_schemas = true,
+  -- Search options
   show_system = false,
   case_sensitive = false,
   use_regex = false,
@@ -155,9 +167,18 @@ local function reset_state()
     search_term = "",
     search_term_before_edit = "",
     search_editing = false,
+    -- Search target filters
     search_names = true,
     search_definitions = true,
     search_metadata = false,
+    -- Object type filters
+    show_tables = true,
+    show_views = true,
+    show_procedures = true,
+    show_functions = true,
+    show_synonyms = true,
+    show_schemas = true,
+    -- Search options
     show_system = false,
     case_sensitive = false,
     use_regex = false,
@@ -649,14 +670,17 @@ function UiObjectSearch._apply_search(pattern)
       if count >= max_results then break end
       -- Filter system objects unless show_system is enabled
       if ui_state.show_system or not is_system_object(obj) then
-        table.insert(ui_state.filtered_results, {
-          searchable = obj,
-          match_type = "none",
-          match_details = {},
-          display_name = build_display_name(obj),
-          sort_priority = 0,
-        })
-        count = count + 1
+        -- Filter by object type
+        if should_show_object_type(obj) then
+          table.insert(ui_state.filtered_results, {
+            searchable = obj,
+            match_type = "none",
+            match_details = {},
+            display_name = build_display_name(obj),
+            sort_priority = 0,
+          })
+          count = count + 1
+        end
       end
     end
     return
@@ -690,6 +714,11 @@ function UiObjectSearch._apply_search(pattern)
 
     -- Filter system objects unless show_system is enabled
     if not ui_state.show_system and is_system_object(searchable) then
+      goto continue
+    end
+
+    -- Filter by object type
+    if not should_show_object_type(searchable) then
       goto continue
     end
 
@@ -807,33 +836,99 @@ local function render_search(state)
   return lines, highlights
 end
 
+---Get selected search targets as values array
+---@return string[]
+local function get_search_targets_values()
+  local values = {}
+  if ui_state.search_names then table.insert(values, "names") end
+  if ui_state.search_definitions then table.insert(values, "defs") end
+  if ui_state.search_metadata then table.insert(values, "meta") end
+  return values
+end
+
+---Get selected object types as values array
+---@return string[]
+local function get_object_types_values()
+  local values = {}
+  if ui_state.show_tables then table.insert(values, "table") end
+  if ui_state.show_views then table.insert(values, "view") end
+  if ui_state.show_procedures then table.insert(values, "procedure") end
+  if ui_state.show_functions then table.insert(values, "function") end
+  if ui_state.show_synonyms then table.insert(values, "synonym") end
+  if ui_state.show_schemas then table.insert(values, "schema") end
+  return values
+end
+
+---Check if an object should be shown based on its object type filter
+---@param searchable SearchableObject
+---@return boolean
+local function should_show_object_type(searchable)
+  local obj_type = searchable.object_type
+  if obj_type == "table" then return ui_state.show_tables
+  elseif obj_type == "view" then return ui_state.show_views
+  elseif obj_type == "procedure" then return ui_state.show_procedures
+  elseif obj_type == "function" then return ui_state.show_functions
+  elseif obj_type == "synonym" then return ui_state.show_synonyms
+  elseif obj_type == "schema" then return ui_state.show_schemas
+  end
+  return true  -- Show unknown types by default
+end
+
+---Calculate visible object count based on current filters
+---@return number
+local function get_visible_object_count()
+  local count = 0
+  for _, obj in ipairs(ui_state.loaded_objects) do
+    -- Check system filter
+    if ui_state.show_system or not is_system_object(obj) then
+      -- Check object type filter
+      if should_show_object_type(obj) then
+        count = count + 1
+      end
+    end
+  end
+  return count
+end
+
 ---Render the filters panel (filter toggles + status/counts)
 ---@param state MultiPanelState
 ---@return string[] lines, table[] highlights
 local function render_filters(state)
   local cb = ContentBuilder.new()
 
-  -- Row 1: Filter toggles
-  local name_icon = ui_state.search_names and "[N]" or "[ ]"
-  local defs_icon = ui_state.search_definitions and "[D]" or "[ ]"
-  local meta_icon = ui_state.search_metadata and "[M]" or "[ ]"
-
-  cb:spans({
-    { text = " ", style = "muted" },
-    { text = name_icon, style = ui_state.search_names and "success" or "muted" },
-    { text = " Name ", style = "muted" },
-    { text = "{1}", style = "comment" },
-    { text = "  ", style = "muted" },
-    { text = defs_icon, style = ui_state.search_definitions and "success" or "muted" },
-    { text = " Defs ", style = "muted" },
-    { text = "{2}", style = "comment" },
-    { text = "  ", style = "muted" },
-    { text = meta_icon, style = ui_state.search_metadata and "success" or "muted" },
-    { text = " Meta ", style = "muted" },
-    { text = "{3}", style = "comment" },
+  -- Row 1: Search targets dropdown (what to search in)
+  cb:multi_dropdown("search_targets", {
+    label = "Search In",
+    options = {
+      { value = "names", label = "Names {1}" },
+      { value = "defs", label = "Definitions {2}" },
+      { value = "meta", label = "Metadata {3}" },
+    },
+    values = get_search_targets_values(),
+    display_mode = "list",
+    placeholder = "(none)",
+    width = 30,
   })
 
-  -- Row 2: Status/counts
+  -- Row 2: Object types dropdown (what types to show)
+  cb:multi_dropdown("object_types", {
+    label = "Types",
+    options = {
+      { value = "table", label = "T Tables {!}" },
+      { value = "view", label = "V Views {@}" },
+      { value = "procedure", label = "P Procs {#}" },
+      { value = "function", label = "F Funcs {$}" },
+      { value = "synonym", label = "S Synonyms {%}" },
+      { value = "schema", label = "σ Schemas {^}" },
+    },
+    values = get_object_types_values(),
+    display_mode = "list",
+    select_all_option = true,
+    placeholder = "(none)",
+    width = 30,
+  })
+
+  -- Row 3: Status/counts
   if ui_state.loading_status == "loading" then
     local filled = math.floor(ui_state.loading_progress / 10)
     local progress_bar = string.rep("█", filled) .. string.rep("░", 10 - filled)
@@ -845,21 +940,9 @@ local function render_filters(state)
       { text = " " .. ui_state.loading_message, style = "comment" },
     })
   elseif ui_state.selected_server then
-    -- Calculate visible object count (excluding system objects if filter is off)
-    local visible_object_count = 0
-    if ui_state.show_system then
-      visible_object_count = #ui_state.loaded_objects
-    else
-      for _, obj in ipairs(ui_state.loaded_objects) do
-        if not is_system_object(obj) then
-          visible_object_count = visible_object_count + 1
-        end
-      end
-    end
-
     cb:spans({
       { text = " Objects: ", style = "muted" },
-      { text = tostring(visible_object_count), style = "value" },
+      { text = tostring(get_visible_object_count()), style = "value" },
       { text = " | Matches: ", style = "muted" },
       { text = tostring(#ui_state.filtered_results), style = "value" },
     })
@@ -968,6 +1051,17 @@ local function get_selected_db_names()
   return names
 end
 
+---Get selected search options as values array
+---@return string[]
+local function get_search_options_values()
+  local values = {}
+  if ui_state.case_sensitive then table.insert(values, "case") end
+  if ui_state.use_regex then table.insert(values, "regex") end
+  if ui_state.whole_word then table.insert(values, "word") end
+  if ui_state.show_system then table.insert(values, "system") end
+  return values
+end
+
 ---Render the settings panel with dropdowns and toggles
 ---@param state MultiPanelState
 ---@return ContentBuilder cb
@@ -994,34 +1088,19 @@ local function render_settings(state)
     width = 28,
   })
 
-  -- Row 3: Toggle options with key hints (Case, Regex)
-  local case_icon = ui_state.case_sensitive and "[Aa]" or "[  ]"
-  local regex_icon = ui_state.use_regex and "[.*]" or "[  ]"
-
-  cb:spans({
-    { text = " ", style = "muted" },
-    { text = case_icon, style = ui_state.case_sensitive and "success" or "muted" },
-    { text = " Case ", style = "muted" },
-    { text = "{c}", style = "comment" },
-    { text = "  ", style = "muted" },
-    { text = regex_icon, style = ui_state.use_regex and "success" or "muted" },
-    { text = " Regex    ", style = "muted" },
-    { text = "{x}", style = "comment" },
-  })
-
-  -- Row 4: Toggle options (Word, System)
-  local word_icon = ui_state.whole_word and "[W ]" or "[  ]"
-  local sys_icon = ui_state.show_system and "[S ]" or "[  ]"
-
-  cb:spans({
-    { text = " ", style = "muted" },
-    { text = word_icon, style = ui_state.whole_word and "success" or "muted" },
-    { text = " Word ", style = "muted" },
-    { text = "{w}", style = "comment" },
-    { text = "  ", style = "muted" },
-    { text = sys_icon, style = ui_state.show_system and "success" or "muted" },
-    { text = " Sys Objs ", style = "muted" },
-    { text = "{S}", style = "comment" },
+  -- Row 3: Search options multi-dropdown (list mode)
+  cb:multi_dropdown("search_options", {
+    label = "Options",
+    options = {
+      { value = "case", label = "Case {c}" },
+      { value = "regex", label = "Regex {x}" },
+      { value = "word", label = "Word {w}" },
+      { value = "system", label = "Sys Objs {S}" },
+    },
+    values = get_search_options_values(),
+    display_mode = "list",
+    placeholder = "(none)",
+    width = 28,
   })
 
   return cb
@@ -1307,12 +1386,43 @@ local function apply_current_search()
   UiObjectSearch._apply_search(ui_state.search_term)
 end
 
+---Sync filter dropdown values with current ui_state
+---Call this after changing filter state via hotkeys to update the dropdowns
+local function sync_filter_dropdowns()
+  if not multi_panel then return end
+
+  local filters_panel = multi_panel.panels["filters"]
+  if not filters_panel or not filters_panel.input_manager then return end
+
+  local input_manager = filters_panel.input_manager
+
+  -- Sync search_targets dropdown
+  input_manager:set_multi_dropdown_values("search_targets", get_search_targets_values())
+
+  -- Sync object_types dropdown
+  input_manager:set_multi_dropdown_values("object_types", get_object_types_values())
+end
+
+---Sync settings dropdown values with current ui_state
+---Call this after changing settings state via hotkeys to update the dropdowns
+local function sync_settings_dropdowns()
+  if not multi_panel then return end
+
+  local settings_panel = multi_panel.panels["settings"]
+  if not settings_panel or not settings_panel.input_manager then return end
+
+  local input_manager = settings_panel.input_manager
+
+  -- Sync search_options dropdown
+  input_manager:set_multi_dropdown_values("search_options", get_search_options_values())
+end
+
 ---Toggle functions for search settings
 local function toggle_case_sensitive()
   ui_state.case_sensitive = not ui_state.case_sensitive
   apply_current_search()
+  sync_settings_dropdowns()
   if multi_panel then
-    multi_panel:render_panel("settings")
     multi_panel:render_panel("results")
   end
   vim.notify("Case sensitive: " .. (ui_state.case_sensitive and "ON" or "OFF"), vim.log.levels.INFO)
@@ -1321,8 +1431,8 @@ end
 local function toggle_regex()
   ui_state.use_regex = not ui_state.use_regex
   apply_current_search()
+  sync_settings_dropdowns()
   if multi_panel then
-    multi_panel:render_panel("settings")
     multi_panel:render_panel("results")
   end
   vim.notify("Regex: " .. (ui_state.use_regex and "ON" or "OFF"), vim.log.levels.INFO)
@@ -1331,8 +1441,8 @@ end
 local function toggle_whole_word()
   ui_state.whole_word = not ui_state.whole_word
   apply_current_search()
+  sync_settings_dropdowns()
   if multi_panel then
-    multi_panel:render_panel("settings")
     multi_panel:render_panel("results")
   end
   vim.notify("Whole word: " .. (ui_state.whole_word and "ON" or "OFF"), vim.log.levels.INFO)
@@ -1341,8 +1451,8 @@ end
 local function toggle_search_names()
   ui_state.search_names = not ui_state.search_names
   apply_current_search()
+  sync_filter_dropdowns()
   if multi_panel then
-    multi_panel:render_panel("filters")
     multi_panel:render_panel("results")
   end
   vim.notify("Search names: " .. (ui_state.search_names and "ON" or "OFF"), vim.log.levels.INFO)
@@ -1351,8 +1461,8 @@ end
 local function toggle_search_defs()
   ui_state.search_definitions = not ui_state.search_definitions
   apply_current_search()
+  sync_filter_dropdowns()
   if multi_panel then
-    multi_panel:render_panel("filters")
     multi_panel:render_panel("results")
   end
   vim.notify("Search definitions: " .. (ui_state.search_definitions and "ON" or "OFF"), vim.log.levels.INFO)
@@ -1361,8 +1471,8 @@ end
 local function toggle_search_meta()
   ui_state.search_metadata = not ui_state.search_metadata
   apply_current_search()
+  sync_filter_dropdowns()
   if multi_panel then
-    multi_panel:render_panel("filters")
     multi_panel:render_panel("results")
   end
   vim.notify("Search metadata: " .. (ui_state.search_metadata and "ON" or "OFF"), vim.log.levels.INFO)
@@ -1371,12 +1481,73 @@ end
 local function toggle_system()
   ui_state.show_system = not ui_state.show_system
   apply_current_search()
+  sync_settings_dropdowns()
+  sync_filter_dropdowns()
   if multi_panel then
-    multi_panel:render_panel("settings")
-    multi_panel:render_panel("filters")
     multi_panel:render_panel("results")
   end
   vim.notify("Show system: " .. (ui_state.show_system and "ON" or "OFF"), vim.log.levels.INFO)
+end
+
+---Toggle functions for object type filters
+local function toggle_tables()
+  ui_state.show_tables = not ui_state.show_tables
+  apply_current_search()
+  sync_filter_dropdowns()
+  if multi_panel then
+    multi_panel:render_panel("results")
+  end
+  vim.notify("Show tables: " .. (ui_state.show_tables and "ON" or "OFF"), vim.log.levels.INFO)
+end
+
+local function toggle_views()
+  ui_state.show_views = not ui_state.show_views
+  apply_current_search()
+  sync_filter_dropdowns()
+  if multi_panel then
+    multi_panel:render_panel("results")
+  end
+  vim.notify("Show views: " .. (ui_state.show_views and "ON" or "OFF"), vim.log.levels.INFO)
+end
+
+local function toggle_procedures()
+  ui_state.show_procedures = not ui_state.show_procedures
+  apply_current_search()
+  sync_filter_dropdowns()
+  if multi_panel then
+    multi_panel:render_panel("results")
+  end
+  vim.notify("Show procedures: " .. (ui_state.show_procedures and "ON" or "OFF"), vim.log.levels.INFO)
+end
+
+local function toggle_functions()
+  ui_state.show_functions = not ui_state.show_functions
+  apply_current_search()
+  sync_filter_dropdowns()
+  if multi_panel then
+    multi_panel:render_panel("results")
+  end
+  vim.notify("Show functions: " .. (ui_state.show_functions and "ON" or "OFF"), vim.log.levels.INFO)
+end
+
+local function toggle_synonyms()
+  ui_state.show_synonyms = not ui_state.show_synonyms
+  apply_current_search()
+  sync_filter_dropdowns()
+  if multi_panel then
+    multi_panel:render_panel("results")
+  end
+  vim.notify("Show synonyms: " .. (ui_state.show_synonyms and "ON" or "OFF"), vim.log.levels.INFO)
+end
+
+local function toggle_schemas()
+  ui_state.show_schemas = not ui_state.show_schemas
+  apply_current_search()
+  sync_filter_dropdowns()
+  if multi_panel then
+    multi_panel:render_panel("results")
+  end
+  vim.notify("Show schemas: " .. (ui_state.show_schemas and "ON" or "OFF"), vim.log.levels.INFO)
 end
 
 ---Setup search autocmds
@@ -1431,6 +1602,14 @@ local function setup_search_autocmds()
   KeymapManager.set(search_buf, 'i', '<A-2>', toggle_search_defs, { nowait = true })
   KeymapManager.set(search_buf, 'i', '<A-3>', toggle_search_meta, { nowait = true })
   KeymapManager.set(search_buf, 'i', '<A-s>', toggle_system, { nowait = true })
+
+  -- Object type toggles (Alt+Shift+number)
+  KeymapManager.set(search_buf, 'i', '<A-!>', toggle_tables, { nowait = true })
+  KeymapManager.set(search_buf, 'i', '<A-@>', toggle_views, { nowait = true })
+  KeymapManager.set(search_buf, 'i', '<A-#>', toggle_procedures, { nowait = true })
+  KeymapManager.set(search_buf, 'i', '<A-$>', toggle_functions, { nowait = true })
+  KeymapManager.set(search_buf, 'i', '<A-%>', toggle_synonyms, { nowait = true })
+  KeymapManager.set(search_buf, 'i', '<A-^>', toggle_schemas, { nowait = true })
 
   KeymapManager.setup_auto_restore(search_buf)
 end
@@ -1879,6 +2058,7 @@ function UiObjectSearch.show(options)
               name = "search",
               title = "Search",
               ratio = 0.40,
+              min_height = 1,
               focusable = false,
               cursorline = false,
               on_render = render_search,
@@ -1933,25 +2113,41 @@ function UiObjectSearch.show(options)
                 {
                   name = "filters",
                   title = "Filters",
-                  ratio = 0.08,
-                  min_height = 2,
-                  focusable = false,
+                  ratio = 0.05,
+                  min_height = 3,
+                  focusable = true,
                   cursorline = false,
                   on_render = render_filters,
+                  on_focus = function()
+                    if multi_panel then
+                      multi_panel:update_panel_title("settings", "Settings")
+                      multi_panel:update_panel_title("filters", "Filters ●")
+                      multi_panel:update_panel_title("results", "Results")
+                      multi_panel:update_panel_title("metadata", "Metadata")
+                      multi_panel:update_panel_title("definition", "Definition")
+                    end
+                  end,
                 },
                 {
                   name = "results",
                   title = "Results",
-                  ratio = 0.92,
+                  ratio = 0.95,
                   focusable = true,
                   cursorline = true,
                   on_render = render_results,
                   on_focus = function()
                     if multi_panel then
                       multi_panel:update_panel_title("settings", "Settings")
+                      multi_panel:update_panel_title("filters", "Filters")
                       multi_panel:update_panel_title("results", "Results ●")
-                      multi_panel:update_panel_title("metadata", "Metadata")
-                      multi_panel:update_panel_title("definition", "Definition")
+                      -- Keep the last right panel indicator
+                      if last_right_panel == "metadata" then
+                        multi_panel:update_panel_title("metadata", "Metadata")
+                        multi_panel:update_panel_title("definition", "Definition")
+                      else
+                        multi_panel:update_panel_title("metadata", "Metadata")
+                        multi_panel:update_panel_title("definition", "Definition")
+                      end
                       -- Position cursor on currently selected result
                       vim.schedule(function()
                         if multi_panel and multi_panel:is_valid() then
@@ -1977,13 +2173,17 @@ function UiObjectSearch.show(options)
                 {
                   name = "metadata",
                   title = "Metadata",
+                  footer = "Tab=Results | S-Tab=Def/Meta",
+                  footer_pos = "center",
                   ratio = 0.25,
                   focusable = true,
                   cursorline = false,
                   on_render = render_metadata,
                   on_focus = function()
+                    last_right_panel = "metadata"
                     if multi_panel then
                       multi_panel:update_panel_title("settings", "Settings")
+                      multi_panel:update_panel_title("filters", "Filters")
                       multi_panel:update_panel_title("results", "Results")
                       multi_panel:update_panel_title("metadata", "Metadata ●")
                       multi_panel:update_panel_title("definition", "Definition")
@@ -2003,8 +2203,10 @@ function UiObjectSearch.show(options)
                   end,
                   use_basic_highlighting = true,
                   on_focus = function()
+                    last_right_panel = "definition"
                     if multi_panel then
                       multi_panel:update_panel_title("settings", "Settings")
+                      multi_panel:update_panel_title("filters", "Filters")
                       multi_panel:update_panel_title("results", "Results")
                       multi_panel:update_panel_title("metadata", "Metadata")
                       multi_panel:update_panel_title("definition", "Definition ●")
@@ -2019,7 +2221,7 @@ function UiObjectSearch.show(options)
     },
     total_width_ratio = 0.80,
     total_height_ratio = 0.80,
-    footer = " /=Search | r=Refresh | q=Close ",
+    footer = " /=Search | s=Settings | ?=Filters | r=Refresh | q=Close ",
     initial_focus = "settings",
     augroup_name = "SSNSObjectSearch",
     on_close = function()
@@ -2111,6 +2313,68 @@ function UiObjectSearch.show(options)
           ui_state.filtered_results = {}
           multi_panel:render_panel("results")
         end
+      elseif key == "search_options" then
+        -- Update search options state from dropdown
+        ui_state.case_sensitive = vim.tbl_contains(values, "case")
+        ui_state.use_regex = vim.tbl_contains(values, "regex")
+        ui_state.whole_word = vim.tbl_contains(values, "word")
+        ui_state.show_system = vim.tbl_contains(values, "system")
+        apply_current_search()
+        sync_filter_dropdowns()  -- Show system affects object count in filters
+        multi_panel:render_panel("results")
+      end
+    end,
+  })
+
+  -- Setup inputs for filters panel (enables dropdowns)
+  local filters_cb = ContentBuilder.new()
+  filters_cb:multi_dropdown("search_targets", {
+    label = "Search In",
+    options = {
+      { value = "names", label = "Names {1}" },
+      { value = "defs", label = "Definitions {2}" },
+      { value = "meta", label = "Metadata {3}" },
+    },
+    values = get_search_targets_values(),
+    display_mode = "list",
+    placeholder = "(none)",
+    width = 30,
+  })
+  filters_cb:multi_dropdown("object_types", {
+    label = "Types",
+    options = {
+      { value = "table", label = "T Tables {!}" },
+      { value = "view", label = "V Views {@}" },
+      { value = "procedure", label = "P Procs {#}" },
+      { value = "function", label = "F Funcs {$}" },
+      { value = "synonym", label = "S Synonyms {%}" },
+      { value = "schema", label = "σ Schemas {^}" },
+    },
+    values = get_object_types_values(),
+    display_mode = "list",
+    select_all_option = true,
+    placeholder = "(none)",
+    width = 30,
+  })
+  multi_panel:setup_inputs("filters", filters_cb, {
+    on_multi_dropdown_change = function(key, values)
+      if key == "search_targets" then
+        -- Update search target state from dropdown
+        ui_state.search_names = vim.tbl_contains(values, "names")
+        ui_state.search_definitions = vim.tbl_contains(values, "defs")
+        ui_state.search_metadata = vim.tbl_contains(values, "meta")
+        apply_current_search()
+        multi_panel:render_panel("results")
+      elseif key == "object_types" then
+        -- Update object type state from dropdown
+        ui_state.show_tables = vim.tbl_contains(values, "table")
+        ui_state.show_views = vim.tbl_contains(values, "view")
+        ui_state.show_procedures = vim.tbl_contains(values, "procedure")
+        ui_state.show_functions = vim.tbl_contains(values, "function")
+        ui_state.show_synonyms = vim.tbl_contains(values, "synonym")
+        ui_state.show_schemas = vim.tbl_contains(values, "schema")
+        apply_current_search()
+        multi_panel:render_panel("results")
       end
     end,
   })
@@ -2142,16 +2406,53 @@ function UiObjectSearch.show(options)
     -- TODO: Focus the database dropdown specifically via InputManager
   end
 
+  local function focus_filters_panel()
+    multi_panel:focus_panel("filters")
+  end
+
+  local function focus_settings_panel()
+    multi_panel:focus_panel("settings")
+  end
+
+  -- Custom Tab navigation: results <-> last right panel (definition/metadata)
+  local function navigate_tab()
+    local current_panel = multi_panel:get_focused_panel_name()
+    if current_panel == "results" then
+      -- Jump to last focused right panel
+      multi_panel:focus_panel(last_right_panel)
+    elseif current_panel == "definition" or current_panel == "metadata" then
+      -- Jump back to results
+      multi_panel:focus_panel("results")
+    else
+      -- From settings/filters, jump to results
+      multi_panel:focus_panel("results")
+    end
+  end
+
+  -- Custom Shift+Tab navigation: cycle between definition and metadata
+  local function navigate_shift_tab()
+    local current_panel = multi_panel:get_focused_panel_name()
+    if current_panel == "definition" then
+      multi_panel:focus_panel("metadata")
+    elseif current_panel == "metadata" then
+      multi_panel:focus_panel("definition")
+    else
+      -- From other panels, go to the last right panel
+      multi_panel:focus_panel(last_right_panel)
+    end
+  end
+
   -- Common keymaps shared by all panels
   local function get_common_keymaps()
     return {
       [common.close or "q"] = function() UiObjectSearch.close() end,
       [common.cancel or "<Esc>"] = function() UiObjectSearch.close() end,
-      [common.next_field or "<Tab>"] = function() multi_panel:focus_next_panel() end,
-      [common.prev_field or "<S-Tab>"] = function() multi_panel:focus_prev_panel() end,
+      ["<Tab>"] = navigate_tab,
+      ["<S-Tab>"] = navigate_shift_tab,
       ["/"] = activate_search,
-      ["s"] = focus_server_dropdown,
+      ["s"] = focus_settings_panel,
       ["d"] = focus_database_dropdown,
+      ["?"] = focus_filters_panel,
       ["c"] = toggle_case_sensitive,
       ["x"] = toggle_regex,
       ["w"] = toggle_whole_word,
@@ -2160,11 +2461,21 @@ function UiObjectSearch.show(options)
       ["2"] = toggle_search_defs,
       ["3"] = toggle_search_meta,
       ["r"] = refresh_objects,
+      -- Object type toggles (Shift+number keys)
+      ["!"] = toggle_tables,
+      ["@"] = toggle_views,
+      ["#"] = toggle_procedures,
+      ["$"] = toggle_functions,
+      ["%"] = toggle_synonyms,
+      ["^"] = toggle_schemas,
     }
   end
 
   -- Setup keymaps for settings panel
   multi_panel:set_panel_keymaps("settings", get_common_keymaps())
+
+  -- Setup keymaps for filters panel
+  multi_panel:set_panel_keymaps("filters", get_common_keymaps())
 
   -- Setup keymaps for results panel (extends common with results-specific keymaps)
   local results_keymaps = get_common_keymaps()
