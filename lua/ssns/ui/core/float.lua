@@ -58,6 +58,8 @@ FloatWindow.__index = FloatWindow
 ---Floating window utility module
 local UiFloat = {}
 
+local Debug = require('ssns.debug')
+
 ---Z-index layers for proper window stacking
 ---Scrollbars are automatically +1 above their parent window
 ---@class ZIndexLayers
@@ -2030,13 +2032,13 @@ function MultiPanelWindow:setup_inputs(panel_name, content_builder, opts)
   -- Set up dropdown change callbacks
   if opts.on_dropdown_change then
     panel.input_manager.on_dropdown_change = opts.on_dropdown_change
-    vim.notify(string.format("DEBUG setup_inputs: on_dropdown_change callback SET for panel '%s'", panel_name), vim.log.levels.INFO)
+    Debug.log(string.format("DEBUG setup_inputs: on_dropdown_change callback SET for panel '%s'", panel_name))
   else
-    vim.notify(string.format("DEBUG setup_inputs: NO on_dropdown_change callback for panel '%s'", panel_name), vim.log.levels.WARN)
+    Debug.log(string.format("DEBUG setup_inputs: NO on_dropdown_change callback for panel '%s'", panel_name))
   end
   if opts.on_multi_dropdown_change then
     panel.input_manager.on_multi_dropdown_change = opts.on_multi_dropdown_change
-    vim.notify(string.format("DEBUG setup_inputs: on_multi_dropdown_change callback SET for panel '%s'", panel_name), vim.log.levels.INFO)
+    Debug.log(string.format("DEBUG setup_inputs: on_multi_dropdown_change callback SET for panel '%s'", panel_name))
   end
 
   panel.input_manager:setup()

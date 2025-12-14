@@ -16,6 +16,8 @@
 
 local StatementCache = {}
 
+local Debug = require('ssns.debug')
+
 -- Private cache storage: bufnr -> BufferStatementCache
 local _cache = {}
 
@@ -448,9 +450,7 @@ function StatementCache._update_cache(bufnr)
     local success, err = pcall(callback, bufnr, _cache[bufnr])
     if not success then
       -- Log error but don't break other callbacks
-      vim.schedule(function()
-        vim.notify(string.format("[SSNS] StatementCache callback error: %s", tostring(err)), vim.log.levels.DEBUG)
-      end)
+      Debug.log(string.format("[SSNS] StatementCache callback error: %s", tostring(err)))
     end
   end
 end
