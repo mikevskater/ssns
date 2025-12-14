@@ -4,6 +4,21 @@
 local InputManager = {}
 InputManager.__index = InputManager
 
+local Debug = require('ssns.debug')
+
+-- Module-level cooldown to prevent dropdown re-opening across ALL InputManager instances
+-- This is needed because clicking away from a dropdown may land on a different panel's InputManager
+local _global_dropdown_close_cooldown = false
+
+-- Flag to track if a dropdown is currently being opened (prevents premature close from WinLeave/BufLeave)
+local _dropdown_opening = false
+
+-- Timestamp of when last dropdown was opened (to prevent immediate close from focus events)
+local _dropdown_open_time = 0
+
+-- Flag to track if ANY dropdown is currently open (prevents mouse clicks from opening another dropdown while one is open)
+local _any_dropdown_open = false
+
 ---@class InputManagerConfig
 ---@field bufnr number Buffer number to manage
 ---@field winid number Window ID
@@ -502,43 +517,96 @@ end
 function InputManager:_setup_input_keymaps()
   local opts = { buffer = self.bufnr, noremap = true, silent = true }
 
-  -- Normal mode: Enter activates field under cursor (or at current index)
-  vim.keymap.set('n', '<CR>', function()
+  -- Helper function to activate field at cursor position
+  local function activate_field_at_cursor(source)
     local cursor = vim.api.nvim_win_get_cursor(self.winid)
     local row = cursor[1]
     local col = cursor[2]
 
+    Debug.log(string.format("[DROPDOWN DEBUG] activate_field_at_cursor called from: %s, row=%d, col=%d", source or "unknown", row, col))
+
     -- First check if cursor is directly on an input
     for key, input in pairs(self.inputs) do
       if input.line == row and col >= input.col_start and col < input.col_end then
+        Debug.log(string.format("[DROPDOWN DEBUG] Activating INPUT: %s", key))
         self:enter_input_mode(key)
-        return
+        return true
       end
     end
 
     -- Check if cursor is directly on a dropdown
     for key, dropdown in pairs(self.dropdowns) do
       if dropdown.line == row and col >= dropdown.col_start and col < dropdown.col_end then
+        Debug.log(string.format("[DROPDOWN DEBUG] Activating DROPDOWN: %s (line=%d, col_start=%d, col_end=%d)", key, dropdown.line, dropdown.col_start, dropdown.col_end))
         self:_open_dropdown(key)
-        return
+        return true
       end
     end
 
     -- Check if cursor is directly on a multi-dropdown
     for key, multi_dropdown in pairs(self.multi_dropdowns) do
       if multi_dropdown.line == row and col >= multi_dropdown.col_start and col < multi_dropdown.col_end then
+        Debug.log(string.format("[DROPDOWN DEBUG] Activating MULTI-DROPDOWN: %s (line=%d, col_start=%d, col_end=%d)", key, multi_dropdown.line, multi_dropdown.col_start, multi_dropdown.col_end))
         self:_open_multi_dropdown(key)
-        return
+        return true
       end
     end
 
-    -- Otherwise, activate the current tracked field
-    if #self._field_order > 0 then
-      local current_key = self._field_order[self.current_field_idx]
-      if current_key then
-        self:_activate_field(current_key)
+    Debug.log("[DROPDOWN DEBUG] No field found at cursor position")
+    return false
+  end
+
+  -- Normal mode: Enter activates field under cursor (or at current index)
+  vim.keymap.set('n', '<CR>', function()
+    Debug.log("[DROPDOWN DEBUG] <CR> keymap triggered")
+    if not activate_field_at_cursor("<CR> keymap") then
+      -- Otherwise, activate the current tracked field
+      if #self._field_order > 0 then
+        local current_key = self._field_order[self.current_field_idx]
+        if current_key then
+          Debug.log(string.format("[DROPDOWN DEBUG] <CR> fallback to _activate_field: %s", current_key))
+          self:_activate_field(current_key)
+        end
       end
     end
+  end, opts)
+
+  -- Mouse click: activate field under mouse cursor
+  vim.keymap.set('n', '<LeftRelease>', function()
+    Debug.log(string.format("[DROPDOWN DEBUG] <LeftRelease> keymap triggered, cooldown=%s, any_open=%s, self_dropdown=%s, self_multi=%s",
+      tostring(_global_dropdown_close_cooldown), tostring(_any_dropdown_open),
+      tostring(self._dropdown_open), tostring(self._multi_dropdown_open)))
+
+    -- If a dropdown is currently open on THIS InputManager, just close it and don't open anything new
+    -- The click is on the parent buffer, not the dropdown, so user wants to close the dropdown
+    if self._dropdown_open then
+      Debug.log("[DROPDOWN DEBUG] <LeftRelease> closing open dropdown (click outside dropdown)")
+      self:_close_dropdown(true)
+      return
+    end
+    if self._multi_dropdown_open then
+      Debug.log("[DROPDOWN DEBUG] <LeftRelease> closing open multi-dropdown (click outside dropdown)")
+      self:_close_multi_dropdown(true)
+      return
+    end
+
+    -- If a dropdown is open on ANY InputManager (different panel), don't open a new one
+    -- The WinLeave/BufLeave on the dropdown will handle closing it
+    if _any_dropdown_open then
+      Debug.log("[DROPDOWN DEBUG] <LeftRelease> BLOCKED: dropdown open on another panel")
+      return
+    end
+
+    -- Mouse click already moves cursor, so just activate field at cursor
+    vim.schedule(function()
+      -- Skip if dropdown just closed (prevents immediate re-open)
+      -- Use global cooldown because click may land on a different InputManager instance
+      if _global_dropdown_close_cooldown then
+        Debug.log("[DROPDOWN DEBUG] <LeftRelease> BLOCKED by global cooldown")
+        return
+      end
+      activate_field_at_cursor("<LeftRelease> keymap (scheduled)")
+    end)
   end, opts)
   
   -- Normal mode: j/Down moves to next input
@@ -981,13 +1049,26 @@ end
 ---Open dropdown window for a dropdown field
 ---@param key string Dropdown key
 function InputManager:_open_dropdown(key)
-  local dropdown = self.dropdowns[key]
-  if not dropdown then
-    vim.notify(string.format("DEBUG _open_dropdown: dropdown '%s' not found!", key), vim.log.levels.WARN)
+  Debug.log(string.format("[DROPDOWN DEBUG] _open_dropdown CALLED for key=%s, global_cooldown=%s, opening=%s", key, tostring(_global_dropdown_close_cooldown), tostring(_dropdown_opening)))
+
+  -- Prevent opening while another dropdown is still being opened
+  if _dropdown_opening then
+    Debug.log("[DROPDOWN DEBUG] _open_dropdown BLOCKED: another dropdown is being opened")
     return
   end
 
-  vim.notify(string.format("DEBUG _open_dropdown: key=%s, options=%d, current_value=%s", key, #(dropdown.options or {}), tostring(self.dropdown_values[key])), vim.log.levels.INFO)
+  local dropdown = self.dropdowns[key]
+  if not dropdown then
+    Debug.log(string.format("[DROPDOWN DEBUG] _open_dropdown: dropdown '%s' not found!", key))
+    return
+  end
+
+  -- Set opening flag and timestamp to prevent premature close
+  _dropdown_opening = true
+  _dropdown_open_time = vim.loop.now()
+  _any_dropdown_open = true
+
+  Debug.log(string.format("[DROPDOWN DEBUG] _open_dropdown: key=%s, options=%d, current_value=%s, open_time=%d", key, #(dropdown.options or {}), tostring(self.dropdown_values[key]), _dropdown_open_time))
 
   -- Store original value for cancel
   self._dropdown_original_value = self.dropdown_values[key]
@@ -1005,7 +1086,7 @@ function InputManager:_open_dropdown(key)
     end
   end
 
-  vim.notify(string.format("DEBUG _open_dropdown: selected_idx=%d, callback=%s", self._dropdown_selected_idx, self.on_dropdown_change and "yes" or "NO"), vim.log.levels.INFO)
+  Debug.log(string.format("DEBUG _open_dropdown: selected_idx=%d, callback=%s", self._dropdown_selected_idx, self.on_dropdown_change and "yes" or "NO"))
 
   -- Calculate dropdown window position (below the dropdown field)
   local win_info = vim.fn.getwininfo(self.winid)[1]
@@ -1058,6 +1139,7 @@ function InputManager:_open_dropdown(key)
   if not self._dropdown_float or not self._dropdown_float:is_valid() then
     self._dropdown_open = false
     self._dropdown_key = nil
+    _dropdown_opening = false  -- Reset opening flag on failure
     return
   end
 
@@ -1081,6 +1163,12 @@ function InputManager:_open_dropdown(key)
       vim.cmd('redraw')
     end
   end)
+
+  -- Clear opening flag after a short delay to allow dropdown to settle
+  vim.defer_fn(function()
+    _dropdown_opening = false
+    Debug.log("[DROPDOWN DEBUG] Dropdown opening flag CLEARED (50ms elapsed)")
+  end, 50)
 end
 
 ---Build dropdown content using ContentBuilder
@@ -1132,7 +1220,12 @@ end
 ---Close dropdown window
 ---@param cancel boolean Whether to cancel (restore original value)
 function InputManager:_close_dropdown(cancel)
+  Debug.log(string.format("[DROPDOWN DEBUG] _close_dropdown called, cancel=%s, open=%s", tostring(cancel), tostring(self._dropdown_open)))
   if not self._dropdown_open then return end
+
+  -- Clear opening flag in case close is called during opening phase
+  _dropdown_opening = false
+  _any_dropdown_open = false
 
   local key = self._dropdown_key
 
@@ -1163,6 +1256,14 @@ function InputManager:_close_dropdown(cancel)
   self._dropdown_filtered_options = nil
   self._dropdown_filter_text = ""
 
+  -- Set global cooldown to prevent immediate re-open from mouse click on ANY panel
+  _global_dropdown_close_cooldown = true
+  Debug.log("[DROPDOWN DEBUG] Global cooldown SET to true")
+  vim.defer_fn(function()
+    _global_dropdown_close_cooldown = false
+    Debug.log("[DROPDOWN DEBUG] Global cooldown RESET to false (200ms elapsed)")
+  end, 200)
+
   -- Return focus to parent window
   if vim.api.nvim_win_is_valid(self.winid) then
     vim.api.nvim_set_current_win(self.winid)
@@ -1186,7 +1287,7 @@ function InputManager:_select_dropdown()
   local filtered = self._dropdown_filtered_options or dropdown.options
   local selected_opt = filtered[self._dropdown_selected_idx]
 
-  vim.notify(string.format("DEBUG _select_dropdown: key=%s, idx=%d, opt=%s", key, self._dropdown_selected_idx, selected_opt and selected_opt.value or "nil"), vim.log.levels.INFO)
+  Debug.log(string.format("DEBUG _select_dropdown: key=%s, idx=%d, opt=%s", key, self._dropdown_selected_idx, selected_opt and selected_opt.value or "nil"))
 
   if selected_opt then
     -- Compare against ORIGINAL value (from when dropdown opened), not current value
@@ -1194,16 +1295,16 @@ function InputManager:_select_dropdown()
     local original_value = self._dropdown_original_value
     self.dropdown_values[key] = selected_opt.value
 
-    vim.notify(string.format("DEBUG _select_dropdown: original=%s, new=%s, callback=%s", tostring(original_value), selected_opt.value, self.on_dropdown_change and "yes" or "NO"), vim.log.levels.INFO)
+    Debug.log(string.format("DEBUG _select_dropdown: original=%s, new=%s, callback=%s", tostring(original_value), selected_opt.value, self.on_dropdown_change and "yes" or "NO"))
 
     -- Callback if value changed from original
     if self.on_dropdown_change and selected_opt.value ~= original_value then
-      vim.notify("DEBUG _select_dropdown: Calling on_dropdown_change callback", vim.log.levels.INFO)
+      Debug.log("DEBUG _select_dropdown: Calling on_dropdown_change callback")
       self.on_dropdown_change(key, selected_opt.value)
     elseif not self.on_dropdown_change then
-      vim.notify("DEBUG _select_dropdown: No callback set!", vim.log.levels.WARN)
+      Debug.log("DEBUG _select_dropdown: No callback set!")
     elseif selected_opt.value == original_value then
-      vim.notify("DEBUG _select_dropdown: Value unchanged from original, skipping callback", vim.log.levels.INFO)
+      Debug.log("DEBUG _select_dropdown: Value unchanged from original, skipping callback")
     end
   end
 
@@ -1453,6 +1554,23 @@ function InputManager:_setup_dropdown_keymaps()
   -- Select
   vim.keymap.set('n', '<CR>', function() self:_select_dropdown() end, opts)
 
+  -- Mouse click: select option under cursor
+  vim.keymap.set('n', '<LeftRelease>', function()
+    vim.schedule(function()
+      -- Get cursor position (1-indexed row)
+      local cursor = vim.api.nvim_win_get_cursor(0)
+      local row = cursor[1]
+      -- Get filtered options (may differ from full options if user typed to filter)
+      local dropdown = self.dropdowns[self._dropdown_key]
+      local filtered = self._dropdown_filtered_options or (dropdown and dropdown.options or {})
+      -- Update selection index and select
+      if row >= 1 and row <= #filtered then
+        self._dropdown_selected_idx = row
+        self:_select_dropdown()
+      end
+    end)
+  end, opts)
+
   -- Cancel
   vim.keymap.set('n', '<Esc>', function() self:_close_dropdown(true) end, opts)
   vim.keymap.set('n', 'q', function() self:_close_dropdown(true) end, opts)
@@ -1491,16 +1609,29 @@ function InputManager:_setup_dropdown_autocmds()
     { clear = true }
   )
 
+  -- Minimum time (ms) after opening before WinLeave/BufLeave can close the dropdown
+  local SETTLE_TIME_MS = 150
+
   -- Close on WinLeave (focus lost)
   vim.api.nvim_create_autocmd("WinLeave", {
     group = self._dropdown_autocmd_group,
     buffer = bufnr,
     callback = function()
+      -- Check settle time IMMEDIATELY (not in scheduled callback) to avoid race condition
+      local elapsed = vim.loop.now() - _dropdown_open_time
+      Debug.log(string.format("[DROPDOWN DEBUG] Dropdown WinLeave autocmd fired, elapsed=%dms", elapsed))
+
+      if elapsed < SETTLE_TIME_MS then
+        Debug.log(string.format("[DROPDOWN DEBUG] Dropdown WinLeave IGNORED: within settle period (%dms < %dms)", elapsed, SETTLE_TIME_MS))
+        return
+      end
+
       -- Schedule to allow checking if we're going to parent window
       vim.schedule(function()
         local current_win = vim.api.nvim_get_current_win()
         -- If leaving to a window that's not the parent, cancel
         if current_win ~= self.winid then
+          Debug.log("[DROPDOWN DEBUG] Dropdown WinLeave: closing with cancel=true")
           self:_close_dropdown(true)
         end
       end)
@@ -1512,7 +1643,17 @@ function InputManager:_setup_dropdown_autocmds()
     group = self._dropdown_autocmd_group,
     buffer = bufnr,
     callback = function()
+      -- Check settle time IMMEDIATELY (not in scheduled callback) to avoid race condition
+      local elapsed = vim.loop.now() - _dropdown_open_time
+      Debug.log(string.format("[DROPDOWN DEBUG] Dropdown BufLeave autocmd fired, elapsed=%dms", elapsed))
+
+      if elapsed < SETTLE_TIME_MS then
+        Debug.log(string.format("[DROPDOWN DEBUG] Dropdown BufLeave IGNORED: within settle period (%dms < %dms)", elapsed, SETTLE_TIME_MS))
+        return
+      end
+
       vim.schedule(function()
+        Debug.log("[DROPDOWN DEBUG] Dropdown BufLeave: closing with cancel=true")
         self:_close_dropdown(true)
       end)
     end,
@@ -1544,8 +1685,25 @@ end
 ---Open multi-dropdown window
 ---@param key string Multi-dropdown key
 function InputManager:_open_multi_dropdown(key)
+  Debug.log(string.format("[DROPDOWN DEBUG] _open_multi_dropdown CALLED for key=%s, global_cooldown=%s, opening=%s", key, tostring(_global_dropdown_close_cooldown), tostring(_dropdown_opening)))
+
+  -- Prevent opening while another dropdown is still being opened
+  if _dropdown_opening then
+    Debug.log("[DROPDOWN DEBUG] _open_multi_dropdown BLOCKED: another dropdown is being opened")
+    return
+  end
+
   local multi_dropdown = self.multi_dropdowns[key]
-  if not multi_dropdown then return end
+  if not multi_dropdown then
+    Debug.log(string.format("[DROPDOWN DEBUG] _open_multi_dropdown: multi_dropdown '%s' not found!", key))
+    return
+  end
+
+  -- Set opening flag and timestamp to prevent premature close
+  _dropdown_opening = true
+  _dropdown_open_time = vim.loop.now()
+  _any_dropdown_open = true
+  Debug.log(string.format("[DROPDOWN DEBUG] _open_multi_dropdown: open_time set to %d", _dropdown_open_time))
 
   -- Store original values for cancel
   self._multi_dropdown_original_values = vim.deepcopy(self.multi_dropdown_values[key] or {})
@@ -1598,6 +1756,7 @@ function InputManager:_open_multi_dropdown(key)
   if not self._multi_dropdown_float or not self._multi_dropdown_float:is_valid() then
     self._multi_dropdown_open = false
     self._multi_dropdown_key = nil
+    _dropdown_opening = false  -- Reset opening flag on failure
     return
   end
 
@@ -1611,6 +1770,12 @@ function InputManager:_open_multi_dropdown(key)
   -- Setup keymaps and autocmds
   self:_setup_multi_dropdown_keymaps()
   self:_setup_multi_dropdown_autocmds()
+
+  -- Clear opening flag after a short delay to allow dropdown to settle
+  vim.defer_fn(function()
+    _dropdown_opening = false
+    Debug.log("[DROPDOWN DEBUG] Multi-dropdown opening flag CLEARED (50ms elapsed)")
+  end, 50)
 end
 
 ---Build multi-dropdown content using ContentBuilder
@@ -1691,7 +1856,12 @@ end
 ---Close multi-dropdown window
 ---@param cancel boolean Whether to cancel (restore original values)
 function InputManager:_close_multi_dropdown(cancel)
+  Debug.log(string.format("[DROPDOWN DEBUG] _close_multi_dropdown called, cancel=%s, open=%s", tostring(cancel), tostring(self._multi_dropdown_open)))
   if not self._multi_dropdown_open then return end
+
+  -- Clear opening flag in case close is called during opening phase
+  _dropdown_opening = false
+  _any_dropdown_open = false
 
   local key = self._multi_dropdown_key
 
@@ -1719,6 +1889,14 @@ function InputManager:_close_multi_dropdown(cancel)
   self._multi_dropdown_cursor_idx = 1
   self._multi_dropdown_original_values = nil
   self._multi_dropdown_pending_values = nil
+
+  -- Set global cooldown to prevent immediate re-open from mouse click on ANY panel
+  _global_dropdown_close_cooldown = true
+  Debug.log("[DROPDOWN DEBUG] Multi-dropdown global cooldown SET to true")
+  vim.defer_fn(function()
+    _global_dropdown_close_cooldown = false
+    Debug.log("[DROPDOWN DEBUG] Multi-dropdown global cooldown RESET to false (200ms elapsed)")
+  end, 200)
 
   -- Return focus to parent
   if vim.api.nvim_win_is_valid(self.winid) then
@@ -2010,6 +2188,59 @@ function InputManager:_setup_multi_dropdown_keymaps()
   vim.keymap.set('n', '<Space>', function() self:_toggle_multi_dropdown_option() end, opts)
   vim.keymap.set('n', 'x', function() self:_toggle_multi_dropdown_option() end, opts)
 
+  -- Mouse click: toggle option under cursor and auto-apply
+  vim.keymap.set('n', '<LeftRelease>', function()
+    vim.schedule(function()
+      -- Get cursor position (1-indexed row)
+      local cursor = vim.api.nvim_win_get_cursor(0)
+      local row = cursor[1]
+      -- Calculate max row (accounting for "Select All" + separator rows if present)
+      local multi_dropdown = self.multi_dropdowns[self._multi_dropdown_key]
+      if not multi_dropdown then return end
+
+      local has_select_all = multi_dropdown.select_all_option
+      -- When select_all_option is true: row 1 = Select All, row 2 = separator, rows 3+ = options
+      local header_rows = has_select_all and 2 or 0
+      local max_row = #multi_dropdown.options + header_rows
+
+      if row >= 1 and row <= max_row then
+        -- Update cursor index (used by _toggle_multi_dropdown_option)
+        self._multi_dropdown_cursor_idx = row
+        self:_toggle_multi_dropdown_option()
+
+        -- Auto-apply: immediately save pending values so clicking away keeps changes
+        local key = self._multi_dropdown_key
+        if key then
+          local old_values = vim.deepcopy(self.multi_dropdown_values[key] or {})
+          self.multi_dropdown_values[key] = vim.deepcopy(self._multi_dropdown_pending_values or {})
+
+          -- Also update original values so WinLeave close doesn't revert
+          self._multi_dropdown_original_values = vim.deepcopy(self._multi_dropdown_pending_values or {})
+
+          -- Update parent display
+          self:_update_multi_dropdown_display(key)
+
+          -- Callback if changed
+          if self.on_multi_dropdown_change then
+            local new_values = self.multi_dropdown_values[key]
+            local changed = (#old_values ~= #new_values)
+            if not changed then
+              for i, v in ipairs(old_values) do
+                if new_values[i] ~= v then
+                  changed = true
+                  break
+                end
+              end
+            end
+            if changed then
+              self.on_multi_dropdown_change(key, new_values)
+            end
+          end
+        end
+      end
+    end)
+  end, opts)
+
   -- Select all
   vim.keymap.set('n', 'a', function() self:_toggle_select_all_multi_dropdown() end, opts)
 
@@ -2031,13 +2262,28 @@ function InputManager:_setup_multi_dropdown_autocmds()
     { clear = true }
   )
 
+  -- Minimum time (ms) after opening before WinLeave/BufLeave can close the dropdown
+  local SETTLE_TIME_MS = 150
+
   vim.api.nvim_create_autocmd("WinLeave", {
     group = self._multi_dropdown_autocmd_group,
     buffer = bufnr,
     callback = function()
+      -- Check settle time IMMEDIATELY (not in scheduled callback) to avoid race condition
+      local now = vim.loop.now()
+      local elapsed = now - _dropdown_open_time
+      Debug.log(string.format("[DROPDOWN DEBUG] Multi-dropdown WinLeave: now=%d, open_time=%d, elapsed=%dms", now, _dropdown_open_time, elapsed))
+
+      if elapsed < SETTLE_TIME_MS then
+        Debug.log(string.format("[DROPDOWN DEBUG] Multi-dropdown WinLeave IGNORED: within settle period (%dms < %dms)", elapsed, SETTLE_TIME_MS))
+        return
+      end
+
       vim.schedule(function()
         local current_win = vim.api.nvim_get_current_win()
+        Debug.log(string.format("[DROPDOWN DEBUG] Multi-dropdown WinLeave scheduled: current_win=%d, parent_winid=%d", current_win, self.winid))
         if current_win ~= self.winid then
+          Debug.log("[DROPDOWN DEBUG] Multi-dropdown WinLeave: closing with cancel=true")
           self:_close_multi_dropdown(true)
         end
       end)
@@ -2048,7 +2294,18 @@ function InputManager:_setup_multi_dropdown_autocmds()
     group = self._multi_dropdown_autocmd_group,
     buffer = bufnr,
     callback = function()
+      -- Check settle time IMMEDIATELY (not in scheduled callback) to avoid race condition
+      local now = vim.loop.now()
+      local elapsed = now - _dropdown_open_time
+      Debug.log(string.format("[DROPDOWN DEBUG] Multi-dropdown BufLeave: now=%d, open_time=%d, elapsed=%dms", now, _dropdown_open_time, elapsed))
+
+      if elapsed < SETTLE_TIME_MS then
+        Debug.log(string.format("[DROPDOWN DEBUG] Multi-dropdown BufLeave IGNORED: within settle period (%dms < %dms)", elapsed, SETTLE_TIME_MS))
+        return
+      end
+
       vim.schedule(function()
+        Debug.log("[DROPDOWN DEBUG] Multi-dropdown BufLeave scheduled: closing with cancel=true")
         self:_close_multi_dropdown(true)
       end)
     end,
