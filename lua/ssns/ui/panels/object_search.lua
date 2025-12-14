@@ -232,6 +232,21 @@ local function build_display_name(searchable)
   end
 end
 
+---Check if an object should be shown based on its object type filter
+---@param searchable SearchableObject
+---@return boolean
+local function should_show_object_type(searchable)
+  local obj_type = searchable.object_type
+  if obj_type == "table" then return ui_state.show_tables
+  elseif obj_type == "view" then return ui_state.show_views
+  elseif obj_type == "procedure" then return ui_state.show_procedures
+  elseif obj_type == "function" then return ui_state.show_functions
+  elseif obj_type == "synonym" then return ui_state.show_synonyms
+  elseif obj_type == "schema" then return ui_state.show_schemas
+  end
+  return true  -- Show unknown types by default
+end
+
 ---Check if character is a word character
 ---@param char string
 ---@return boolean
@@ -857,21 +872,6 @@ local function get_object_types_values()
   if ui_state.show_synonyms then table.insert(values, "synonym") end
   if ui_state.show_schemas then table.insert(values, "schema") end
   return values
-end
-
----Check if an object should be shown based on its object type filter
----@param searchable SearchableObject
----@return boolean
-local function should_show_object_type(searchable)
-  local obj_type = searchable.object_type
-  if obj_type == "table" then return ui_state.show_tables
-  elseif obj_type == "view" then return ui_state.show_views
-  elseif obj_type == "procedure" then return ui_state.show_procedures
-  elseif obj_type == "function" then return ui_state.show_functions
-  elseif obj_type == "synonym" then return ui_state.show_synonyms
-  elseif obj_type == "schema" then return ui_state.show_schemas
-  end
-  return true  -- Show unknown types by default
 end
 
 ---Calculate visible object count based on current filters
