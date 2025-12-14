@@ -618,31 +618,36 @@ end
 ---@param content_builder ContentBuilder
 function FloatWindow:_setup_input_manager(content_builder)
   local InputManager = require('ssns.ui.core.input_manager')
-  
+
   local inputs = content_builder:get_inputs()
   local input_order = content_builder:get_input_order()
-  
-  -- Create input manager
+  local dropdowns = content_builder:get_dropdowns()
+  local dropdown_order = content_builder:get_dropdown_order()
+
+  -- Create input manager with both inputs and dropdowns
   self._input_manager = InputManager.new({
     bufnr = self.bufnr,
     winid = self.winid,
     inputs = inputs,
     input_order = input_order,
+    dropdowns = dropdowns,
+    dropdown_order = dropdown_order,
   })
-  
+
   -- Setup input mode handling
   self._input_manager:setup()
-  
-  -- Initialize highlights for all inputs
+
+  -- Initialize highlights for all fields (inputs and dropdowns)
   self._input_manager:init_highlights()
-  
-  -- Position cursor on first input if available (schedule to ensure window is ready)
-  if #input_order > 0 then
-    local first_input = inputs[input_order[1]]
-    if first_input then
+
+  -- Position cursor on first field if available (schedule to ensure window is ready)
+  local first_field_key = self._input_manager._field_order[1]
+  if first_field_key then
+    local field_info = self._input_manager:_get_field(first_field_key)
+    if field_info then
       vim.schedule(function()
         if vim.api.nvim_win_is_valid(self.winid) then
-          vim.api.nvim_win_set_cursor(self.winid, {first_input.line, first_input.col_start})
+          vim.api.nvim_win_set_cursor(self.winid, {field_info.field.line, field_info.field.col_start})
         end
       end)
     end
@@ -723,6 +728,33 @@ end
 function FloatWindow:on_input_submit(callback)
   if self._input_manager then
     self._input_manager.on_submit = callback
+  end
+end
+
+---Get value of a specific dropdown
+---@param key string Dropdown key
+---@return string? value
+function FloatWindow:get_dropdown_value(key)
+  if self._input_manager then
+    return self._input_manager:get_dropdown_value(key)
+  end
+  return nil
+end
+
+---Set value of a specific dropdown
+---@param key string Dropdown key
+---@param value string New value
+function FloatWindow:set_dropdown_value(key, value)
+  if self._input_manager then
+    self._input_manager:set_dropdown_value(key, value)
+  end
+end
+
+---Set callback for when dropdown value changes
+---@param callback function Callback function (key, value)
+function FloatWindow:on_dropdown_change(callback)
+  if self._input_manager then
+    self._input_manager.on_dropdown_change = callback
   end
 end
 

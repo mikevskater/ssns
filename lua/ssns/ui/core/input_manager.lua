@@ -644,12 +644,12 @@ function InputManager:_clear_input_highlights()
   end
 end
 
----Initialize highlights for all inputs (call after setup)
+---Initialize highlights for all fields (inputs and dropdowns)
 function InputManager:init_highlights()
-  -- Highlight first input as current, others as inactive
-  if #self.input_order > 0 then
-    local first_key = self.input_order[1]
-    self:_highlight_current_input(first_key)
+  -- Highlight first field as current, others as inactive
+  if #self._field_order > 0 then
+    local first_key = self._field_order[1]
+    self:_highlight_current_field(first_key)
   end
 end
 
@@ -808,10 +808,14 @@ end
 ---Update input definitions (e.g., after re-render)
 ---@param inputs table<string, InputField> New input definitions
 ---@param input_order string[] New input order
-function InputManager:update_inputs(inputs, input_order)
+---@param dropdowns table<string, DropdownField>? New dropdown definitions
+---@param dropdown_order string[]? New dropdown order
+function InputManager:update_inputs(inputs, input_order, dropdowns, dropdown_order)
   self.inputs = inputs or {}
   self.input_order = input_order or {}
-  
+  self.dropdowns = dropdowns or self.dropdowns or {}
+  self.dropdown_order = dropdown_order or self.dropdown_order or {}
+
   -- Preserve existing values, add new ones, and track placeholder state
   for key, input in pairs(self.inputs) do
     if not self.values[key] then
@@ -821,14 +825,503 @@ function InputManager:update_inputs(inputs, input_order)
     local value = self.values[key] or ""
     input.is_showing_placeholder = (value == "" and (input.placeholder or "") ~= "")
   end
+
+  -- Preserve dropdown values
+  for key, dropdown in pairs(self.dropdowns) do
+    if not self.dropdown_values[key] then
+      self.dropdown_values[key] = dropdown.value or ""
+    end
+  end
+
+  -- Rebuild field order
+  self:_build_field_order()
+end
+
+---Highlight a field (input or dropdown)
+---@param current_key string Key of currently focused field
+function InputManager:_highlight_current_field(current_key)
+  -- Clear all and reapply with current highlighted
+  vim.api.nvim_buf_clear_namespace(self.bufnr, self._namespace, 0, -1)
+
+  -- Highlight inputs
+  for key, _ in pairs(self.inputs) do
+    self:_highlight_input(key, key == current_key)
+  end
+
+  -- Highlight dropdowns
+  for key, _ in pairs(self.dropdowns) do
+    self:_highlight_dropdown(key, key == current_key)
+  end
+end
+
+---Highlight a dropdown field
+---@param key string Dropdown key
+---@param active boolean Whether dropdown is active/focused
+function InputManager:_highlight_dropdown(key, active)
+  local dropdown = self.dropdowns[key]
+  if not dropdown then return end
+
+  -- Determine highlight group based on state
+  local hl_group
+  if active then
+    hl_group = "SsnsFloatInputActive"
+  elseif dropdown.is_placeholder then
+    hl_group = "SsnsFloatInputPlaceholder"
+  else
+    hl_group = "SsnsFloatInput"
+  end
+
+  -- Highlight the dropdown value area (excluding arrow)
+  local arrow_len = 4  -- " ▼" is 4 bytes
+  vim.api.nvim_buf_add_highlight(
+    self.bufnr, self._namespace, hl_group,
+    dropdown.line - 1, dropdown.col_start, dropdown.col_end - arrow_len
+  )
+
+  -- Arrow always gets hint color
+  vim.api.nvim_buf_add_highlight(
+    self.bufnr, self._namespace, "SsnsUiHint",
+    dropdown.line - 1, dropdown.col_end - arrow_len, dropdown.col_end
+  )
+end
+
+---Open dropdown window for a dropdown field
+---@param key string Dropdown key
+function InputManager:_open_dropdown(key)
+  local dropdown = self.dropdowns[key]
+  if not dropdown then return end
+
+  -- Store original value for cancel
+  self._dropdown_original_value = self.dropdown_values[key]
+  self._dropdown_key = key
+  self._dropdown_open = true
+  self._dropdown_filter_text = ""
+  self._dropdown_filtered_options = vim.deepcopy(dropdown.options)
+
+  -- Find index of currently selected value
+  self._dropdown_selected_idx = 1
+  for i, opt in ipairs(dropdown.options) do
+    if opt.value == self._dropdown_original_value then
+      self._dropdown_selected_idx = i
+      break
+    end
+  end
+
+  -- Calculate dropdown window position (below the dropdown field)
+  local win_info = vim.fn.getwininfo(self.winid)[1]
+  if not win_info then return end
+
+  -- Get screen position of parent window
+  local parent_row = win_info.winrow
+  local parent_col = win_info.wincol
+
+  -- Dropdown position: directly below the field
+  local dropdown_row = parent_row + dropdown.line
+  local dropdown_col = parent_col + dropdown.col_start
+
+  -- Dropdown dimensions
+  local width = dropdown.width + 2  -- Add padding
+  local height = math.min(#dropdown.options, dropdown.max_height or 6)
+
+  -- Create dropdown buffer
+  self._dropdown_bufnr = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_option(self._dropdown_bufnr, 'buftype', 'nofile')
+  vim.api.nvim_buf_set_option(self._dropdown_bufnr, 'bufhidden', 'wipe')
+  vim.api.nvim_buf_set_option(self._dropdown_bufnr, 'swapfile', false)
+
+  -- Get UiFloat for ZINDEX constant
+  local UiFloat = require('ssns.ui.core.float')
+
+  -- Create dropdown window
+  self._dropdown_winid = vim.api.nvim_open_win(self._dropdown_bufnr, true, {
+    relative = "editor",
+    width = width,
+    height = height,
+    row = dropdown_row,
+    col = dropdown_col,
+    style = "minimal",
+    border = "rounded",
+    zindex = UiFloat.ZINDEX.DROPDOWN,
+    focusable = true,
+  })
+
+  -- Window options
+  vim.api.nvim_set_option_value('cursorline', true, { win = self._dropdown_winid })
+  vim.api.nvim_set_option_value('winhighlight', 'Normal:SsnsFloatNormal,CursorLine:SsnsFloatSelected', { win = self._dropdown_winid })
+
+  -- Render options
+  self:_render_dropdown()
+
+  -- Position cursor on selected item
+  if self._dropdown_selected_idx <= height then
+    vim.api.nvim_win_set_cursor(self._dropdown_winid, {self._dropdown_selected_idx, 0})
+  end
+
+  -- Setup dropdown keymaps
+  self:_setup_dropdown_keymaps()
+
+  -- Setup autocmds for focus-lost detection
+  self:_setup_dropdown_autocmds()
+end
+
+---Close dropdown window
+---@param cancel boolean Whether to cancel (restore original value)
+function InputManager:_close_dropdown(cancel)
+  if not self._dropdown_open then return end
+
+  local key = self._dropdown_key
+
+  -- Cancel = restore original value
+  if cancel and key and self._dropdown_original_value then
+    self.dropdown_values[key] = self._dropdown_original_value
+    self:_update_dropdown_display(key)
+  end
+
+  -- Clean up autocmds
+  if self._dropdown_autocmd_group then
+    pcall(vim.api.nvim_del_augroup_by_id, self._dropdown_autocmd_group)
+    self._dropdown_autocmd_group = nil
+  end
+
+  -- Close dropdown window
+  if self._dropdown_winid and vim.api.nvim_win_is_valid(self._dropdown_winid) then
+    vim.api.nvim_win_close(self._dropdown_winid, true)
+  end
+
+  -- Reset state
+  self._dropdown_open = false
+  self._dropdown_key = nil
+  self._dropdown_winid = nil
+  self._dropdown_bufnr = nil
+  self._dropdown_selected_idx = 1
+  self._dropdown_original_value = nil
+  self._dropdown_filtered_options = nil
+  self._dropdown_filter_text = ""
+
+  -- Return focus to parent window
+  if vim.api.nvim_win_is_valid(self.winid) then
+    vim.api.nvim_set_current_win(self.winid)
+  end
+
+  -- Re-highlight current field
+  if key then
+    self:_highlight_current_field(key)
+  end
+end
+
+---Select current dropdown option
+function InputManager:_select_dropdown()
+  if not self._dropdown_open or not self._dropdown_key then return end
+
+  local key = self._dropdown_key
+  local dropdown = self.dropdowns[key]
+  if not dropdown then return end
+
+  -- Get selected option
+  local filtered = self._dropdown_filtered_options or dropdown.options
+  local selected_opt = filtered[self._dropdown_selected_idx]
+
+  if selected_opt then
+    local old_value = self.dropdown_values[key]
+    self.dropdown_values[key] = selected_opt.value
+
+    -- Callback if value changed
+    if self.on_dropdown_change and selected_opt.value ~= old_value then
+      self.on_dropdown_change(key, selected_opt.value)
+    end
+  end
+
+  self:_close_dropdown(false)
+end
+
+---Render dropdown options
+function InputManager:_render_dropdown()
+  if not self._dropdown_bufnr or not vim.api.nvim_buf_is_valid(self._dropdown_bufnr) then return end
+
+  local key = self._dropdown_key
+  local dropdown = self.dropdowns[key]
+  if not dropdown then return end
+
+  local filtered = self._dropdown_filtered_options or dropdown.options
+  local lines = {}
+
+  for _, opt in ipairs(filtered) do
+    -- Add indicator for original value
+    local indicator = (opt.value == self._dropdown_original_value) and " ●" or "  "
+    table.insert(lines, " " .. opt.label .. indicator)
+  end
+
+  if #lines == 0 then
+    lines = {" (no matches)"}
+  end
+
+  vim.api.nvim_buf_set_option(self._dropdown_bufnr, 'modifiable', true)
+  vim.api.nvim_buf_set_lines(self._dropdown_bufnr, 0, -1, false, lines)
+  vim.api.nvim_buf_set_option(self._dropdown_bufnr, 'modifiable', false)
+end
+
+---Navigate dropdown selection
+---@param direction number 1 for down, -1 for up
+function InputManager:_navigate_dropdown(direction)
+  if not self._dropdown_open then return end
+
+  local filtered = self._dropdown_filtered_options or {}
+  if #filtered == 0 then return end
+
+  -- Update selection index
+  self._dropdown_selected_idx = self._dropdown_selected_idx + direction
+
+  -- Wrap around
+  if self._dropdown_selected_idx < 1 then
+    self._dropdown_selected_idx = #filtered
+  elseif self._dropdown_selected_idx > #filtered then
+    self._dropdown_selected_idx = 1
+  end
+
+  -- Move cursor in dropdown window
+  if self._dropdown_winid and vim.api.nvim_win_is_valid(self._dropdown_winid) then
+    vim.api.nvim_win_set_cursor(self._dropdown_winid, {self._dropdown_selected_idx, 0})
+  end
+
+  -- Live preview: update parent display
+  local selected_opt = filtered[self._dropdown_selected_idx]
+  if selected_opt and self._dropdown_key then
+    self.dropdown_values[self._dropdown_key] = selected_opt.value
+    self:_update_dropdown_display(self._dropdown_key)
+  end
+end
+
+---Filter dropdown options based on typed text
+---@param char string Character to add to filter
+function InputManager:_filter_dropdown(char)
+  if not self._dropdown_open or not self._dropdown_key then return end
+
+  local dropdown = self.dropdowns[self._dropdown_key]
+  if not dropdown then return end
+
+  -- Add character to filter
+  self._dropdown_filter_text = self._dropdown_filter_text .. char
+  local filter_lower = self._dropdown_filter_text:lower()
+
+  -- Filter options
+  self._dropdown_filtered_options = {}
+  for _, opt in ipairs(dropdown.options) do
+    if opt.label:lower():find(filter_lower, 1, true) then
+      table.insert(self._dropdown_filtered_options, opt)
+    end
+  end
+
+  -- Reset selection to first match
+  self._dropdown_selected_idx = 1
+
+  -- Re-render
+  self:_render_dropdown()
+
+  -- Update window height
+  local height = math.min(#self._dropdown_filtered_options, dropdown.max_height or 6)
+  height = math.max(height, 1)  -- At least 1 line
+
+  if self._dropdown_winid and vim.api.nvim_win_is_valid(self._dropdown_winid) then
+    vim.api.nvim_win_set_config(self._dropdown_winid, {
+      height = height,
+    })
+
+    -- Position cursor
+    if #self._dropdown_filtered_options > 0 then
+      vim.api.nvim_win_set_cursor(self._dropdown_winid, {1, 0})
+
+      -- Live preview first match
+      local first_opt = self._dropdown_filtered_options[1]
+      if first_opt then
+        self.dropdown_values[self._dropdown_key] = first_opt.value
+        self:_update_dropdown_display(self._dropdown_key)
+      end
+    end
+  end
+end
+
+---Clear dropdown filter
+function InputManager:_clear_dropdown_filter()
+  if not self._dropdown_open or not self._dropdown_key then return end
+
+  local dropdown = self.dropdowns[self._dropdown_key]
+  if not dropdown then return end
+
+  self._dropdown_filter_text = ""
+  self._dropdown_filtered_options = vim.deepcopy(dropdown.options)
+  self._dropdown_selected_idx = 1
+
+  -- Re-render
+  self:_render_dropdown()
+
+  -- Update window height
+  local height = math.min(#dropdown.options, dropdown.max_height or 6)
+  if self._dropdown_winid and vim.api.nvim_win_is_valid(self._dropdown_winid) then
+    vim.api.nvim_win_set_config(self._dropdown_winid, {
+      height = height,
+    })
+    vim.api.nvim_win_set_cursor(self._dropdown_winid, {1, 0})
+  end
+end
+
+---Update dropdown display in parent buffer
+---@param key string Dropdown key
+function InputManager:_update_dropdown_display(key)
+  local dropdown = self.dropdowns[key]
+  if not dropdown then return end
+
+  local value = self.dropdown_values[key]
+
+  -- Find label for value
+  local display_text = dropdown.placeholder or "(select)"
+  local is_placeholder = true
+  for _, opt in ipairs(dropdown.options) do
+    if opt.value == value then
+      display_text = opt.label
+      is_placeholder = false
+      break
+    end
+  end
+
+  -- Calculate dimensions
+  local arrow = " ▼"
+  local arrow_len = #arrow
+  local text_width = dropdown.text_width or (dropdown.width - arrow_len)
+
+  -- Pad or truncate
+  if #display_text < text_width then
+    display_text = display_text .. string.rep(" ", text_width - #display_text)
+  elseif #display_text > text_width then
+    display_text = display_text:sub(1, text_width - 1) .. "…"
+  end
+
+  -- Get current line
+  local lines = vim.api.nvim_buf_get_lines(self.bufnr, dropdown.line - 1, dropdown.line, false)
+  if #lines == 0 then return end
+
+  local line = lines[1]
+
+  -- Find brackets
+  local bracket_pos = line:find("%]", dropdown.col_start + 1)
+  if not bracket_pos then return end
+
+  -- Reconstruct line
+  local before = line:sub(1, dropdown.col_start)
+  local after = line:sub(bracket_pos + 1)
+  local new_line = before .. display_text .. arrow .. "]" .. after
+
+  -- Update buffer
+  local was_modifiable = vim.api.nvim_buf_get_option(self.bufnr, 'modifiable')
+  vim.api.nvim_buf_set_option(self.bufnr, 'modifiable', true)
+  vim.api.nvim_buf_set_lines(self.bufnr, dropdown.line - 1, dropdown.line, false, {new_line})
+  vim.api.nvim_buf_set_option(self.bufnr, 'modifiable', was_modifiable)
+
+  -- Update placeholder state
+  dropdown.is_placeholder = is_placeholder
+end
+
+---Setup keymaps for dropdown window
+function InputManager:_setup_dropdown_keymaps()
+  if not self._dropdown_bufnr then return end
+
+  local opts = { buffer = self._dropdown_bufnr, noremap = true, silent = true, nowait = true }
+
+  -- Navigation
+  vim.keymap.set('n', 'j', function() self:_navigate_dropdown(1) end, opts)
+  vim.keymap.set('n', 'k', function() self:_navigate_dropdown(-1) end, opts)
+  vim.keymap.set('n', '<Down>', function() self:_navigate_dropdown(1) end, opts)
+  vim.keymap.set('n', '<Up>', function() self:_navigate_dropdown(-1) end, opts)
+
+  -- Select
+  vim.keymap.set('n', '<CR>', function() self:_select_dropdown() end, opts)
+  vim.keymap.set('n', 'l', function() self:_select_dropdown() end, opts)
+  vim.keymap.set('n', '<Right>', function() self:_select_dropdown() end, opts)
+
+  -- Cancel
+  vim.keymap.set('n', '<Esc>', function() self:_close_dropdown(true) end, opts)
+  vim.keymap.set('n', 'q', function() self:_close_dropdown(true) end, opts)
+  vim.keymap.set('n', 'h', function() self:_close_dropdown(true) end, opts)
+  vim.keymap.set('n', '<Left>', function() self:_close_dropdown(true) end, opts)
+
+  -- Clear filter
+  vim.keymap.set('n', '<BS>', function() self:_clear_dropdown_filter() end, opts)
+
+  -- Type-to-filter: handle printable characters
+  for char_code = 32, 126 do  -- Printable ASCII
+    local char = string.char(char_code)
+    -- Skip special keys that are already mapped
+    if char ~= 'j' and char ~= 'k' and char ~= 'l' and char ~= 'h' and char ~= 'q' then
+      vim.keymap.set('n', char, function()
+        self:_filter_dropdown(char)
+      end, opts)
+    end
+  end
+end
+
+---Setup autocmds for dropdown focus-lost detection
+function InputManager:_setup_dropdown_autocmds()
+  self._dropdown_autocmd_group = vim.api.nvim_create_augroup(
+    "SSNSDropdown_" .. self._dropdown_bufnr,
+    { clear = true }
+  )
+
+  -- Close on WinLeave (focus lost)
+  vim.api.nvim_create_autocmd("WinLeave", {
+    group = self._dropdown_autocmd_group,
+    buffer = self._dropdown_bufnr,
+    callback = function()
+      -- Schedule to allow checking if we're going to parent window
+      vim.schedule(function()
+        local current_win = vim.api.nvim_get_current_win()
+        -- If leaving to a window that's not the parent, cancel
+        if current_win ~= self.winid then
+          self:_close_dropdown(true)
+        end
+      end)
+    end,
+  })
+
+  -- Close on BufLeave
+  vim.api.nvim_create_autocmd("BufLeave", {
+    group = self._dropdown_autocmd_group,
+    buffer = self._dropdown_bufnr,
+    callback = function()
+      vim.schedule(function()
+        self:_close_dropdown(true)
+      end)
+    end,
+  })
+end
+
+---Get dropdown value
+---@param key string Dropdown key
+---@return string? value
+function InputManager:get_dropdown_value(key)
+  return self.dropdown_values[key]
+end
+
+---Set dropdown value
+---@param key string Dropdown key
+---@param value string New value
+function InputManager:set_dropdown_value(key, value)
+  local dropdown = self.dropdowns[key]
+  if not dropdown then return end
+
+  self.dropdown_values[key] = value
+  self:_update_dropdown_display(key)
 end
 
 ---Cleanup the input manager
 function InputManager:destroy()
+  -- Close any open dropdown first
+  if self._dropdown_open then
+    self:_close_dropdown(true)
+  end
+
   if self._autocmd_group then
     pcall(vim.api.nvim_del_augroup_by_id, self._autocmd_group)
   end
-  
+
   if vim.api.nvim_buf_is_valid(self.bufnr) then
     vim.api.nvim_buf_clear_namespace(self.bufnr, self._namespace, 0, -1)
   end
