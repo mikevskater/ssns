@@ -534,9 +534,7 @@ function AddServerUI.show_new_connection_form_with_state(form_state, edit_connec
   local is_edit = edit_connection ~= nil
 
   -- Get type info
-  local type_label, type_icon = get_type_info(form_state.db_type)
   local path_hint = PATH_HINTS[form_state.db_type] or ""
-  local auth_label = get_auth_label(form_state.db_type, form_state.auth_type)
   local is_sqlite = form_state.db_type == "sqlite"
   local needs_auth_creds = form_state.auth_type == "sql"
   local default_port = DEFAULT_PORTS[form_state.db_type]
@@ -544,14 +542,17 @@ function AddServerUI.show_new_connection_form_with_state(form_state, edit_connec
   -- Build styled content with inline inputs
   local cb = ContentBuilder.new()
 
-  -- Server Type section (select, not editable inline)
+  -- Server Type dropdown
   cb:blank()
-  cb:spans({
-    { text = "  ", style = "text" },
-    { text = "t", style = "key" },
-    { text = "  SERVER TYPE     ", style = "muted" },
-    { text = type_icon .. " ", style = "server" },
-    { text = type_label, style = "value" },
+  local db_type_options = {}
+  for _, t in ipairs(DB_TYPES) do
+    table.insert(db_type_options, { value = t.id, label = t.icon .. " " .. t.label })
+  end
+  cb:dropdown("db_type", {
+    label = "  DATABASE TYPE",
+    options = db_type_options,
+    value = form_state.db_type,
+    width = 22,
   })
   cb:blank()
 
@@ -591,13 +592,18 @@ function AddServerUI.show_new_connection_form_with_state(form_state, edit_connec
 
   cb:blank()
 
-  -- Authentication section (select, not editable inline)
+  -- Authentication dropdown (not for SQLite)
   if not is_sqlite then
-    cb:spans({
-      { text = "  ", style = "text" },
-      { text = "A", style = "key" },
-      { text = "  AUTHENTICATION  ", style = "muted" },
-      { text = auth_label, style = "value" },
+    local auth_opts = AUTH_TYPES[form_state.db_type] or {}
+    local auth_options = {}
+    for _, a in ipairs(auth_opts) do
+      table.insert(auth_options, { value = a.id, label = a.label })
+    end
+    cb:dropdown("auth_type", {
+      label = "  AUTHENTICATION",
+      options = auth_options,
+      value = form_state.auth_type,
+      width = 26,
     })
 
     -- Username/Password (inline inputs, conditional)
@@ -684,15 +690,7 @@ function AddServerUI.show_new_connection_form_with_state(form_state, edit_connec
       AddServerUI.close()
     end
   end
-  keymaps[km.db_type or "t"] = function()
-    -- Sync input values to form_state before showing select
-    AddServerUI._sync_inputs_to_form_state(form_state)
-    AddServerUI.prompt_db_type(form_state, edit_connection)
-  end
-  keymaps["A"] = function()
-    AddServerUI._sync_inputs_to_form_state(form_state)
-    AddServerUI.prompt_auth_type(form_state, edit_connection)
-  end
+  -- Note: 't' and 'A' keymaps removed - now using inline dropdowns
   keymaps[km.toggle_favorite or "f"] = function()
     AddServerUI._sync_inputs_to_form_state(form_state)
     form_state.favorite = not form_state.favorite
@@ -728,6 +726,38 @@ function AddServerUI.show_new_connection_form_with_state(form_state, edit_connec
     content_builder = cb,
     enable_inputs = true,
   })
+
+  -- Handle dropdown changes
+  current_float:on_dropdown_change(function(key, value)
+    AddServerUI._sync_inputs_to_form_state(form_state)
+
+    if key == "db_type" then
+      -- Database type changed - update auth type to default for new type
+      form_state.db_type = value
+      local auth_opts = AUTH_TYPES[value]
+      if auth_opts and #auth_opts > 0 then
+        form_state.auth_type = auth_opts[1].id
+      end
+      -- Clear credentials when switching db types
+      if value == "sqlite" or form_state.auth_type ~= "sql" then
+        form_state.username = ""
+        form_state.password = ""
+      end
+      -- Refresh form to show/hide auth fields
+      AddServerUI.show_new_connection_form_with_state(form_state, edit_connection)
+
+    elseif key == "auth_type" then
+      -- Auth type changed
+      form_state.auth_type = value
+      -- Clear credentials when switching to non-SQL auth
+      if value ~= "sql" then
+        form_state.username = ""
+        form_state.password = ""
+      end
+      -- Refresh form to show/hide credential fields
+      AddServerUI.show_new_connection_form_with_state(form_state, edit_connection)
+    end
+  end)
 end
 
 ---Sync input field values back to form_state
@@ -745,65 +775,6 @@ function AddServerUI._sync_inputs_to_form_state(form_state)
     local port_num = tonumber(values.port)
     form_state.port = port_num
   end
-end
-
----Prompt for database type selection
----@param form_state table Current form values
----@param edit_connection ConnectionData? Original connection being edited
-function AddServerUI.prompt_db_type(form_state, edit_connection)
-  -- Build selection items
-  local items = {}
-  for _, t in ipairs(DB_TYPES) do
-    table.insert(items, string.format("%s %s", t.icon, t.label))
-  end
-
-  vim.ui.select(items, {
-    prompt = "Select Database Type:",
-  }, function(choice, idx)
-    if choice and idx then
-      local new_type = DB_TYPES[idx].id
-      form_state.db_type = new_type
-
-      -- Reset auth to default for new type
-      local auth_opts = AUTH_TYPES[new_type]
-      if auth_opts and #auth_opts > 0 then
-        form_state.auth_type = auth_opts[1].id
-      end
-
-      AddServerUI.show_new_connection_form_with_state(form_state, edit_connection)
-    end
-  end)
-end
-
----Prompt for auth type selection
----@param form_state table Current form values
----@param edit_connection ConnectionData? Original connection being edited
-function AddServerUI.prompt_auth_type(form_state, edit_connection)
-  local auth_opts = AUTH_TYPES[form_state.db_type] or {}
-
-  if #auth_opts == 0 then
-    vim.notify("No authentication options for this database type", vim.log.levels.INFO)
-    return
-  end
-
-  local items = {}
-  for _, a in ipairs(auth_opts) do
-    table.insert(items, a.label)
-  end
-
-  vim.ui.select(items, {
-    prompt = "Select Authentication Type:",
-  }, function(choice, idx)
-    if choice and idx then
-      form_state.auth_type = auth_opts[idx].id
-      -- Clear credentials when switching to non-SQL auth
-      if form_state.auth_type ~= "sql" then
-        form_state.username = ""
-        form_state.password = ""
-      end
-      AddServerUI.show_new_connection_form_with_state(form_state, edit_connection)
-    end
-  end)
 end
 
 ---Save the connection
