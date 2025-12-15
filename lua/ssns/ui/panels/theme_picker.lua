@@ -248,9 +248,25 @@ function ThemePicker.show()
     },
     total_width_ratio = 0.80,
     total_height_ratio = 0.85,
-    footer = " <Enter>=Apply  <Tab>=Switch Panel  <Esc>=Cancel  j/k=Navigate ",
     initial_focus = "themes",
     augroup_name = "SSNSThemePicker",
+    controls = {
+      {
+        header = "Navigation",
+        keys = {
+          { key = "j/k", desc = "Navigate up/down" },
+          { key = "Tab", desc = "Switch panels" },
+          { key = "S-Tab", desc = "Previous panel" },
+        },
+      },
+      {
+        header = "Actions",
+        keys = {
+          { key = "Enter", desc = "Apply selected theme" },
+          { key = "q/Esc", desc = "Cancel and restore" },
+        },
+      },
+    },
     on_close = function()
       multi_panel = nil
       ui_state = {
