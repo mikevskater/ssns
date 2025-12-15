@@ -739,9 +739,42 @@ function RulesEditor.show()
     },
     total_width_ratio = 0.90,
     total_height_ratio = 0.70,
-    footer = " j/k=Nav  h/l=Change  <Tab>=Panel  s=Save  a=Apply  R=Reset  q=Cancel ",
     initial_focus = "presets",
     augroup_name = "SSNSFormatterRulesEditor",
+    controls = {
+      {
+        header = "Navigation",
+        keys = {
+          { key = "j/k", desc = "Navigate up/down" },
+          { key = "Tab", desc = "Switch panels" },
+          { key = "S-Tab", desc = "Previous panel" },
+        },
+      },
+      {
+        header = "Presets Panel",
+        keys = {
+          { key = "Enter", desc = "Select preset" },
+          { key = "d", desc = "Delete user preset" },
+          { key = "r", desc = "Rename user preset" },
+        },
+      },
+      {
+        header = "Rules Panel",
+        keys = {
+          { key = "h/l", desc = "Change value" },
+          { key = "+/-", desc = "Increment/decrement" },
+          { key = "s", desc = "Save as preset" },
+          { key = "R", desc = "Reset to defaults" },
+        },
+      },
+      {
+        header = "Actions",
+        keys = {
+          { key = "a", desc = "Apply and close" },
+          { key = "q/Esc", desc = "Cancel" },
+        },
+      },
+    },
     on_close = function()
       -- Disable semantic highlighting
       local ok, SemanticHighlighter = pcall(require, 'ssns.highlighting.semantic')
