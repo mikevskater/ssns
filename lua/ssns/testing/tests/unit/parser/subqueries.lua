@@ -702,4 +702,145 @@ FROM (
             }
         }
     },
+
+    -- Subquery in SET statement (variable assignment)
+    {
+        id = 2331,
+        type = "parser",
+        name = "Subquery in SET variable assignment",
+        input = "SET @Count = (SELECT COUNT(*) FROM Employees)",
+        expected = {
+            chunks = {
+                {
+                    statement_type = "SET",
+                    subqueries = {
+                        {
+                            tables = {{ name = "Employees" }}
+                        }
+                    }
+                }
+            }
+        }
+    },
+    {
+        id = 2332,
+        type = "parser",
+        name = "SET with subquery and schema qualified table",
+        input = "SET @Result = (SELECT TOP 1 Id FROM dbo.Customers WHERE Active = 1)",
+        expected = {
+            chunks = {
+                {
+                    statement_type = "SET",
+                    subqueries = {
+                        {
+                            tables = {{ name = "Customers", schema = "dbo" }}
+                        }
+                    }
+                }
+            }
+        }
+    },
+    {
+        id = 2333,
+        type = "parser",
+        name = "SET with nested subquery",
+        input = "SET @MaxSalary = (SELECT MAX(Salary) FROM (SELECT Salary FROM Employees WHERE DeptId = 1) e)",
+        expected = {
+            chunks = {
+                {
+                    statement_type = "SET",
+                    subqueries = {
+                        {
+                            subqueries = {
+                                {
+                                    alias = "e",
+                                    tables = {{ name = "Employees" }}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+
+    -- Subquery in UPDATE SET clause
+    {
+        id = 2334,
+        type = "parser",
+        name = "Subquery in UPDATE SET clause",
+        input = "UPDATE Employees SET Salary = (SELECT AVG(Salary) FROM Employees)",
+        expected = {
+            chunks = {
+                {
+                    statement_type = "UPDATE",
+                    tables = {
+                        { name = "Employees" }
+                    },
+                    subqueries = {
+                        {
+                            tables = {{ name = "Employees" }}
+                        }
+                    }
+                }
+            }
+        }
+    },
+    {
+        id = 2335,
+        type = "parser",
+        name = "UPDATE SET with multiple subqueries",
+        input = "UPDATE Employees SET Salary = (SELECT AVG(Salary) FROM Employees), DeptId = (SELECT Id FROM Departments WHERE Name = 'IT')",
+        expected = {
+            chunks = {
+                {
+                    statement_type = "UPDATE",
+                    tables = {
+                        { name = "Employees" }
+                    },
+                    subqueries = {
+                        { tables = {{ name = "Employees" }} },
+                        { tables = {{ name = "Departments" }} }
+                    }
+                }
+            }
+        }
+    },
+    {
+        id = 2336,
+        type = "parser",
+        name = "UPDATE SET with subquery and WHERE with subquery",
+        input = "UPDATE Employees SET Salary = (SELECT AVG(Salary) FROM Employees) WHERE DeptId IN (SELECT Id FROM Departments WHERE Active = 1)",
+        expected = {
+            chunks = {
+                {
+                    statement_type = "UPDATE",
+                    tables = {
+                        { name = "Employees" }
+                    },
+                    subqueries = {
+                        { tables = {{ name = "Employees" }} },
+                        { tables = {{ name = "Departments" }} }
+                    }
+                }
+            }
+        }
+    },
+    {
+        id = 2337,
+        type = "parser",
+        name = "SET with scalar subquery and arithmetic",
+        input = "SET @Total = (SELECT SUM(Amount) FROM Orders) + (SELECT SUM(Amount) FROM Returns)",
+        expected = {
+            chunks = {
+                {
+                    statement_type = "SET",
+                    subqueries = {
+                        { tables = {{ name = "Orders" }} },
+                        { tables = {{ name = "Returns" }} }
+                    }
+                }
+            }
+        }
+    },
 }

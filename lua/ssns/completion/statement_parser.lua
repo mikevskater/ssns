@@ -442,7 +442,7 @@ end
 ---@param scope ScopeContext
 ---@param statement_type string
 function parse_statement_remaining(state, chunk, scope, statement_type)
-  -- Skip SET clause
+  -- Parse SET clause (with subquery detection)
   if state:is_keyword("SET") then
     local set_token = state:current()
     state:advance()
@@ -455,23 +455,58 @@ function parse_statement_remaining(state, chunk, scope, statement_type)
       end_col = set_token.col + 2,
     }
 
-    -- Skip SET expressions until FROM or WHERE or statement end
+    -- Build known_ctes for subquery parsing
+    local known_ctes = scope and scope:get_known_ctes_table() or {}
+
+    -- Parse SET expressions until FROM or WHERE or statement end, detecting subqueries
     local paren_depth = 0
+    local last_token = set_token
+
     while state:current() do
-      if state:is_type("paren_open") then
+      local token = state:current()
+
+      if token.type == "paren_open" then
         paren_depth = paren_depth + 1
-      elseif state:is_type("paren_close") then
+        last_token = token
+        state:advance()
+        -- Check for subquery: (SELECT ...
+        if state:is_keyword("SELECT") then
+          local subquery = state:parse_subquery(known_ctes)
+          if subquery then
+            -- After parse_subquery, parser is AT the closing ) - consume it
+            if state:is_type("paren_close") then
+              last_token = state:current()
+              state:advance()
+            end
+            paren_depth = paren_depth - 1
+            -- Add to scope so it gets copied to chunk in finalize
+            if scope then
+              scope:add_subquery(subquery)
+            end
+          end
+        end
+      elseif token.type == "paren_close" then
         paren_depth = paren_depth - 1
+        last_token = token
+        state:advance()
       elseif paren_depth == 0 then
         if state:is_keyword("FROM") or state:is_keyword("WHERE") then
           break
         end
-        if is_statement_starter(state:current().text) then
+        if is_statement_starter(token.text) then
           break
         end
+        last_token = token
+        state:advance()
+      else
+        last_token = token
+        state:advance()
       end
-      state:advance()
     end
+
+    -- Update SET clause end position
+    chunk.clause_positions["set"].end_line = last_token.line
+    chunk.clause_positions["set"].end_col = last_token.col + #last_token.text - 1
   end
 
   -- Parse FROM clause for extended UPDATE
@@ -612,13 +647,58 @@ function parse_set_statement(state, scope)
   local chunk = BaseStatement.create_chunk("SET", start_token, state.go_batch_index, state)
 
   scope.statement_type = "SET"
-  state:advance()  -- Must advance past SET before consume_until_statement_end
-  state:consume_until_statement_end()
+  state:advance()  -- Advance past SET
 
-  -- Set token_end_idx manually since we don't call finalize_chunk
-  if chunk.token_start_idx then
-    chunk.token_end_idx = state.pos > 1 and state.pos - 1 or state.pos
+  -- Build known_ctes for subquery parsing
+  local known_ctes = scope and scope:get_known_ctes_table() or {}
+
+  -- Parse SET statement content, looking for subqueries
+  local paren_depth = 0
+
+  while state:current() do
+    local token = state:current()
+
+    if token.type == "paren_open" then
+      paren_depth = paren_depth + 1
+      state:advance()
+      -- Check for subquery: (SELECT ...
+      if state:is_keyword("SELECT") then
+        local subquery = state:parse_subquery(known_ctes)
+        if subquery then
+          -- After parse_subquery, parser is AT the closing ) - consume it
+          if state:is_type("paren_close") then
+            state:advance()
+          end
+          paren_depth = paren_depth - 1
+          -- Add to scope so it gets copied to chunk in finalize
+          if scope then
+            scope:add_subquery(subquery)
+          end
+        end
+      end
+    elseif token.type == "paren_close" then
+      paren_depth = paren_depth - 1
+      state:advance()
+    elseif token.type == "go" or (token.type == "identifier" and token.text:upper() == "GO") then
+      -- Stop at GO batch separator
+      break
+    elseif token.type == "semicolon" then
+      -- Stop at semicolon
+      break
+    elseif paren_depth == 0 and token.type == "keyword" then
+      -- Check for new statement starter at top level
+      if is_statement_starter(token.text:upper()) then
+        break
+      else
+        state:advance()
+      end
+    else
+      state:advance()
+    end
   end
+
+  -- Finalize chunk (copies subqueries from scope, sets token_end_idx)
+  BaseStatement.finalize_chunk(chunk, scope, state)
 
   -- Extract parameters from token range
   if chunk.token_start_idx and chunk.token_end_idx then
