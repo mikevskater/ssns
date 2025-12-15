@@ -215,6 +215,66 @@ local function is_in_tree(name)
   return Cache.server_exists(name)
 end
 
+---Show controls popup for connection list view
+function AddServerUI.show_list_controls()
+  local km = KeymapManager.get_group("add_server")
+  local common = KeymapManager.get_group("common")
+
+  local controls = {
+    {
+      header = "Navigation",
+      keys = {
+        { key = common.nav_down or "j", desc = "Navigate down" },
+        { key = common.nav_up or "k", desc = "Navigate up" },
+      },
+    },
+    {
+      header = "Actions",
+      keys = {
+        { key = km.add or "a", desc = "Add selected to tree" },
+        { key = common.confirm or "Enter", desc = "Add selected to tree" },
+        { key = km.new or "n", desc = "New connection" },
+        { key = km.edit_connection or "e", desc = "Edit connection" },
+        { key = km.delete or "d", desc = "Delete connection" },
+        { key = km.toggle_favorite or "f/*", desc = "Toggle favorite" },
+        { key = common.close or "q/Esc", desc = "Close" },
+      },
+    },
+  }
+
+  UiFloat._show_controls_popup(controls)
+end
+
+---Show controls popup for connection form view
+function AddServerUI.show_form_controls()
+  local km = KeymapManager.get_group("add_server")
+  local common = KeymapManager.get_group("common")
+
+  local controls = {
+    {
+      header = "Form Navigation",
+      keys = {
+        { key = "Tab", desc = "Next field" },
+        { key = "S-Tab", desc = "Previous field" },
+        { key = "Enter", desc = "Edit field / Select dropdown" },
+      },
+    },
+    {
+      header = "Actions",
+      keys = {
+        { key = km.save or "s", desc = "Save connection" },
+        { key = km.test or "T", desc = "Test connection" },
+        { key = km.toggle_favorite or "f", desc = "Toggle favorite" },
+        { key = km.toggle_auto_connect or "a", desc = "Toggle auto-connect" },
+        { key = km.back or "b", desc = "Back to list" },
+        { key = common.close or "q", desc = "Close" },
+      },
+    },
+  }
+
+  UiFloat._show_controls_popup(controls)
+end
+
 ---Show the list of saved connections
 function AddServerUI.show_connection_list()
   -- Close any existing float first to prevent window stacking
@@ -327,12 +387,13 @@ function AddServerUI.show_connection_list()
   keymaps[km.edit_connection or "e"] = function() AddServerUI.edit_selected() end
   keymaps[km.toggle_favorite or "f"] = function() AddServerUI.toggle_favorite_selected() end
   keymaps[km.toggle_favorite_alt or "*"] = function() AddServerUI.toggle_favorite_selected() end
+  keymaps["?"] = function() AddServerUI.show_list_controls() end
 
   -- Create floating window with styled content
   current_float = UiFloat.create_styled(cb, {
     title = " Server Connections ",
     title_pos = "center",
-    footer = " ★ favorite  ⚡ auto-connect ",
+    footer = " ★=favorite  ⚡=auto-connect  ?=Controls ",
     footer_pos = "center",
     border = "rounded",
     min_width = 48,
@@ -712,11 +773,13 @@ function AddServerUI.show_new_connection_form_with_state(form_state, edit_connec
     AddServerUI._sync_inputs_to_form_state(form_state)
     AddServerUI.test_connection(form_state)
   end
+  keymaps["?"] = function() AddServerUI.show_form_controls() end
 
   -- Create float with styled content and input support
   current_float = UiFloat.create(nil, {
     title = title,
     title_pos = "center",
+    footer = "? = Controls",
     border = "rounded",
     width = 55,
     min_height = 18,
