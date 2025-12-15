@@ -2221,9 +2221,64 @@ function UiObjectSearch.show(options)
     },
     total_width_ratio = 0.80,
     total_height_ratio = 0.80,
-    footer = " /=Search | s=Settings | ?=Filters | r=Refresh | q=Close ",
     initial_focus = "settings",
     augroup_name = "SSNSObjectSearch",
+    controls = {
+      {
+        header = "Navigation",
+        keys = {
+          { key = "j/k", desc = "Move up/down in results" },
+          { key = "Tab", desc = "Cycle focus: results → right panels" },
+          { key = "S-Tab", desc = "Cycle right panels: definition ↔ metadata" },
+          { key = "/", desc = "Activate search input" },
+        },
+      },
+      {
+        header = "Panels",
+        keys = {
+          { key = "s", desc = "Focus settings panel" },
+          { key = "*", desc = "Focus filters panel" },
+          { key = "d", desc = "Focus database dropdown" },
+        },
+      },
+      {
+        header = "Search Options",
+        keys = {
+          { key = "c", desc = "Toggle case sensitive" },
+          { key = "x", desc = "Toggle regex mode" },
+          { key = "w", desc = "Toggle whole word" },
+          { key = "S", desc = "Toggle show system objects" },
+        },
+      },
+      {
+        header = "Search In",
+        keys = {
+          { key = "1", desc = "Toggle search names" },
+          { key = "2", desc = "Toggle search definitions" },
+          { key = "3", desc = "Toggle search metadata" },
+        },
+      },
+      {
+        header = "Object Types (Shift+Number)",
+        keys = {
+          { key = "!", desc = "Toggle tables" },
+          { key = "@", desc = "Toggle views" },
+          { key = "#", desc = "Toggle procedures" },
+          { key = "$", desc = "Toggle functions" },
+          { key = "%", desc = "Toggle synonyms" },
+          { key = "^", desc = "Toggle schemas" },
+        },
+      },
+      {
+        header = "Actions",
+        keys = {
+          { key = "Enter/o", desc = "Open definition in new buffer" },
+          { key = "y", desc = "Yank object name" },
+          { key = "r", desc = "Refresh objects from database" },
+          { key = "q/Esc", desc = "Close" },
+        },
+      },
+    },
     on_close = function()
       if search_augroup then
         pcall(vim.api.nvim_del_augroup_by_id, search_augroup)
@@ -2416,7 +2471,7 @@ function UiObjectSearch.show(options)
 
   -- Custom Tab navigation: results <-> last right panel (definition/metadata)
   local function navigate_tab()
-    local current_panel = multi_panel:get_focused_panel_name()
+    local current_panel = multi_panel.focused_panel
     if current_panel == "results" then
       -- Jump to last focused right panel
       multi_panel:focus_panel(last_right_panel)
@@ -2431,7 +2486,7 @@ function UiObjectSearch.show(options)
 
   -- Custom Shift+Tab navigation: cycle between definition and metadata
   local function navigate_shift_tab()
-    local current_panel = multi_panel:get_focused_panel_name()
+    local current_panel = multi_panel.focused_panel
     if current_panel == "definition" then
       multi_panel:focus_panel("metadata")
     elseif current_panel == "metadata" then
@@ -2452,7 +2507,7 @@ function UiObjectSearch.show(options)
       ["/"] = activate_search,
       ["s"] = focus_settings_panel,
       ["d"] = focus_database_dropdown,
-      ["?"] = focus_filters_panel,
+      ["*"] = focus_filters_panel,
       ["c"] = toggle_case_sensitive,
       ["x"] = toggle_regex,
       ["w"] = toggle_whole_word,

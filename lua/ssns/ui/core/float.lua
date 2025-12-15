@@ -1150,6 +1150,7 @@ end
 ---@field on_close function? Callback when window closes
 ---@field initial_focus string? Panel name to focus initially
 ---@field augroup_name string? Name for autocmd group
+---@field controls ControlsDefinition[]? Controls to show in "?" popup
 
 ---@class LayoutNode
 ---A node in the layout tree - either a split or a panel
@@ -1186,6 +1187,16 @@ end
 ---@field definition LayoutNode Panel definition
 ---@field rect LayoutRect Panel rectangle
 ---@field namespace number Highlight namespace (for panel-specific highlights)
+
+---@class ControlsDefinition
+---Definition for a controls section
+---@field header string? Section header text
+---@field keys ControlKeyDef[] Array of key definitions
+
+---@class ControlKeyDef
+---Definition for a single control key
+---@field key string The key or key combination (e.g., "j/k", "<Tab>", "Enter")
+---@field desc string Description of what the key does
 
 ---@class MultiPanelWindow
 ---Multi-panel floating window instance
@@ -1577,14 +1588,20 @@ function UiFloat.create_multi_panel(config)
     end
   end
 
+  -- Default footer to "? = Controls" when controls are defined
+  local footer = config.footer
+  if not footer and config.controls and #config.controls > 0 then
+    footer = "? = Controls"
+  end
+
   -- Create footer if specified
-  if config.footer then
+  if footer then
     state.footer_buf = vim.api.nvim_create_buf(false, true)
     vim.api.nvim_buf_set_option(state.footer_buf, 'buftype', 'nofile')
     vim.api.nvim_buf_set_option(state.footer_buf, 'modifiable', false)
 
     -- Footer text with minimal padding
-    local footer_text = " " .. config.footer .. " "
+    local footer_text = " " .. footer .. " "
     local footer_width = vim.fn.strdisplaywidth(footer_text)
     -- Center the footer window within the total layout width
     local footer_col = start_col + math.floor((total_width - footer_width) / 2)
@@ -1614,6 +1631,15 @@ function UiFloat.create_multi_panel(config)
 
   -- Setup autocmds
   state:_setup_autocmds()
+
+  -- Setup "?" keymap for controls popup if controls are defined
+  if config.controls and #config.controls > 0 then
+    state:set_keymaps({
+      ["?"] = function()
+        state:show_controls()
+      end,
+    })
+  end
 
   return state
 end
@@ -2144,6 +2170,58 @@ function MultiPanelWindow:close()
   if self._augroup then
     pcall(vim.api.nvim_del_augroup_by_id, self._augroup)
   end
+end
+
+---Show controls popup
+---@param controls ControlsDefinition[]? Controls to show (uses config.controls if nil)
+function MultiPanelWindow:show_controls(controls)
+  controls = controls or self.config.controls
+  if not controls or #controls == 0 then
+    vim.notify("No controls defined", vim.log.levels.INFO)
+    return
+  end
+
+  local ContentBuilder = require('ssns.ui.core.content_builder')
+  local cb = ContentBuilder.new()
+
+  cb:header("Controls")
+  cb:blank()
+
+  -- Calculate max key width for alignment
+  local max_key_width = 0
+  for _, section in ipairs(controls) do
+    for _, keydef in ipairs(section.keys or {}) do
+      max_key_width = math.max(max_key_width, #keydef.key)
+    end
+  end
+
+  -- Render each section
+  for i, section in ipairs(controls) do
+    if section.header then
+      cb:section(section.header)
+    end
+
+    for _, keydef in ipairs(section.keys or {}) do
+      -- Pad key to max width for alignment
+      local padded_key = keydef.key .. string.rep(" ", max_key_width - #keydef.key)
+      cb:line(string.format("  %s  %s", padded_key, keydef.desc))
+    end
+
+    -- Add blank line between sections (but not after last)
+    if i < #controls then
+      cb:blank()
+    end
+  end
+
+  -- Create popup
+  UiFloat.create({
+    title = "Controls",
+    content_builder = cb,
+    min_width = 40,
+    max_width = 60,
+    border = "rounded",
+    zindex = UiFloat.ZINDEX.MODAL,
+  })
 end
 
 return UiFloat
