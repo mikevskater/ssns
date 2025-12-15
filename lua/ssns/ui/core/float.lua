@@ -1494,6 +1494,128 @@ local function collect_panel_names(node, result)
   end
 end
 
+---Find all border intersection points between panels
+---@param layouts PanelLayout[] Panel layouts
+---@return table[] intersections Array of {x, y, char} for each intersection
+local function find_border_intersections(layouts)
+  local c = BORDER_CHARS
+  local intersections = {}
+
+  -- Collect all horizontal and vertical border positions
+  -- For panels with borders, the border occupies:
+  -- - Top border at row = rect.y (the window position includes the border)
+  -- - Bottom border at row = rect.y + rect.height + 1
+  -- - Left border at col = rect.x
+  -- - Right border at col = rect.x + rect.width + 1
+  local h_borders = {}  -- {y = {{start_x, end_x, panel}}}
+  local v_borders = {}  -- {x = {{start_y, end_y, panel}}}
+
+  for _, layout in ipairs(layouts) do
+    local rect = layout.rect
+    local top_y = rect.y
+    local bottom_y = rect.y + rect.height + 1
+    local left_x = rect.x
+    local right_x = rect.x + rect.width + 1
+
+    -- Store horizontal borders (top and bottom of each panel)
+    h_borders[top_y] = h_borders[top_y] or {}
+    table.insert(h_borders[top_y], {start_x = left_x, end_x = right_x, panel = layout.name})
+
+    h_borders[bottom_y] = h_borders[bottom_y] or {}
+    table.insert(h_borders[bottom_y], {start_x = left_x, end_x = right_x, panel = layout.name})
+
+    -- Store vertical borders (left and right of each panel)
+    v_borders[left_x] = v_borders[left_x] or {}
+    table.insert(v_borders[left_x], {start_y = top_y, end_y = bottom_y, panel = layout.name})
+
+    v_borders[right_x] = v_borders[right_x] or {}
+    table.insert(v_borders[right_x], {start_y = top_y, end_y = bottom_y, panel = layout.name})
+  end
+
+  -- Track which intersections we've already added to avoid duplicates
+  local added = {}
+
+  -- Find all intersections: where borders meet (both internal and corners)
+  for y, h_border_list in pairs(h_borders) do
+    for x, v_border_list in pairs(v_borders) do
+      -- Check what directions vertical borders extend from this point
+      local v_extends_up = false
+      local v_extends_down = false
+
+      for _, v_border in ipairs(v_border_list) do
+        -- Vertical border passes through or starts/ends at this Y
+        if y >= v_border.start_y and y <= v_border.end_y then
+          if v_border.start_y < y then
+            v_extends_up = true
+          end
+          if v_border.end_y > y then
+            v_extends_down = true
+          end
+        end
+      end
+
+      -- Check what directions horizontal borders extend from this point
+      local h_extends_left = false
+      local h_extends_right = false
+
+      for _, h_border in ipairs(h_border_list) do
+        if h_border.start_x <= x and h_border.end_x >= x then
+          if h_border.start_x < x then
+            h_extends_left = true
+          end
+          if h_border.end_x > x then
+            h_extends_right = true
+          end
+        end
+      end
+
+      -- Determine the correct junction character based on all 4 directions
+      -- Only create overlay if this is a junction (more than 2 directions, or a T-junction)
+      local directions = (v_extends_up and 1 or 0) + (v_extends_down and 1 or 0) +
+                         (h_extends_left and 1 or 0) + (h_extends_right and 1 or 0)
+
+      -- We need an overlay if:
+      -- 1. It's a cross (4 directions) or T-junction (3 directions)
+      -- 2. It's a corner that needs a junction character (vertical in both directions + horizontal in one)
+      if directions >= 3 then
+        local key = string.format("%d,%d", x, y)
+        if not added[key] then
+          added[key] = true
+
+          local char
+          if v_extends_up and v_extends_down and h_extends_left and h_extends_right then
+            char = c.cross  -- ┼
+          elseif v_extends_up and v_extends_down and h_extends_left then
+            char = c.t_left  -- ┤
+          elseif v_extends_up and v_extends_down and h_extends_right then
+            char = c.t_right  -- ├
+          elseif h_extends_left and h_extends_right and v_extends_down then
+            char = c.t_down  -- ┬
+          elseif h_extends_left and h_extends_right and v_extends_up then
+            char = c.t_up  -- ┴
+          elseif v_extends_down and h_extends_right then
+            -- Top-left corner style, but we only overlay if it should be a junction
+            -- This case shouldn't happen with directions >= 3, but handle it
+            char = c.top_left
+          elseif v_extends_down and h_extends_left then
+            char = c.top_right
+          elseif v_extends_up and h_extends_right then
+            char = c.bottom_left
+          elseif v_extends_up and h_extends_left then
+            char = c.bottom_right
+          end
+
+          if char then
+            table.insert(intersections, {x = x, y = y, char = char})
+          end
+        end
+      end
+    end
+  end
+
+  return intersections
+end
+
 ---Create a multi-panel floating window
 ---@param config MultiPanelConfig Configuration
 ---@return MultiPanelState? state State object (nil if creation failed)
@@ -1537,6 +1659,7 @@ function UiFloat.create_multi_panel(config)
       start_row = start_row,
       start_col = start_col,
     },
+    _junction_overlays = {},  -- Array of {bufnr, winid} for junction overlay windows
   }, MultiPanelWindow)
 
   -- Create panels using FloatWindow
@@ -1595,6 +1718,9 @@ function UiFloat.create_multi_panel(config)
       def.on_create(float.bufnr, float.winid)
     end
   end
+
+  -- Create junction overlay windows for proper border intersections
+  state:_create_junction_overlays(layouts)
 
   -- Default footer to "? = Controls" when controls are defined
   local footer = config.footer
@@ -1987,6 +2113,9 @@ function MultiPanelWindow:_recalculate_layout()
     end
   end
 
+  -- Update junction overlays
+  self:_update_junction_overlays(layouts)
+
   -- Update footer if present
   if self.footer_win and vim.api.nvim_win_is_valid(self.footer_win) then
     -- Recenter footer with minimal width
@@ -2151,6 +2280,119 @@ function MultiPanelWindow:update_inputs(panel_name, content_builder)
   end
 end
 
+---Create junction overlay windows for proper border intersections
+---@param layouts PanelLayout[] Panel layouts
+function MultiPanelWindow:_create_junction_overlays(layouts)
+  -- Find all intersection points
+  local intersections = find_border_intersections(layouts)
+
+  -- Create a small overlay window at each intersection
+  for _, intersection in ipairs(intersections) do
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_option(buf, 'buftype', 'nofile')
+    vim.api.nvim_buf_set_option(buf, 'bufhidden', 'wipe')
+    vim.api.nvim_buf_set_option(buf, 'modifiable', true)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, {intersection.char})
+    vim.api.nvim_buf_set_option(buf, 'modifiable', false)
+
+    local win = vim.api.nvim_open_win(buf, false, {
+      relative = "editor",
+      width = 1,
+      height = 1,
+      row = intersection.y,
+      col = intersection.x,
+      style = "minimal",
+      border = "none",
+      focusable = false,
+      zindex = UiFloat.ZINDEX.OVERLAY,  -- High z-index to be on top of panel borders
+    })
+
+    -- Style with border color
+    vim.api.nvim_set_option_value('winhighlight', 'Normal:SsnsFloatBorder', { win = win })
+
+    table.insert(self._junction_overlays, {bufnr = buf, winid = win, x = intersection.x, y = intersection.y, char = intersection.char})
+  end
+end
+
+---Close all junction overlay windows
+function MultiPanelWindow:_close_junction_overlays()
+  for _, overlay in ipairs(self._junction_overlays or {}) do
+    if overlay.winid and vim.api.nvim_win_is_valid(overlay.winid) then
+      pcall(vim.api.nvim_win_close, overlay.winid, true)
+    end
+    if overlay.bufnr and vim.api.nvim_buf_is_valid(overlay.bufnr) then
+      pcall(vim.api.nvim_buf_delete, overlay.bufnr, { force = true })
+    end
+  end
+  self._junction_overlays = {}
+end
+
+---Update junction overlays after layout recalculation
+---@param layouts PanelLayout[] New panel layouts
+function MultiPanelWindow:_update_junction_overlays(layouts)
+  -- Find new intersection points
+  local intersections = find_border_intersections(layouts)
+
+  -- Remove excess overlays
+  while #self._junction_overlays > #intersections do
+    local overlay = table.remove(self._junction_overlays)
+    if overlay.winid and vim.api.nvim_win_is_valid(overlay.winid) then
+      pcall(vim.api.nvim_win_close, overlay.winid, true)
+    end
+    if overlay.bufnr and vim.api.nvim_buf_is_valid(overlay.bufnr) then
+      pcall(vim.api.nvim_buf_delete, overlay.bufnr, { force = true })
+    end
+  end
+
+  -- Update existing overlays and create new ones if needed
+  for i, intersection in ipairs(intersections) do
+    if self._junction_overlays[i] then
+      -- Update existing overlay
+      local overlay = self._junction_overlays[i]
+      if overlay.winid and vim.api.nvim_win_is_valid(overlay.winid) then
+        vim.api.nvim_win_set_config(overlay.winid, {
+          relative = "editor",
+          row = intersection.y,
+          col = intersection.x,
+        })
+        -- Update character if changed
+        if overlay.char ~= intersection.char and overlay.bufnr and vim.api.nvim_buf_is_valid(overlay.bufnr) then
+          vim.api.nvim_buf_set_option(overlay.bufnr, 'modifiable', true)
+          vim.api.nvim_buf_set_lines(overlay.bufnr, 0, -1, false, {intersection.char})
+          vim.api.nvim_buf_set_option(overlay.bufnr, 'modifiable', false)
+          overlay.char = intersection.char
+        end
+        overlay.x = intersection.x
+        overlay.y = intersection.y
+      end
+    else
+      -- Create new overlay
+      local buf = vim.api.nvim_create_buf(false, true)
+      vim.api.nvim_buf_set_option(buf, 'buftype', 'nofile')
+      vim.api.nvim_buf_set_option(buf, 'bufhidden', 'wipe')
+      vim.api.nvim_buf_set_option(buf, 'modifiable', true)
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, {intersection.char})
+      vim.api.nvim_buf_set_option(buf, 'modifiable', false)
+
+      local win = vim.api.nvim_open_win(buf, false, {
+        relative = "editor",
+        width = 1,
+        height = 1,
+        row = intersection.y,
+        col = intersection.x,
+        style = "minimal",
+        border = "none",
+        focusable = false,
+        zindex = UiFloat.ZINDEX.OVERLAY,
+      })
+
+      vim.api.nvim_set_option_value('winhighlight', 'Normal:SsnsFloatBorder', { win = win })
+
+      table.insert(self._junction_overlays, {bufnr = buf, winid = win, x = intersection.x, y = intersection.y, char = intersection.char})
+    end
+  end
+end
+
 ---Close the multi-panel window
 function MultiPanelWindow:close()
   if self._closed then return end
@@ -2160,6 +2402,9 @@ function MultiPanelWindow:close()
   if self.config.on_close then
     pcall(self.config.on_close, self)
   end
+
+  -- Close junction overlays
+  self:_close_junction_overlays()
 
   -- Cleanup input managers and close FloatWindows (handles scrollbar cleanup)
   for _, panel in pairs(self.panels) do
