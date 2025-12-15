@@ -1540,10 +1540,17 @@ function UiFloat.create_multi_panel(config)
   }, MultiPanelWindow)
 
   -- Create panels using FloatWindow
-  for _, panel_layout in ipairs(layouts) do
+  -- Calculate z-index based on vertical position - lower panels get higher z-index
+  -- so their top borders (with titles) render on top of bottom borders of panels above
+  local base_zindex = UiFloat.ZINDEX.BASE
+  for i, panel_layout in ipairs(layouts) do
     local def = panel_layout.definition
     local rect = panel_layout.rect
     local border = create_panel_border(panel_layout.border_pos)
+
+    -- Z-index increases with vertical position (rect.y) to ensure lower panels
+    -- have their titles visible over upper panels' bottom borders
+    local panel_zindex = base_zindex + math.floor(rect.y)
 
     -- Create FloatWindow for this panel with explicit positioning
     local float = UiFloat.create({}, {
@@ -1560,6 +1567,7 @@ function UiFloat.create_multi_panel(config)
       border = border,
       filetype = def.filetype,
       focusable = def.focusable ~= false,
+      zindex = panel_zindex,
       -- Don't enter panel windows on create, don't add default keymaps
       enter = false,
       default_keymaps = false,
@@ -1943,10 +1951,15 @@ function MultiPanelWindow:_recalculate_layout()
   }
 
   -- Update panel windows
+  local base_zindex = UiFloat.ZINDEX.BASE
   for _, panel_layout in ipairs(layouts) do
     local panel = self.panels[panel_layout.name]
     local rect = panel_layout.rect
     local border = create_panel_border(panel_layout.border_pos)
+
+    -- Z-index increases with vertical position (rect.y) to ensure lower panels
+    -- have their titles visible over upper panels' bottom borders
+    local panel_zindex = base_zindex + math.floor(rect.y)
 
     if panel and panel.float:is_valid() then
       -- Update stored rect
@@ -1956,7 +1969,7 @@ function MultiPanelWindow:_recalculate_layout()
       panel.float._win_col = rect.x
       panel.float._win_width = rect.width
       panel.float._win_height = rect.height
-      
+
       vim.api.nvim_win_set_config(panel.float.winid, {
         relative = "editor",
         width = rect.width,
@@ -1964,6 +1977,7 @@ function MultiPanelWindow:_recalculate_layout()
         row = rect.y,
         col = rect.x,
         border = border,
+        zindex = panel_zindex,
       })
 
       -- Reposition scrollbar after window geometry update
