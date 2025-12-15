@@ -386,6 +386,242 @@ function PostgresAdapter:parse_definition(result)
 end
 
 -- ============================================================================
+-- Bulk Loading Methods (for SSNSSearch)
+-- ============================================================================
+
+---Get query to retrieve ALL columns for ALL tables/views in a database (no schema filter)
+---Used for bulk metadata loading in object search
+---@param database_name string
+---@return string query
+function PostgresAdapter:get_all_columns_bulk_query(database_name)
+  -- Note: database_name is not used since PostgreSQL connection is per-database
+  return [[
+SELECT
+  n.nspname AS schema_name,
+  c.relname AS table_name,
+  CASE c.relkind WHEN 'r' THEN 'table' WHEN 'v' THEN 'view' END AS object_type,
+  a.attname AS column_name,
+  pg_catalog.format_type(a.atttypid, a.atttypmod) AS data_type,
+  a.attnum AS sort_order
+FROM pg_attribute a
+JOIN pg_class c ON a.attrelid = c.oid
+JOIN pg_namespace n ON c.relnamespace = n.oid
+WHERE c.relkind IN ('r', 'v')
+  AND a.attnum > 0
+  AND NOT a.attisdropped
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+ORDER BY n.nspname, c.relname, a.attnum;
+]]
+end
+
+---Parse bulk columns result into metadata map
+---@param result table Node.js result object
+---@return table<string, string> metadata Map of "schema.object_type.name" -> "col1 type1 col2 type2 ..."
+function PostgresAdapter:parse_all_columns_bulk(result)
+  local metadata = {}
+
+  if result and result.success and result.resultSets and #result.resultSets > 0 then
+    local rows = result.resultSets[1].rows or {}
+    -- Group columns by table
+    local columns_by_table = {}
+    for _, row in ipairs(rows) do
+      if row.schema_name and row.table_name and row.column_name then
+        local key = string.format("%s.%s.%s", row.schema_name, row.object_type or "table", row.table_name)
+        if not columns_by_table[key] then
+          columns_by_table[key] = {}
+        end
+        table.insert(columns_by_table[key], row.column_name)
+        if row.data_type then
+          table.insert(columns_by_table[key], row.data_type)
+        end
+      end
+    end
+    -- Concatenate column info into searchable text
+    for key, parts in pairs(columns_by_table) do
+      metadata[key] = table.concat(parts, " ")
+    end
+  end
+
+  return metadata
+end
+
+---Get query to retrieve ALL parameters for ALL procedures/functions in a database
+---Used for bulk metadata loading in object search
+---@param database_name string
+---@return string query
+function PostgresAdapter:get_all_parameters_bulk_query(database_name)
+  -- Note: database_name is not used since PostgreSQL connection is per-database
+  -- This query handles both named and unnamed parameters
+  return [[
+SELECT
+  n.nspname AS schema_name,
+  p.proname AS routine_name,
+  CASE p.prokind WHEN 'p' THEN 'procedure' ELSE 'function' END AS object_type,
+  COALESCE(
+    unnest(p.proargnames),
+    'arg' || generate_series(1, COALESCE(array_length(p.proargtypes, 1), 0))::text
+  ) AS parameter_name,
+  pg_catalog.format_type(unnest(p.proargtypes), NULL) AS data_type
+FROM pg_proc p
+JOIN pg_namespace n ON p.pronamespace = n.oid
+WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND p.prokind IN ('p', 'f')
+  AND p.proargtypes IS NOT NULL
+  AND array_length(p.proargtypes, 1) > 0
+ORDER BY n.nspname, p.proname;
+]]
+end
+
+---Parse bulk parameters result into metadata map
+---@param result table Node.js result object
+---@return table<string, string> metadata Map of "schema.object_type.name" -> "param1 type1 param2 type2 ..."
+function PostgresAdapter:parse_all_parameters_bulk(result)
+  local metadata = {}
+
+  if result and result.success and result.resultSets and #result.resultSets > 0 then
+    local rows = result.resultSets[1].rows or {}
+    -- Group parameters by routine
+    local params_by_routine = {}
+    for _, row in ipairs(rows) do
+      if row.schema_name and row.routine_name and row.parameter_name then
+        local key = string.format("%s.%s.%s", row.schema_name, row.object_type or "function", row.routine_name)
+        if not params_by_routine[key] then
+          params_by_routine[key] = {}
+        end
+        table.insert(params_by_routine[key], row.parameter_name)
+        if row.data_type then
+          table.insert(params_by_routine[key], row.data_type)
+        end
+      end
+    end
+    -- Concatenate parameter info into searchable text
+    for key, parts in pairs(params_by_routine) do
+      metadata[key] = table.concat(parts, " ")
+    end
+  end
+
+  return metadata
+end
+
+---Get query to retrieve ALL definitions for views, procedures, functions in a database
+---@param database_name string
+---@param schema_name string? Optional schema filter
+---@return string query
+function PostgresAdapter:get_all_definitions_bulk_query(database_name, schema_name)
+  local schema_filter = schema_name and string.format("AND n.nspname = '%s'", schema_name) or ""
+
+  return string.format([[
+-- Views
+SELECT
+  n.nspname AS schema_name,
+  c.relname AS object_name,
+  'view' AS object_type,
+  pg_get_viewdef(c.oid, true) AS definition
+FROM pg_class c
+JOIN pg_namespace n ON c.relnamespace = n.oid
+WHERE c.relkind = 'v'
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  %s
+
+UNION ALL
+
+-- Procedures and Functions
+SELECT
+  n.nspname AS schema_name,
+  p.proname AS object_name,
+  CASE p.prokind WHEN 'p' THEN 'procedure' ELSE 'function' END AS object_type,
+  pg_get_functiondef(p.oid) AS definition
+FROM pg_proc p
+JOIN pg_namespace n ON p.pronamespace = n.oid
+WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND p.prokind IN ('p', 'f')
+  %s
+ORDER BY schema_name, object_name;
+]], schema_filter, schema_filter)
+end
+
+---Parse bulk definitions result
+---@param result table Node.js result object
+---@return table<string, string> definitions Map of "schema.object_type.name" -> definition
+function PostgresAdapter:parse_definitions_bulk(result)
+  local definitions = {}
+
+  if result and result.success and result.resultSets and #result.resultSets > 0 then
+    local rows = result.resultSets[1].rows or {}
+    for _, row in ipairs(rows) do
+      if row.schema_name and row.object_name and row.definition then
+        local key = string.format("%s.%s.%s", row.schema_name, row.object_type, row.object_name)
+        local definition = row.definition
+        -- Normalize line endings
+        if definition then
+          definition = definition:gsub('\r', '')
+        end
+        definitions[key] = definition
+      end
+    end
+  end
+
+  return definitions
+end
+
+---Get query to retrieve CREATE TABLE scripts for ALL tables in a database
+---@param database_name string
+---@param schema_name string? Optional schema filter
+---@return string query
+function PostgresAdapter:get_all_table_definitions_bulk_query(database_name, schema_name)
+  local schema_filter = schema_name and string.format("AND table_schema = '%s'", schema_name) or ""
+
+  return string.format([[
+SELECT
+  table_schema AS schema_name,
+  table_name,
+  'table' AS object_type,
+  'CREATE TABLE ' || table_schema || '.' || table_name || ' (' || chr(10) ||
+  string_agg(
+    '  ' || column_name || ' ' ||
+    UPPER(data_type) ||
+    CASE
+      WHEN character_maximum_length IS NOT NULL THEN '(' || character_maximum_length || ')'
+      WHEN numeric_precision IS NOT NULL AND numeric_scale IS NOT NULL THEN '(' || numeric_precision || ',' || numeric_scale || ')'
+      ELSE ''
+    END ||
+    CASE WHEN is_nullable = 'NO' THEN ' NOT NULL' ELSE '' END ||
+    COALESCE(' DEFAULT ' || column_default, ''),
+    ',' || chr(10)
+    ORDER BY ordinal_position
+  ) || chr(10) || ');' AS definition
+FROM information_schema.columns
+WHERE table_schema NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+  %s
+GROUP BY table_schema, table_name;
+]], schema_filter)
+end
+
+---Parse bulk table definitions result
+---@param result table Node.js result object
+---@return table<string, string> definitions Map of "schema.table.name" -> definition
+function PostgresAdapter:parse_table_definitions_bulk(result)
+  local definitions = {}
+
+  if result and result.success and result.resultSets and #result.resultSets > 0 then
+    local rows = result.resultSets[1].rows or {}
+    for _, row in ipairs(rows) do
+      if row.schema_name and row.table_name and row.definition then
+        local key = string.format("%s.table.%s", row.schema_name, row.table_name)
+        local definition = row.definition
+        -- Normalize line endings
+        if definition then
+          definition = definition:gsub('\r', '')
+        end
+        definitions[key] = definition
+      end
+    end
+  end
+
+  return definitions
+end
+
+-- ============================================================================
 -- Result Parsing Methods
 -- ============================================================================
 
