@@ -283,6 +283,232 @@ function MySQLAdapter:parse_definition(result)
 end
 
 -- ============================================================================
+-- Bulk Loading Methods (for SSNSSearch)
+-- ============================================================================
+
+---Get query to retrieve ALL columns for ALL tables/views in a database (no schema filter)
+---Used for bulk metadata loading in object search
+---@param database_name string
+---@return string query
+function MySQLAdapter:get_all_columns_bulk_query(database_name)
+  return string.format([[
+SELECT
+  c.table_name,
+  CASE t.table_type WHEN 'BASE TABLE' THEN 'table' ELSE 'view' END AS object_type,
+  c.column_name,
+  c.data_type,
+  c.ordinal_position AS sort_order
+FROM information_schema.columns c
+JOIN information_schema.tables t
+  ON c.table_schema = t.table_schema AND c.table_name = t.table_name
+WHERE c.table_schema = '%s'
+ORDER BY c.table_name, c.ordinal_position;
+]], database_name)
+end
+
+---Parse bulk columns result into metadata map
+---@param result table Node.js result object
+---@return table<string, string> metadata Map of "schema.object_type.name" -> "col1 type1 col2 type2 ..."
+function MySQLAdapter:parse_all_columns_bulk(result)
+  local metadata = {}
+
+  if result and result.success and result.resultSets and #result.resultSets > 0 then
+    local rows = result.resultSets[1].rows or {}
+    -- Group columns by table
+    local columns_by_table = {}
+    for _, row in ipairs(rows) do
+      if row.table_name and row.column_name then
+        -- MySQL doesn't have schemas within database, use 'dbo' as placeholder for consistency
+        local key = string.format("dbo.%s.%s", row.object_type or "table", row.table_name)
+        if not columns_by_table[key] then
+          columns_by_table[key] = {}
+        end
+        table.insert(columns_by_table[key], row.column_name)
+        if row.data_type then
+          table.insert(columns_by_table[key], row.data_type)
+        end
+      end
+    end
+    -- Concatenate column info into searchable text
+    for key, parts in pairs(columns_by_table) do
+      metadata[key] = table.concat(parts, " ")
+    end
+  end
+
+  return metadata
+end
+
+---Get query to retrieve ALL parameters for ALL procedures/functions in a database
+---Used for bulk metadata loading in object search
+---@param database_name string
+---@return string query
+function MySQLAdapter:get_all_parameters_bulk_query(database_name)
+  return string.format([[
+SELECT
+  r.routine_name,
+  LOWER(r.routine_type) AS object_type,
+  p.parameter_name,
+  p.data_type
+FROM information_schema.parameters p
+JOIN information_schema.routines r
+  ON p.specific_schema = r.routine_schema
+  AND p.specific_name = r.specific_name
+WHERE p.specific_schema = '%s'
+  AND p.parameter_name IS NOT NULL
+ORDER BY r.routine_name, p.ordinal_position;
+]], database_name)
+end
+
+---Parse bulk parameters result into metadata map
+---@param result table Node.js result object
+---@return table<string, string> metadata Map of "schema.object_type.name" -> "param1 type1 param2 type2 ..."
+function MySQLAdapter:parse_all_parameters_bulk(result)
+  local metadata = {}
+
+  if result and result.success and result.resultSets and #result.resultSets > 0 then
+    local rows = result.resultSets[1].rows or {}
+    -- Group parameters by routine
+    local params_by_routine = {}
+    for _, row in ipairs(rows) do
+      if row.routine_name and row.parameter_name then
+        -- MySQL doesn't have schemas within database, use 'dbo' as placeholder
+        local key = string.format("dbo.%s.%s", row.object_type or "function", row.routine_name)
+        if not params_by_routine[key] then
+          params_by_routine[key] = {}
+        end
+        table.insert(params_by_routine[key], row.parameter_name)
+        if row.data_type then
+          table.insert(params_by_routine[key], row.data_type)
+        end
+      end
+    end
+    -- Concatenate parameter info into searchable text
+    for key, parts in pairs(params_by_routine) do
+      metadata[key] = table.concat(parts, " ")
+    end
+  end
+
+  return metadata
+end
+
+---Get query to retrieve ALL definitions for views, procedures, functions in a database
+---Note: MySQL's information_schema.routines.routine_definition may be NULL for security
+---@param database_name string
+---@param schema_name string? Not used in MySQL
+---@return string query
+function MySQLAdapter:get_all_definitions_bulk_query(database_name, schema_name)
+  return string.format([[
+-- Views
+SELECT
+  table_name AS object_name,
+  'view' AS object_type,
+  view_definition AS definition
+FROM information_schema.views
+WHERE table_schema = '%s'
+
+UNION ALL
+
+-- Procedures and Functions
+SELECT
+  routine_name AS object_name,
+  LOWER(routine_type) AS object_type,
+  routine_definition AS definition
+FROM information_schema.routines
+WHERE routine_schema = '%s'
+  AND routine_definition IS NOT NULL;
+]], database_name, database_name)
+end
+
+---Parse bulk definitions result
+---@param result table Node.js result object
+---@return table<string, string> definitions Map of "schema.object_type.name" -> definition
+function MySQLAdapter:parse_definitions_bulk(result)
+  local definitions = {}
+
+  if result and result.success and result.resultSets and #result.resultSets > 0 then
+    local rows = result.resultSets[1].rows or {}
+    for _, row in ipairs(rows) do
+      if row.object_name and row.definition then
+        -- MySQL doesn't have schemas within database, use 'dbo' as placeholder
+        local key = string.format("dbo.%s.%s", row.object_type, row.object_name)
+        local definition = row.definition
+        -- Normalize line endings
+        if definition then
+          definition = definition:gsub('\r', '')
+        end
+        definitions[key] = definition
+      end
+    end
+  end
+
+  return definitions
+end
+
+---Get query to retrieve CREATE TABLE scripts for ALL tables in a database
+---Note: MySQL SHOW CREATE TABLE only works for one table at a time, so we build from information_schema
+---@param database_name string
+---@param schema_name string? Not used in MySQL
+---@return string query
+function MySQLAdapter:get_all_table_definitions_bulk_query(database_name, schema_name)
+  return string.format([[
+SELECT
+  t.table_name,
+  'table' AS object_type,
+  CONCAT(
+    'CREATE TABLE `', t.table_name, '` (\n',
+    GROUP_CONCAT(
+      CONCAT(
+        '  `', c.column_name, '` ',
+        UPPER(c.data_type),
+        CASE
+          WHEN c.character_maximum_length IS NOT NULL THEN CONCAT('(', c.character_maximum_length, ')')
+          WHEN c.numeric_precision IS NOT NULL AND c.numeric_scale IS NOT NULL THEN CONCAT('(', c.numeric_precision, ',', c.numeric_scale, ')')
+          ELSE ''
+        END,
+        CASE WHEN c.is_nullable = 'NO' THEN ' NOT NULL' ELSE '' END,
+        CASE WHEN c.column_default IS NOT NULL THEN CONCAT(' DEFAULT ', c.column_default) ELSE '' END,
+        CASE WHEN c.extra LIKE '%%auto_increment%%' THEN ' AUTO_INCREMENT' ELSE '' END
+      )
+      ORDER BY c.ordinal_position
+      SEPARATOR ',\n'
+    ),
+    '\n);'
+  ) AS definition
+FROM information_schema.tables t
+JOIN information_schema.columns c
+  ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+WHERE t.table_schema = '%s'
+  AND t.table_type = 'BASE TABLE'
+GROUP BY t.table_name;
+]], database_name)
+end
+
+---Parse bulk table definitions result
+---@param result table Node.js result object
+---@return table<string, string> definitions Map of "schema.table.name" -> definition
+function MySQLAdapter:parse_table_definitions_bulk(result)
+  local definitions = {}
+
+  if result and result.success and result.resultSets and #result.resultSets > 0 then
+    local rows = result.resultSets[1].rows or {}
+    for _, row in ipairs(rows) do
+      if row.table_name and row.definition then
+        -- MySQL doesn't have schemas within database, use 'dbo' as placeholder
+        local key = string.format("dbo.table.%s", row.table_name)
+        local definition = row.definition
+        -- Normalize line endings
+        if definition then
+          definition = definition:gsub('\r', '')
+        end
+        definitions[key] = definition
+      end
+    end
+  end
+
+  return definitions
+end
+
+-- ============================================================================
 -- Result Parsing Methods
 -- ============================================================================
 
