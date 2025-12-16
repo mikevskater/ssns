@@ -1082,35 +1082,56 @@ end
 -- Result Buffer Formatting
 -- ============================================================================
 
----SQL datatype to style mappings
+---SQL datatype to style mappings (covers SQL Server, PostgreSQL, MySQL, SQLite)
 local DATATYPE_STYLES = {
-  -- String types
+  -- String types (SQL Server, PostgreSQL, MySQL)
   varchar = "result_string", nvarchar = "result_string",
   char = "result_string", nchar = "result_string",
   text = "result_string", ntext = "result_string",
   xml = "result_string",
+  -- MySQL string types
+  var_string = "result_string", string = "result_string",
+  enum = "result_string", set = "result_string",
+  geometry = "result_string",
+  -- JSON types (PostgreSQL, MySQL)
+  json = "result_string", jsonb = "result_string",
 
-  -- Numeric types
+  -- Numeric types (SQL Server)
   int = "result_number", bigint = "result_number",
   smallint = "result_number", tinyint = "result_number",
   decimal = "result_number", numeric = "result_number",
   float = "result_number", real = "result_number",
   money = "result_number", smallmoney = "result_number",
+  -- PostgreSQL numeric types
+  integer = "result_number",
+  ["double precision"] = "result_number",
+  -- MySQL numeric types
+  tiny = "result_number", short = "result_number",
+  long = "result_number", longlong = "result_number",
+  int24 = "result_number", double = "result_number",
+  newdecimal = "result_number",
 
-  -- Date/time types
+  -- Date/time types (SQL Server)
   date = "result_date", time = "result_date",
   datetime = "result_date", datetime2 = "result_date",
   smalldatetime = "result_date", datetimeoffset = "result_date",
   timestamp = "result_date",
+  -- PostgreSQL date/time types
+  timestamptz = "result_date",
+  -- MySQL date/time types
+  year = "result_date",
 
-  -- Boolean
+  -- Boolean (SQL Server, PostgreSQL)
   bit = "result_bool", boolean = "result_bool",
 
-  -- Binary
+  -- Binary (SQL Server)
   binary = "result_binary", varbinary = "result_binary",
   image = "result_binary",
+  -- MySQL binary types
+  blob = "result_binary", tiny_blob = "result_binary",
+  medium_blob = "result_binary", long_blob = "result_binary",
 
-  -- GUID/UUID
+  -- GUID/UUID (SQL Server, PostgreSQL)
   uniqueidentifier = "result_guid", uuid = "result_guid",
 }
 
