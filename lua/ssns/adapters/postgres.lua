@@ -369,36 +369,7 @@ ORDER BY n.nspname, c.relname, a.attnum;
 ]]
 end
 
----Parse bulk columns result into metadata map
----@param result table Node.js result object
----@return table<string, string> metadata Map of "schema.object_type.name" -> "col1 type1 col2 type2 ..."
-function PostgresAdapter:parse_all_columns_bulk(result)
-  local metadata = {}
-
-  if result and result.success and result.resultSets and #result.resultSets > 0 then
-    local rows = result.resultSets[1].rows or {}
-    -- Group columns by table
-    local columns_by_table = {}
-    for _, row in ipairs(rows) do
-      if row.schema_name and row.table_name and row.column_name then
-        local key = string.format("%s.%s.%s", row.schema_name, row.object_type or "table", row.table_name)
-        if not columns_by_table[key] then
-          columns_by_table[key] = {}
-        end
-        table.insert(columns_by_table[key], row.column_name)
-        if row.data_type then
-          table.insert(columns_by_table[key], row.data_type)
-        end
-      end
-    end
-    -- Concatenate column info into searchable text
-    for key, parts in pairs(columns_by_table) do
-      metadata[key] = table.concat(parts, " ")
-    end
-  end
-
-  return metadata
-end
+-- parse_all_columns_bulk() inherited from BaseAdapter
 
 ---Get query to retrieve ALL parameters for ALL procedures/functions in a database
 ---Used for bulk metadata loading in object search
@@ -427,36 +398,7 @@ ORDER BY n.nspname, p.proname;
 ]]
 end
 
----Parse bulk parameters result into metadata map
----@param result table Node.js result object
----@return table<string, string> metadata Map of "schema.object_type.name" -> "param1 type1 param2 type2 ..."
-function PostgresAdapter:parse_all_parameters_bulk(result)
-  local metadata = {}
-
-  if result and result.success and result.resultSets and #result.resultSets > 0 then
-    local rows = result.resultSets[1].rows or {}
-    -- Group parameters by routine
-    local params_by_routine = {}
-    for _, row in ipairs(rows) do
-      if row.schema_name and row.routine_name and row.parameter_name then
-        local key = string.format("%s.%s.%s", row.schema_name, row.object_type or "function", row.routine_name)
-        if not params_by_routine[key] then
-          params_by_routine[key] = {}
-        end
-        table.insert(params_by_routine[key], row.parameter_name)
-        if row.data_type then
-          table.insert(params_by_routine[key], row.data_type)
-        end
-      end
-    end
-    -- Concatenate parameter info into searchable text
-    for key, parts in pairs(params_by_routine) do
-      metadata[key] = table.concat(parts, " ")
-    end
-  end
-
-  return metadata
-end
+-- parse_all_parameters_bulk() inherited from BaseAdapter
 
 ---Get query to retrieve ALL definitions for views, procedures, functions in a database
 ---@param database_name string
@@ -495,29 +437,7 @@ ORDER BY schema_name, object_name;
 ]], schema_filter, schema_filter)
 end
 
----Parse bulk definitions result
----@param result table Node.js result object
----@return table<string, string> definitions Map of "schema.object_type.name" -> definition
-function PostgresAdapter:parse_definitions_bulk(result)
-  local definitions = {}
-
-  if result and result.success and result.resultSets and #result.resultSets > 0 then
-    local rows = result.resultSets[1].rows or {}
-    for _, row in ipairs(rows) do
-      if row.schema_name and row.object_name and row.definition then
-        local key = string.format("%s.%s.%s", row.schema_name, row.object_type, row.object_name)
-        local definition = row.definition
-        -- Normalize line endings
-        if definition then
-          definition = definition:gsub('\r', '')
-        end
-        definitions[key] = definition
-      end
-    end
-  end
-
-  return definitions
-end
+-- parse_definitions_bulk() inherited from BaseAdapter
 
 ---Get query to retrieve CREATE TABLE scripts for ALL tables in a database
 ---@param database_name string
@@ -552,29 +472,7 @@ GROUP BY table_schema, table_name;
 ]], schema_filter)
 end
 
----Parse bulk table definitions result
----@param result table Node.js result object
----@return table<string, string> definitions Map of "schema.table.name" -> definition
-function PostgresAdapter:parse_table_definitions_bulk(result)
-  local definitions = {}
-
-  if result and result.success and result.resultSets and #result.resultSets > 0 then
-    local rows = result.resultSets[1].rows or {}
-    for _, row in ipairs(rows) do
-      if row.schema_name and row.table_name and row.definition then
-        local key = string.format("%s.table.%s", row.schema_name, row.table_name)
-        local definition = row.definition
-        -- Normalize line endings
-        if definition then
-          definition = definition:gsub('\r', '')
-        end
-        definitions[key] = definition
-      end
-    end
-  end
-
-  return definitions
-end
+-- parse_table_definitions_bulk() inherited from BaseAdapter
 
 -- ============================================================================
 -- Result Parsing Methods

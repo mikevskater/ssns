@@ -312,6 +312,153 @@ function BaseAdapter:parse_definition(result)
 end
 
 -- ============================================================================
+-- Bulk Parsing Helpers
+-- ============================================================================
+
+---Generic helper to parse bulk metadata into a grouped map
+---Used for parse_all_columns_bulk and parse_all_parameters_bulk
+---Groups items by a key and concatenates name+type into searchable text
+---@param result table Node.js result object
+---@param config table Configuration:
+---  schema_field: string - Field name for schema (e.g., "schema_name")
+---  object_field: string - Field name for object (e.g., "table_name" or "routine_name")
+---  type_field: string - Field name for object type (e.g., "object_type")
+---  name_field: string - Field name for item name (e.g., "column_name" or "parameter_name")
+---  data_type_field: string - Field name for data type (e.g., "data_type")
+---  default_type: string? - Default object type if not in row (e.g., "table" or "function")
+---@return table<string, string> metadata Map of "schema.type.name" -> "item1 type1 item2 type2 ..."
+function BaseAdapter:_parse_metadata_bulk(result, config)
+  local metadata = {}
+
+  if result and result.success and result.resultSets and #result.resultSets > 0 then
+    local rows = result.resultSets[1].rows or {}
+    local items_by_object = {}
+
+    for _, row in ipairs(rows) do
+      local schema = row[config.schema_field]
+      local object = row[config.object_field]
+      local name = row[config.name_field]
+
+      if schema and object and name then
+        local obj_type = row[config.type_field] or config.default_type or "unknown"
+        local key = string.format("%s.%s.%s", schema, obj_type, object)
+
+        if not items_by_object[key] then
+          items_by_object[key] = {}
+        end
+
+        table.insert(items_by_object[key], name)
+        if row[config.data_type_field] then
+          table.insert(items_by_object[key], row[config.data_type_field])
+        end
+      end
+    end
+
+    -- Concatenate into searchable text
+    for key, parts in pairs(items_by_object) do
+      metadata[key] = table.concat(parts, " ")
+    end
+  end
+
+  return metadata
+end
+
+---Generic helper to parse bulk definitions into a map
+---Used for parse_definitions_bulk and parse_table_definitions_bulk
+---@param result table Node.js result object
+---@param config table Configuration:
+---  schema_field: string - Field name for schema (e.g., "schema_name")
+---  object_field: string - Field name for object name (e.g., "object_name" or "table_name")
+---  type_field: string? - Field name for object type (nil to use fixed_type)
+---  fixed_type: string? - Fixed type string if not using type_field (e.g., "table")
+---  definition_field: string - Field name for definition (e.g., "definition")
+---@return table<string, string> definitions Map of "schema.type.name" -> definition
+function BaseAdapter:_parse_definitions_bulk(result, config)
+  local definitions = {}
+
+  if result and result.success and result.resultSets and #result.resultSets > 0 then
+    local rows = result.resultSets[1].rows or {}
+
+    for _, row in ipairs(rows) do
+      local schema = row[config.schema_field]
+      local object = row[config.object_field]
+      local definition = row[config.definition_field]
+
+      if schema and object and definition then
+        local obj_type = config.fixed_type or row[config.type_field] or "unknown"
+        local key = string.format("%s.%s.%s", schema, obj_type, object)
+
+        -- Normalize line endings
+        definition = definition:gsub('\r', '')
+        definitions[key] = definition
+      end
+    end
+  end
+
+  return definitions
+end
+
+---Parse bulk columns result into metadata map
+---Default implementation using _parse_metadata_bulk helper
+---Expects rows with: schema_name, table_name, object_type, column_name, data_type
+---@param result table Node.js result object
+---@return table<string, string> metadata Map of "schema.object_type.name" -> "col1 type1 col2 type2 ..."
+function BaseAdapter:parse_all_columns_bulk(result)
+  return self:_parse_metadata_bulk(result, {
+    schema_field = "schema_name",
+    object_field = "table_name",
+    type_field = "object_type",
+    name_field = "column_name",
+    data_type_field = "data_type",
+    default_type = "table",
+  })
+end
+
+---Parse bulk parameters result into metadata map
+---Default implementation using _parse_metadata_bulk helper
+---Expects rows with: schema_name, routine_name, object_type, parameter_name, data_type
+---@param result table Node.js result object
+---@return table<string, string> metadata Map of "schema.object_type.name" -> "param1 type1 param2 type2 ..."
+function BaseAdapter:parse_all_parameters_bulk(result)
+  return self:_parse_metadata_bulk(result, {
+    schema_field = "schema_name",
+    object_field = "routine_name",
+    type_field = "object_type",
+    name_field = "parameter_name",
+    data_type_field = "data_type",
+    default_type = "function",
+  })
+end
+
+---Parse bulk definitions result
+---Default implementation using _parse_definitions_bulk helper
+---Expects rows with: schema_name, object_name, object_type, definition
+---@param result table Node.js result object
+---@return table<string, string> definitions Map of "schema.object_type.name" -> definition
+function BaseAdapter:parse_definitions_bulk(result)
+  return self:_parse_definitions_bulk(result, {
+    schema_field = "schema_name",
+    object_field = "object_name",
+    type_field = "object_type",
+    definition_field = "definition",
+  })
+end
+
+---Parse bulk table definitions result
+---Default implementation using _parse_definitions_bulk helper
+---Expects rows with: schema_name, table_name, definition
+---@param result table Node.js result object
+---@return table<string, string> definitions Map of "schema.table.name" -> definition
+function BaseAdapter:parse_table_definitions_bulk(result)
+  return self:_parse_definitions_bulk(result, {
+    schema_field = "schema_name",
+    object_field = "table_name",
+    fixed_type = "table",
+    definition_field = "definition",
+  })
+end
+
+-- ============================================================================
 -- Object Creation Helpers
 -- ============================================================================
 
