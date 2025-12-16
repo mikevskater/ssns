@@ -275,7 +275,119 @@ function BaseAdapter:create_column(parent, row)
 end
 
 -- ============================================================================
--- Utility Methods
+-- Parsing Utility Methods
+-- ============================================================================
+
+---Safely get a value, handling vim.NIL and nil
+---@param value any The value to check
+---@param default any? Default value if nil/vim.NIL (default: nil)
+---@return any value The value or default
+function BaseAdapter:safe_get(value, default)
+  if value == nil or value == vim.NIL then
+    return default
+  end
+  return value
+end
+
+---Convert a value to boolean, handling various representations
+---Handles: true/false, 1/0, "1"/"0", "true"/"false", "yes"/"no", vim.NIL
+---@param value any The value to convert
+---@param default boolean? Default if nil/vim.NIL (default: false)
+---@return boolean
+function BaseAdapter:to_boolean(value, default)
+  default = default or false
+
+  if value == nil or value == vim.NIL then
+    return default
+  end
+
+  if type(value) == "boolean" then
+    return value
+  end
+
+  if type(value) == "number" then
+    return value ~= 0
+  end
+
+  if type(value) == "string" then
+    local lower = value:lower()
+    -- Handle: true/yes/1/t (PostgreSQL uses t/f)
+    return lower == "true" or lower == "yes" or lower == "1" or lower == "t"
+  end
+
+  return default
+end
+
+---Parse a comma-separated column list string into array
+---Handles vim.NIL and empty strings
+---@param value any The value (string or vim.NIL)
+---@param separator string? Separator pattern (default: ", ")
+---@return string[] columns Array of column names (empty if nil/invalid)
+function BaseAdapter:parse_column_list(value, separator)
+  separator = separator or ", "
+
+  if value == nil or value == vim.NIL or value == "" then
+    return {}
+  end
+
+  if type(value) ~= "string" then
+    return {}
+  end
+
+  return vim.split(value, separator, { plain = true })
+end
+
+---Normalize line endings in text (convert \r\n to \n)
+---@param text any The text to normalize
+---@return string? normalized Normalized text or nil
+function BaseAdapter:normalize_line_endings(text)
+  if text == nil or text == vim.NIL then
+    return nil
+  end
+
+  if type(text) ~= "string" then
+    return nil
+  end
+
+  return text:gsub("\r\n", "\n"):gsub("\r", "\n")
+end
+
+---Safe number conversion handling vim.NIL
+---@param value any The value to convert
+---@param default number? Default if nil/vim.NIL (default: nil)
+---@return number?
+function BaseAdapter:to_number(value, default)
+  if value == nil or value == vim.NIL then
+    return default
+  end
+
+  if type(value) == "number" then
+    return value
+  end
+
+  if type(value) == "string" then
+    return tonumber(value) or default
+  end
+
+  return default
+end
+
+---Get a string value safely, handling vim.NIL
+---@param value any The value
+---@param default string? Default if nil/vim.NIL (default: "")
+---@return string
+function BaseAdapter:to_string_safe(value, default)
+  default = default or ""
+
+  if value == nil or value == vim.NIL then
+    return default
+  end
+
+  return tostring(value)
+end
+
+-- ============================================================================
+-- Identifier Utility Methods
 -- ============================================================================
 
 ---Get the identifier quote character for this database

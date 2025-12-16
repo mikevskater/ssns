@@ -632,18 +632,12 @@ function MySQLAdapter:parse_indexes(result)
   if result.success and result.resultSets and #result.resultSets > 0 then
     local rows = result.resultSets[1].rows or {}
     for _, row in ipairs(rows) do
-      -- Handle vim.NIL for column_names
-      local col_names = row.column_names
-      if col_names == vim.NIL or col_names == nil then
-        col_names = ""
-      end
-
       table.insert(indexes, {
         name = row.index_name,
         type = row.index_type,
-        is_unique = row.non_unique == 0,
-        is_primary = row.index_name == "PRIMARY",
-        columns = vim.split(col_names, ",", { plain = true }),
+        is_unique = row.non_unique == 0,  -- MySQL specific: non_unique=0 means unique
+        is_primary = row.index_name == "PRIMARY",  -- MySQL specific: PRIMARY index name
+        columns = self:parse_column_list(row.column_names, ","),
       })
     end
   end
@@ -658,25 +652,15 @@ function MySQLAdapter:parse_constraints(result)
   if result.success and result.resultSets and #result.resultSets > 0 then
     local rows = result.resultSets[1].rows or {}
     for _, row in ipairs(rows) do
-      -- Handle vim.NIL for column_names
-      local col_names = row.column_names
-      if col_names == vim.NIL or col_names == nil then
-        col_names = ""
-      end
-
-      -- Handle vim.NIL for referenced_columns
-      local ref_columns = nil
-      if row.referenced_columns and row.referenced_columns ~= vim.NIL then
-        ref_columns = vim.split(row.referenced_columns, ",", { plain = true })
-      end
+      local ref_columns = self:parse_column_list(row.referenced_columns, ",")
 
       table.insert(constraints, {
         name = row.constraint_name,
         type = row.constraint_type,
-        columns = vim.split(col_names, ",", { plain = true }),
-        referenced_table = row.referenced_table_name,
-        referenced_schema = row.referenced_table_schema,
-        referenced_columns = ref_columns,
+        columns = self:parse_column_list(row.column_names, ","),
+        referenced_table = self:safe_get(row.referenced_table_name),
+        referenced_schema = self:safe_get(row.referenced_table_schema),
+        referenced_columns = #ref_columns > 0 and ref_columns or nil,
       })
     end
   end

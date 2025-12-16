@@ -763,18 +763,12 @@ function PostgresAdapter:parse_indexes(result)
   if result.success and result.resultSets and #result.resultSets > 0 then
     local rows = result.resultSets[1].rows or {}
     for _, row in ipairs(rows) do
-      -- Handle vim.NIL for column_names
-      local col_names = row.column_names
-      if col_names == vim.NIL or col_names == nil then
-        col_names = ""
-      end
-
       table.insert(indexes, {
         name = row.index_name,
         type = row.index_type,
-        is_unique = row.is_unique == true or row.is_unique == 't',
-        is_primary = row.is_primary == true or row.is_primary == 't',
-        columns = vim.split(col_names, ", ", { plain = true }),
+        is_unique = self:to_boolean(row.is_unique),
+        is_primary = self:to_boolean(row.is_primary),
+        columns = self:parse_column_list(row.column_names),
       })
     end
   end
@@ -789,25 +783,15 @@ function PostgresAdapter:parse_constraints(result)
   if result.success and result.resultSets and #result.resultSets > 0 then
     local rows = result.resultSets[1].rows or {}
     for _, row in ipairs(rows) do
-      -- Handle vim.NIL for column_names
-      local col_names = row.column_names
-      if col_names == vim.NIL or col_names == nil then
-        col_names = ""
-      end
-
-      -- Handle vim.NIL for referenced_columns
-      local ref_columns = nil
-      if row.referenced_columns and row.referenced_columns ~= vim.NIL then
-        ref_columns = vim.split(row.referenced_columns, ", ", { plain = true })
-      end
+      local ref_columns = self:parse_column_list(row.referenced_columns)
 
       table.insert(constraints, {
         name = row.constraint_name,
         type = row.constraint_type,
-        columns = vim.split(col_names, ", ", { plain = true }),
-        referenced_table = row.referenced_table,
-        referenced_schema = row.referenced_schema,
-        referenced_columns = ref_columns,
+        columns = self:parse_column_list(row.column_names),
+        referenced_table = self:safe_get(row.referenced_table),
+        referenced_schema = self:safe_get(row.referenced_schema),
+        referenced_columns = #ref_columns > 0 and ref_columns or nil,
       })
     end
   end
