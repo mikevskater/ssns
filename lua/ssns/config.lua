@@ -72,6 +72,10 @@
 ---@field border_style string Border character style: "box" | "ascii" (default: "box")
 ---@field highlight_null boolean Show NULL values with distinct styling (default: true)
 ---@field null_display string How to display NULL values (default: "NULL")
+---@field max_col_width number? Maximum column width before wrapping (nil = no limit, default: 50)
+---@field wrap_mode string Text wrapping mode: "word" | "char" | "none" (default: "word")
+---@field show_row_numbers boolean Show row number column (default: true)
+---@field preserve_newlines boolean Honor newlines in values, rendering as multi-line cells (default: true)
 
 ---@class QueryHistoryConfig
 ---@field enabled boolean Enable query history tracking (default: true)
@@ -566,6 +570,21 @@ local default_config = {
 
     -- How to display NULL values in results
     null_display = "NULL",
+
+    -- Maximum column width before text wrapping (nil = no limit)
+    max_col_width = 50,
+
+    -- Text wrapping mode when max_col_width is reached
+    -- "word" = wrap at word boundaries
+    -- "char" = wrap at exact character position
+    -- "none" = truncate with ellipsis instead of wrapping
+    wrap_mode = "word",
+
+    -- Show row number column on the left (SSMS style)
+    show_row_numbers = true,
+
+    -- Honor newlines in values, rendering as multi-line cells
+    preserve_newlines = true,
   },
 
   query_history = {

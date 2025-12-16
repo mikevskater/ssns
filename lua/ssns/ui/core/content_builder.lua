@@ -1318,4 +1318,413 @@ function ContentBuilder:result_message(text, style)
   return self:styled(text, style or "result_message")
 end
 
+-- ============================================================================
+-- Multi-line Cell Support
+-- ============================================================================
+
+---Wrap text to fit within a maximum width
+---@param text string The text to wrap
+---@param max_width number Maximum width per line
+---@param mode string Wrap mode: "word" | "char" | "none"
+---@param preserve_newlines boolean Whether to honor existing newlines
+---@return string[] lines Array of wrapped lines
+function ContentBuilder.wrap_text(text, max_width, mode, preserve_newlines)
+  if not text or text == "" then
+    return { "" }
+  end
+
+  -- Convert to string if needed
+  text = tostring(text)
+
+  -- Handle "none" mode - truncate with ellipsis
+  if mode == "none" then
+    -- First, collapse all newlines to spaces
+    local collapsed = text:gsub("\r\n", " "):gsub("\n", " "):gsub("\r", " ")
+    if #collapsed <= max_width then
+      return { collapsed }
+    end
+    return { collapsed:sub(1, max_width - 3) .. "..." }
+  end
+
+  local lines = {}
+
+  -- Split by newlines first if preserving them
+  local segments
+  if preserve_newlines then
+    -- Normalize line endings and split
+    local normalized = text:gsub("\r\n", "\n"):gsub("\r", "\n")
+    segments = vim.split(normalized, "\n", { plain = true })
+  else
+    -- Collapse all newlines to spaces
+    segments = { text:gsub("\r\n", " "):gsub("\n", " "):gsub("\r", " ") }
+  end
+
+  -- Wrap each segment
+  for _, segment in ipairs(segments) do
+    if #segment <= max_width then
+      table.insert(lines, segment)
+    elseif mode == "char" then
+      -- Character-based wrapping
+      local pos = 1
+      while pos <= #segment do
+        local chunk = segment:sub(pos, pos + max_width - 1)
+        table.insert(lines, chunk)
+        pos = pos + max_width
+      end
+    else
+      -- Word-based wrapping (default)
+      local current_line = ""
+      local words = vim.split(segment, "%s+", { trimempty = false })
+
+      for _, word in ipairs(words) do
+        if word == "" then
+          -- Preserve spacing
+          if #current_line < max_width then
+            current_line = current_line .. " "
+          end
+        elseif #current_line == 0 then
+          -- First word on line
+          if #word > max_width then
+            -- Word itself is too long, break it
+            local pos = 1
+            while pos <= #word do
+              local chunk = word:sub(pos, pos + max_width - 1)
+              if pos + max_width - 1 < #word then
+                table.insert(lines, chunk)
+                pos = pos + max_width
+              else
+                current_line = chunk
+                pos = #word + 1
+              end
+            end
+          else
+            current_line = word
+          end
+        elseif #current_line + 1 + #word <= max_width then
+          -- Word fits on current line
+          current_line = current_line .. " " .. word
+        else
+          -- Word doesn't fit, start new line
+          table.insert(lines, current_line)
+          if #word > max_width then
+            -- Word is too long, break it
+            local pos = 1
+            while pos <= #word do
+              local chunk = word:sub(pos, pos + max_width - 1)
+              if pos + max_width - 1 < #word then
+                table.insert(lines, chunk)
+                pos = pos + max_width
+              else
+                current_line = chunk
+                pos = #word + 1
+              end
+            end
+          else
+            current_line = word
+          end
+        end
+      end
+
+      -- Don't forget the last line
+      if #current_line > 0 or #lines == 0 then
+        table.insert(lines, current_line)
+      end
+    end
+  end
+
+  return #lines > 0 and lines or { "" }
+end
+
+---Add a row separator between data rows (SSMS style)
+---@param columns table[] Array of { width: number }
+---@param border_style string "box" or "ascii"
+---@return ContentBuilder self
+function ContentBuilder:result_row_separator(columns, border_style)
+  local chars = ContentBuilder.get_border_chars(border_style)
+  local parts = { chars.t_right }
+
+  for i, col in ipairs(columns) do
+    table.insert(parts, string.rep(chars.horizontal, col.width + 2))
+    if i < #columns then
+      table.insert(parts, chars.cross)
+    end
+  end
+  table.insert(parts, chars.t_left)
+
+  local text = table.concat(parts, "")
+  local line = {
+    text = text,
+    highlights = {{ col_start = 0, col_end = #text, style = "result_border" }},
+  }
+  table.insert(self._lines, line)
+  return self
+end
+
+---Add a multi-line data row (all lines for cells that span multiple lines)
+---@param cell_lines table[] Array of { lines: string[], width: number, datatype: string?, is_null: boolean? }
+---@param color_mode string "datatype" | "uniform" | "none"
+---@param border_style string "box" or "ascii"
+---@param highlight_null boolean Whether to highlight NULL values
+---@param row_number number? Row number to display (nil = no row number column)
+---@param row_num_width number? Width of row number column
+---@return ContentBuilder self
+function ContentBuilder:result_multiline_data_row(cell_lines, color_mode, border_style, highlight_null, row_number, row_num_width)
+  local chars = ContentBuilder.get_border_chars(border_style)
+
+  -- Calculate the maximum number of lines across all cells
+  local max_lines = 1
+  for _, cell in ipairs(cell_lines) do
+    if #cell.lines > max_lines then
+      max_lines = #cell.lines
+    end
+  end
+
+  -- Render each display line
+  for line_idx = 1, max_lines do
+    local line = { text = "", highlights = {} }
+    local pos = 0
+
+    -- Opening border
+    line.text = chars.vertical
+    pos = #chars.vertical
+    table.insert(line.highlights, { col_start = 0, col_end = pos, style = "result_border" })
+
+    -- Row number column (only show number on first line)
+    if row_num_width then
+      local row_num_str
+      if line_idx == 1 and row_number then
+        row_num_str = tostring(row_number)
+      else
+        row_num_str = ""
+      end
+      local padded = " " .. string.rep(" ", row_num_width - #row_num_str) .. row_num_str .. " "
+      local col_start = pos
+      pos = pos + #padded
+
+      -- Style row number (muted)
+      if line_idx == 1 and row_number then
+        table.insert(line.highlights, { col_start = col_start, col_end = pos, style = "muted" })
+      end
+
+      line.text = line.text .. padded .. chars.vertical
+      local border_start = pos
+      pos = pos + #chars.vertical
+      table.insert(line.highlights, { col_start = border_start, col_end = pos, style = "result_border" })
+    end
+
+    -- Each cell
+    for _, cell in ipairs(cell_lines) do
+      local cell_text = cell.lines[line_idx] or ""
+      local padded = " " .. cell_text .. string.rep(" ", cell.width - #cell_text) .. " "
+      local col_start = pos
+      pos = pos + #padded
+
+      -- Determine style (only apply to lines with content)
+      local style = nil
+      if color_mode ~= "none" and cell_text ~= "" then
+        if highlight_null and cell.is_null then
+          style = "result_null"
+        elseif color_mode == "datatype" and cell.datatype then
+          style = ContentBuilder.datatype_to_style(cell.datatype)
+        elseif color_mode == "uniform" then
+          style = "value"
+        end
+      end
+
+      if style then
+        table.insert(line.highlights, { col_start = col_start, col_end = pos, style = style })
+      end
+
+      line.text = line.text .. padded .. chars.vertical
+      local border_start = pos
+      pos = pos + #chars.vertical
+      table.insert(line.highlights, { col_start = border_start, col_end = pos, style = "result_border" })
+    end
+
+    table.insert(self._lines, line)
+  end
+
+  return self
+end
+
+---Add a header row with optional row number column
+---@param columns table[] Array of { name: string, width: number }
+---@param border_style string "box" or "ascii"
+---@param row_num_width number? Width of row number column (nil = no row number column)
+---@return ContentBuilder self
+function ContentBuilder:result_header_row_with_rownum(columns, border_style, row_num_width)
+  local chars = ContentBuilder.get_border_chars(border_style)
+  local line = { text = "", highlights = {} }
+  local pos = 0
+
+  -- Opening border
+  line.text = chars.vertical
+  pos = #chars.vertical
+  table.insert(line.highlights, { col_start = 0, col_end = pos, style = "result_border" })
+
+  -- Row number column header
+  if row_num_width then
+    local header = "#"
+    local padded = " " .. string.rep(" ", row_num_width - #header) .. header .. " "
+    local col_start = pos
+    pos = pos + #padded
+    table.insert(line.highlights, { col_start = col_start, col_end = pos, style = "result_header" })
+
+    line.text = line.text .. padded .. chars.vertical
+    local border_start = pos
+    pos = pos + #chars.vertical
+    table.insert(line.highlights, { col_start = border_start, col_end = pos, style = "result_border" })
+  end
+
+  -- Data columns
+  for _, col in ipairs(columns) do
+    local name = tostring(col.name or "")
+    local padded = " " .. name .. string.rep(" ", col.width - #name) .. " "
+    local col_start = pos
+    pos = pos + #padded
+
+    table.insert(line.highlights, { col_start = col_start, col_end = pos, style = "result_header" })
+
+    line.text = line.text .. padded .. chars.vertical
+    local border_start = pos
+    pos = pos + #chars.vertical
+    table.insert(line.highlights, { col_start = border_start, col_end = pos, style = "result_border" })
+  end
+
+  table.insert(self._lines, line)
+  return self
+end
+
+---Add a top border with optional row number column
+---@param columns table[] Array of { width: number }
+---@param border_style string "box" or "ascii"
+---@param row_num_width number? Width of row number column
+---@return ContentBuilder self
+function ContentBuilder:result_top_border_with_rownum(columns, border_style, row_num_width)
+  local chars = ContentBuilder.get_border_chars(border_style)
+  local parts = { chars.top_left }
+
+  -- Row number column
+  if row_num_width then
+    table.insert(parts, string.rep(chars.horizontal, row_num_width + 2))
+    table.insert(parts, chars.t_down)
+  end
+
+  -- Data columns
+  for i, col in ipairs(columns) do
+    table.insert(parts, string.rep(chars.horizontal, col.width + 2))
+    if i < #columns then
+      table.insert(parts, chars.t_down)
+    end
+  end
+  table.insert(parts, chars.top_right)
+
+  local text = table.concat(parts, "")
+  local line = {
+    text = text,
+    highlights = {{ col_start = 0, col_end = #text, style = "result_border" }},
+  }
+  table.insert(self._lines, line)
+  return self
+end
+
+---Add a separator (header/data) with optional row number column
+---@param columns table[] Array of { width: number }
+---@param border_style string "box" or "ascii"
+---@param row_num_width number? Width of row number column
+---@return ContentBuilder self
+function ContentBuilder:result_separator_with_rownum(columns, border_style, row_num_width)
+  local chars = ContentBuilder.get_border_chars(border_style)
+  local parts = { chars.t_right }
+
+  -- Row number column
+  if row_num_width then
+    table.insert(parts, string.rep(chars.horizontal, row_num_width + 2))
+    table.insert(parts, chars.cross)
+  end
+
+  -- Data columns
+  for i, col in ipairs(columns) do
+    table.insert(parts, string.rep(chars.horizontal, col.width + 2))
+    if i < #columns then
+      table.insert(parts, chars.cross)
+    end
+  end
+  table.insert(parts, chars.t_left)
+
+  local text = table.concat(parts, "")
+  local line = {
+    text = text,
+    highlights = {{ col_start = 0, col_end = #text, style = "result_border" }},
+  }
+  table.insert(self._lines, line)
+  return self
+end
+
+---Add a bottom border with optional row number column
+---@param columns table[] Array of { width: number }
+---@param border_style string "box" or "ascii"
+---@param row_num_width number? Width of row number column
+---@return ContentBuilder self
+function ContentBuilder:result_bottom_border_with_rownum(columns, border_style, row_num_width)
+  local chars = ContentBuilder.get_border_chars(border_style)
+  local parts = { chars.bottom_left }
+
+  -- Row number column
+  if row_num_width then
+    table.insert(parts, string.rep(chars.horizontal, row_num_width + 2))
+    table.insert(parts, chars.t_up)
+  end
+
+  -- Data columns
+  for i, col in ipairs(columns) do
+    table.insert(parts, string.rep(chars.horizontal, col.width + 2))
+    if i < #columns then
+      table.insert(parts, chars.t_up)
+    end
+  end
+  table.insert(parts, chars.bottom_right)
+
+  local text = table.concat(parts, "")
+  local line = {
+    text = text,
+    highlights = {{ col_start = 0, col_end = #text, style = "result_border" }},
+  }
+  table.insert(self._lines, line)
+  return self
+end
+
+---Add a row separator with optional row number column
+---@param columns table[] Array of { width: number }
+---@param border_style string "box" or "ascii"
+---@param row_num_width number? Width of row number column
+---@return ContentBuilder self
+function ContentBuilder:result_row_separator_with_rownum(columns, border_style, row_num_width)
+  local chars = ContentBuilder.get_border_chars(border_style)
+  local parts = { chars.t_right }
+
+  -- Row number column
+  if row_num_width then
+    table.insert(parts, string.rep(chars.horizontal, row_num_width + 2))
+    table.insert(parts, chars.cross)
+  end
+
+  -- Data columns
+  for i, col in ipairs(columns) do
+    table.insert(parts, string.rep(chars.horizontal, col.width + 2))
+    if i < #columns then
+      table.insert(parts, chars.cross)
+    end
+  end
+  table.insert(parts, chars.t_left)
+
+  local text = table.concat(parts, "")
+  local line = {
+    text = text,
+    highlights = {{ col_start = 0, col_end = #text, style = "result_border" }},
+  }
+  table.insert(self._lines, line)
+  return self
+end
+
 return ContentBuilder

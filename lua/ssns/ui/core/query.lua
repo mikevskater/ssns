@@ -1310,16 +1310,24 @@ function UiQuery.format_single_result_set(result_set, columns_metadata)
 end
 
 ---Format a single result set with ContentBuilder for styled display
+---Supports multi-line cells, row numbers, and row separators (SSMS style)
 ---@param result_set table Array of row objects
 ---@param columns_metadata table? Column metadata from Node.js { colName: { index: 0, type: string, ... }, ... }
 ---@param builder ContentBuilder ContentBuilder instance to add to
 ---@param results_config table Results display configuration
 ---@return number result_width Width of the formatted result table
 function UiQuery.format_single_result_set_styled(result_set, columns_metadata, builder, results_config)
+  local ContentBuilder = require('ssns.ui.core.content_builder')
+
+  -- Extract config values
   local color_mode = results_config.color_mode or "datatype"
   local border_style = results_config.border_style or "box"
   local highlight_null = results_config.highlight_null ~= false
   local null_display = results_config.null_display or "NULL"
+  local max_col_width = results_config.max_col_width  -- nil = no limit
+  local wrap_mode = results_config.wrap_mode or "word"
+  local show_row_numbers = results_config.show_row_numbers ~= false  -- default true
+  local preserve_newlines = results_config.preserve_newlines ~= false  -- default true
 
   -- Get column names and types from metadata or first row
   -- Track both actual key (for row access) and display name (for UI)
@@ -1372,13 +1380,26 @@ function UiQuery.format_single_result_set_styled(result_set, columns_metadata, b
     return 80
   end
 
-  -- Calculate column widths (use index as key since col.key might be nil/empty)
+  -- Calculate row number column width based on row count
+  local row_num_width = nil
+  if show_row_numbers then
+    local row_count = #result_set
+    if row_count == 0 then
+      row_num_width = 1  -- Just "#" header
+    else
+      row_num_width = math.max(1, #tostring(row_count))
+    end
+  end
+
+  -- Calculate column widths
+  -- Start with header display name widths
   local widths = {}
   for i, col in ipairs(columns) do
-    -- Start with display name width for header
     widths[i] = #tostring(col.display)
   end
 
+  -- Check all values (considering wrapped lines) to find max width per column
+  -- But cap at max_col_width if set
   for _, row in ipairs(result_set) do
     for i, col in ipairs(columns) do
       local value = row[col.key]
@@ -1386,10 +1407,38 @@ function UiQuery.format_single_result_set_styled(result_set, columns_metadata, b
       if value == nil or value == vim.NIL then
         value_str = null_display
       else
-        value_str = tostring(value):gsub("\n", " ")
+        value_str = tostring(value)
       end
-      if #value_str > widths[i] then
-        widths[i] = #value_str
+
+      -- If no max_col_width, find the longest line in the value
+      if not max_col_width then
+        -- Split by newlines and find max line length
+        local lines = vim.split(value_str:gsub("\r\n", "\n"):gsub("\r", "\n"), "\n", { plain = true })
+        for _, line in ipairs(lines) do
+          if #line > widths[i] then
+            widths[i] = #line
+          end
+        end
+      else
+        -- Cap at max_col_width
+        if widths[i] < max_col_width then
+          local lines = vim.split(value_str:gsub("\r\n", "\n"):gsub("\r", "\n"), "\n", { plain = true })
+          for _, line in ipairs(lines) do
+            local line_width = math.min(#line, max_col_width)
+            if line_width > widths[i] then
+              widths[i] = line_width
+            end
+          end
+        end
+      end
+    end
+  end
+
+  -- Apply max_col_width cap to final widths
+  if max_col_width then
+    for i, _ in ipairs(columns) do
+      if widths[i] > max_col_width then
+        widths[i] = max_col_width
       end
     end
   end
@@ -1402,19 +1451,23 @@ function UiQuery.format_single_result_set_styled(result_set, columns_metadata, b
 
   -- Calculate result width
   local result_width = 1  -- Starting border
+  if row_num_width then
+    result_width = result_width + row_num_width + 3  -- row num col + padding + border
+  end
   for i, _ in ipairs(columns) do
     result_width = result_width + widths[i] + 3  -- width + 2 padding + 1 border
   end
 
-  -- Build table with borders
-  builder:result_top_border(col_info, border_style)
-  builder:result_header_row(col_info, border_style)
-  builder:result_separator(col_info, border_style)
+  -- Build table with borders (using rownum variants)
+  builder:result_top_border_with_rownum(col_info, border_style, row_num_width)
+  builder:result_header_row_with_rownum(col_info, border_style, row_num_width)
+  builder:result_separator_with_rownum(col_info, border_style, row_num_width)
 
-  -- Build data rows
+  -- Build data rows with multi-line support and row separators
   if #result_set > 0 then
-    for _, row in ipairs(result_set) do
-      local row_values = {}
+    for row_idx, row in ipairs(result_set) do
+      -- Pre-calculate wrapped lines for each cell in this row
+      local cell_lines = {}
       for i, col in ipairs(columns) do
         local value = row[col.key]
         local is_null = (value == nil or value == vim.NIL)
@@ -1422,27 +1475,46 @@ function UiQuery.format_single_result_set_styled(result_set, columns_metadata, b
         if is_null then
           value_str = null_display
         else
-          value_str = tostring(value):gsub("\n", " ")
+          value_str = tostring(value)
         end
-        table.insert(row_values, {
-          value = value_str,
+
+        -- Wrap the text if max_col_width is set
+        local lines
+        if max_col_width and widths[i] >= max_col_width then
+          lines = ContentBuilder.wrap_text(value_str, widths[i], wrap_mode, preserve_newlines)
+        elseif preserve_newlines and value_str:match("[\r\n]") then
+          -- Just split by newlines, no wrapping needed
+          lines = vim.split(value_str:gsub("\r\n", "\n"):gsub("\r", "\n"), "\n", { plain = true })
+        else
+          lines = { value_str:gsub("[\r\n]", " ") }
+        end
+
+        table.insert(cell_lines, {
+          lines = lines,
           width = widths[i],
           datatype = column_types[col.key],
           is_null = is_null,
         })
       end
-      builder:result_data_row(row_values, color_mode, border_style, highlight_null)
+
+      -- Add row separator before each row (except first)
+      if row_idx > 1 then
+        builder:result_row_separator_with_rownum(col_info, border_style, row_num_width)
+      end
+
+      -- Render the multi-line row
+      builder:result_multiline_data_row(cell_lines, color_mode, border_style, highlight_null, row_idx, row_num_width)
     end
   else
-    -- No rows - add empty indicator
-    local empty_row = {}
+    -- No rows - add empty indicator row
+    local empty_cells = {}
     for i, _ in ipairs(columns) do
-      table.insert(empty_row, { value = "", width = widths[i], datatype = nil, is_null = false })
+      table.insert(empty_cells, { lines = { "" }, width = widths[i], datatype = nil, is_null = false })
     end
-    builder:result_data_row(empty_row, "none", border_style, false)
+    builder:result_multiline_data_row(empty_cells, "none", border_style, false, nil, row_num_width)
   end
 
-  builder:result_bottom_border(col_info, border_style)
+  builder:result_bottom_border_with_rownum(col_info, border_style, row_num_width)
 
   return result_width
 end
