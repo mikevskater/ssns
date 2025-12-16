@@ -3,6 +3,7 @@
 ---@field ui UiConfig UI configuration
 ---@field cache CacheConfig Cache configuration
 ---@field query QueryConfig Query execution configuration
+---@field results ResultsConfig Result buffer display configuration
 ---@field query_history QueryHistoryConfig Query history configuration
 ---@field keymaps KeymapsConfig Keymap configuration
 ---@field table_helpers TableHelpersConfig Table helper templates per database type
@@ -65,6 +66,12 @@
 ---@field timeout number Query timeout in milliseconds (0 = no timeout)
 ---@field auto_execute_on_open boolean Auto-execute query when opening action (default: false)
 ---@field export_directory string? Directory for CSV exports (nil = system temp, "" = prompt)
+
+---@class ResultsConfig Result buffer display configuration
+---@field color_mode string Styling mode: "datatype" | "uniform" | "none" (default: "datatype")
+---@field border_style string Border character style: "box" | "ascii" (default: "box")
+---@field highlight_null boolean Show NULL values with distinct styling (default: true)
+---@field null_display string How to display NULL values (default: "NULL")
 
 ---@class QueryHistoryConfig
 ---@field enabled boolean Enable query history tracking (default: true)
@@ -542,6 +549,25 @@ local default_config = {
     export_directory = nil,  -- Directory for CSV exports (nil = system temp, "" = prompt for location)
   },
 
+  results = {
+    -- Styling mode for result values
+    -- "datatype" = color based on SQL type (strings=orange, numbers=green, dates=gold, etc.)
+    -- "uniform" = all values use the same color
+    -- "none" = no coloring (plain text)
+    color_mode = "datatype",
+
+    -- Border character style for result tables
+    -- "box" = Unicode box-drawing characters (│ ─ ┼ ┌ ┐ └ ┘ etc.)
+    -- "ascii" = ASCII characters (| - + etc.)
+    border_style = "box",
+
+    -- Show NULL values with distinct styling (gray italic)
+    highlight_null = true,
+
+    -- How to display NULL values in results
+    null_display = "NULL",
+  },
+
   query_history = {
     enabled = true,  -- Enable query history tracking
     max_buffers = 100,  -- Maximum buffer histories to keep (RedGate-style per-file tracking)
@@ -977,6 +1003,12 @@ end
 ---@return QueryConfig
 function Config.get_query()
   return Config.current.query
+end
+
+---Get results configuration
+---@return ResultsConfig
+function Config.get_results()
+  return Config.current.results
 end
 
 ---Get keymaps configuration

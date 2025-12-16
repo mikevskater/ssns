@@ -395,6 +395,20 @@ function ThemeManager.apply_colors(colors)
   vim.api.nvim_set_hl(0, "SsnsScrollbarTrack", colors.scrollbar_track or { fg = "#3A3A3A" })
   vim.api.nvim_set_hl(0, "SsnsScrollbarArrow", colors.scrollbar_arrow or { fg = "#8A8A8A" })
 
+  -- Result buffer highlights (foreground only - no background colors)
+  vim.api.nvim_set_hl(0, "SsnsResultHeader", colors.result_header or { fg = "#9CDCFE", bold = true })
+  vim.api.nvim_set_hl(0, "SsnsResultBorder", colors.result_border or { fg = "#4A4A4A" })
+  vim.api.nvim_set_hl(0, "SsnsResultNull", colors.result_null or { fg = "#6A6A6A", italic = true })
+  vim.api.nvim_set_hl(0, "SsnsResultMessage", colors.result_message or { fg = "#6A9955", italic = true })
+
+  -- Datatype-specific result value colors (foreground only)
+  vim.api.nvim_set_hl(0, "SsnsResultString", { link = "SsnsString" })
+  vim.api.nvim_set_hl(0, "SsnsResultNumber", { link = "SsnsNumber" })
+  vim.api.nvim_set_hl(0, "SsnsResultDate", colors.result_date or { fg = "#D7BA7D" })
+  vim.api.nvim_set_hl(0, "SsnsResultBool", colors.result_bool or { fg = "#569CD6" })
+  vim.api.nvim_set_hl(0, "SsnsResultBinary", colors.result_binary or { fg = "#808080" })
+  vim.api.nvim_set_hl(0, "SsnsResultGuid", colors.result_guid or { fg = "#CE9178" })
+
   -- UI-specific highlights (optional, for theme picker preview)
   if colors.ui_border then
     vim.api.nvim_set_hl(0, "SsnsUiBorder", colors.ui_border)

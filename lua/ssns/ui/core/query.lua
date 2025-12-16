@@ -771,14 +771,17 @@ function UiQuery.display_results(result, sql, execution_time_ms)
     vim.api.nvim_buf_set_option(result_buf, 'buftype', 'nofile')
   end
 
-  -- Format results from Node.js format
-  -- Pass metadata for total_time support
-  local lines = UiQuery.format_results(result.resultSets, sql, execution_time_ms, result.metadata)
+  -- Format results with styled ContentBuilder
+  local builder = UiQuery.format_results_styled(result.resultSets, sql, execution_time_ms, result.metadata)
 
-  -- Set lines in buffer
-  vim.api.nvim_buf_set_option(result_buf, 'modifiable', true)
-  vim.api.nvim_buf_set_lines(result_buf, 0, -1, false, lines)
-  vim.api.nvim_buf_set_option(result_buf, 'modifiable', false)
+  -- Create namespace for result highlights
+  local ns_id = vim.api.nvim_create_namespace("ssns_results")
+
+  -- Clear any existing highlights in this namespace
+  vim.api.nvim_buf_clear_namespace(result_buf, ns_id, 0, -1)
+
+  -- Render styled content to buffer (sets lines and applies highlights)
+  builder:render_to_buffer(result_buf, ns_id)
 
   -- Check if buffer is already visible in a window
   local result_win = nil
@@ -829,16 +832,17 @@ function UiQuery.toggle_results()
     vim.api.nvim_buf_set_name(result_buf, "SSNS Results")
     vim.api.nvim_buf_set_option(result_buf, 'buftype', 'nofile')
 
-    -- Re-format and populate with stored results
-    local lines = UiQuery.format_results(
+    -- Re-format and populate with styled results
+    local builder = UiQuery.format_results_styled(
       UiQuery.last_results.resultSets,
       UiQuery.last_results.sql,
       UiQuery.last_results.execution_time_ms,
       UiQuery.last_results.metadata
     )
-    vim.api.nvim_buf_set_option(result_buf, 'modifiable', true)
-    vim.api.nvim_buf_set_lines(result_buf, 0, -1, false, lines)
-    vim.api.nvim_buf_set_option(result_buf, 'modifiable', false)
+
+    -- Create namespace and render styled content
+    local ns_id = vim.api.nvim_create_namespace("ssns_results")
+    builder:render_to_buffer(result_buf, ns_id)
   end
 
   -- Check if buffer is visible in a window
@@ -1303,6 +1307,311 @@ function UiQuery.format_single_result_set(result_set, columns_metadata)
   end
 
   return lines, result_width
+end
+
+---Format a single result set with ContentBuilder for styled display
+---@param result_set table Array of row objects
+---@param columns_metadata table? Column metadata from Node.js { colName: { index: 0, type: string, ... }, ... }
+---@param builder ContentBuilder ContentBuilder instance to add to
+---@param results_config table Results display configuration
+---@return number result_width Width of the formatted result table
+function UiQuery.format_single_result_set_styled(result_set, columns_metadata, builder, results_config)
+  local color_mode = results_config.color_mode or "datatype"
+  local border_style = results_config.border_style or "box"
+  local highlight_null = results_config.highlight_null ~= false
+  local null_display = results_config.null_display or "NULL"
+
+  -- Get column names and types from metadata or first row
+  -- Track both actual key (for row access) and display name (for UI)
+  local columns = {}  -- Array of { key = actual_key, display = display_name }
+  local column_types = {}
+  local has_columns = false
+
+  if columns_metadata and type(columns_metadata) == "table" then
+    -- Get columns from metadata
+    for col_name, col_info in pairs(columns_metadata) do
+      -- Include all columns, even those with nil/empty names
+      local actual_key = col_name
+      local display_name = col_name
+
+      -- Check if column name is nil, vim.NIL, or empty string
+      if col_name == nil or col_name == vim.NIL or col_name == "" then
+        display_name = "(No column name)"
+        -- The actual_key remains as-is for row access
+      end
+
+      table.insert(columns, { key = actual_key, display = display_name, index = col_info.index or 0 })
+      column_types[actual_key] = col_info.type or "unknown"
+      has_columns = true
+    end
+
+    if has_columns then
+      -- Sort by index to maintain column order
+      table.sort(columns, function(a, b) return a.index < b.index end)
+    end
+  end
+
+  if not has_columns and #result_set > 0 then
+    -- Fallback: get column names from first row
+    local first_row = result_set[1]
+    for key, _ in pairs(first_row) do
+      local display_name = key
+      if key == nil or key == vim.NIL or key == "" then
+        display_name = "(No column name)"
+      end
+      table.insert(columns, { key = key, display = display_name })
+    end
+    -- Sort by display name for fallback case
+    table.sort(columns, function(a, b) return tostring(a.display) < tostring(b.display) end)
+    has_columns = true
+  end
+
+  if not has_columns then
+    -- No rows and no column metadata
+    builder:styled("(Query returned 0 rows - column information not available from driver)", "muted")
+    return 80
+  end
+
+  -- Calculate column widths (use index as key since col.key might be nil/empty)
+  local widths = {}
+  for i, col in ipairs(columns) do
+    -- Start with display name width for header
+    widths[i] = #tostring(col.display)
+  end
+
+  for _, row in ipairs(result_set) do
+    for i, col in ipairs(columns) do
+      local value = row[col.key]
+      local value_str
+      if value == nil or value == vim.NIL then
+        value_str = null_display
+      else
+        value_str = tostring(value):gsub("\n", " ")
+      end
+      if #value_str > widths[i] then
+        widths[i] = #value_str
+      end
+    end
+  end
+
+  -- Build column info for ContentBuilder (use display name for header)
+  local col_info = {}
+  for i, col in ipairs(columns) do
+    table.insert(col_info, { name = col.display, width = widths[i] })
+  end
+
+  -- Calculate result width
+  local result_width = 1  -- Starting border
+  for i, _ in ipairs(columns) do
+    result_width = result_width + widths[i] + 3  -- width + 2 padding + 1 border
+  end
+
+  -- Build table with borders
+  builder:result_top_border(col_info, border_style)
+  builder:result_header_row(col_info, border_style)
+  builder:result_separator(col_info, border_style)
+
+  -- Build data rows
+  if #result_set > 0 then
+    for _, row in ipairs(result_set) do
+      local row_values = {}
+      for i, col in ipairs(columns) do
+        local value = row[col.key]
+        local is_null = (value == nil or value == vim.NIL)
+        local value_str
+        if is_null then
+          value_str = null_display
+        else
+          value_str = tostring(value):gsub("\n", " ")
+        end
+        table.insert(row_values, {
+          value = value_str,
+          width = widths[i],
+          datatype = column_types[col.key],
+          is_null = is_null,
+        })
+      end
+      builder:result_data_row(row_values, color_mode, border_style, highlight_null)
+    end
+  else
+    -- No rows - add empty indicator
+    local empty_row = {}
+    for i, _ in ipairs(columns) do
+      table.insert(empty_row, { value = "", width = widths[i], datatype = nil, is_null = false })
+    end
+    builder:result_data_row(empty_row, "none", border_style, false)
+  end
+
+  builder:result_bottom_border(col_info, border_style)
+
+  return result_width
+end
+
+---Format all result sets with ContentBuilder for styled display
+---@param resultSets table Array of result set objects
+---@param sql string? The SQL query (unused but kept for API compatibility)
+---@param execution_time_ms number? Execution time in milliseconds
+---@param query_metadata table? Query metadata including rowsAffected and timing
+---@return ContentBuilder builder ContentBuilder with all styled content
+function UiQuery.format_results_styled(resultSets, sql, execution_time_ms, query_metadata)
+  local ContentBuilder = require('ssns.ui.core.content_builder')
+  local Config = require('ssns.config')
+  local results_config = Config.get_results()
+  local ui_config = Config.get_ui()
+
+  local builder = ContentBuilder.new()
+
+  -- Validate input
+  if type(resultSets) ~= "table" then
+    builder:line(tostring(resultSets))
+    return builder
+  end
+
+  -- Check if empty (no result sets) - show rowsAffected messages
+  if #resultSets == 0 then
+    if query_metadata and query_metadata.rowsAffected then
+      local rows_affected = query_metadata.rowsAffected
+
+      -- Show EACH affected count on its own line
+      if type(rows_affected) == "table" then
+        for _, count in ipairs(rows_affected) do
+          if type(count) == "number" then
+            if count > 0 then
+              local row_word = count == 1 and "row" or "rows"
+              builder:result_message(string.format("(%d %s affected)", count, row_word))
+            else
+              builder:styled("Commands completed successfully.", "success")
+            end
+            builder:blank()
+          end
+        end
+      elseif type(rows_affected) == "number" then
+        if rows_affected > 0 then
+          local row_word = rows_affected == 1 and "row" or "rows"
+          builder:result_message(string.format("(%d %s affected)", rows_affected, row_word))
+        else
+          builder:styled("Commands completed successfully.", "success")
+        end
+        builder:blank()
+      end
+
+      -- Add total execution time
+      local ms = query_metadata.total_execution_time_ms or execution_time_ms
+      if ms then
+        local time_str = ms < 1000 and string.format("%.0fms", ms) or string.format("%.2fs", ms / 1000)
+        builder:styled(string.format("Total execution time: %s", time_str), "muted")
+      end
+
+      return builder
+    end
+
+    -- No metadata, just show completion message
+    builder:styled("Commands completed successfully.", "success")
+    if execution_time_ms then
+      local time_str = execution_time_ms < 1000 and string.format("%.0fms", execution_time_ms) or string.format("%.2fs", execution_time_ms / 1000)
+      builder:styled(string.format("Total execution time: %s", time_str), "muted")
+    end
+    builder:blank()
+    return builder
+  end
+
+  -- Process each result set
+  local divider_format = ui_config.result_set_divider or ""
+  local show_result_set_info = ui_config.show_result_set_info or false
+  local date_str = os.date("%Y-%m-%d")
+  local time_str = os.date("%H:%M:%S")
+
+  -- Format total execution time
+  local total_time = ""
+  local total_ms = (query_metadata and query_metadata.total_execution_time_ms) or execution_time_ms
+  if total_ms then
+    total_time = total_ms < 1000 and string.format("%.0fms", total_ms) or string.format("%.2fs", total_ms / 1000)
+  end
+
+  for i, resultSet in ipairs(resultSets) do
+    local rows = resultSet.rows or {}
+    local row_count = #rows
+    local col_count = 0
+
+    -- Count columns
+    if resultSet.columns and type(resultSet.columns) == "table" then
+      for _ in pairs(resultSet.columns) do
+        col_count = col_count + 1
+      end
+    elseif row_count > 0 then
+      for _ in pairs(rows[1]) do
+        col_count = col_count + 1
+      end
+    end
+
+    -- Add divider if multiple result sets or configured
+    if #resultSets > 1 or show_result_set_info then
+      if i > 1 or show_result_set_info then
+        -- Format per-result execution time
+        local run_time = ""
+        if resultSet.chunk_execution_time_ms then
+          local ms = resultSet.chunk_execution_time_ms
+          run_time = ms < 1000 and string.format("%.0fms", ms) or string.format("%.2fs", ms / 1000)
+        end
+
+        -- Parse divider format (reuse existing parser for plain text version)
+        if divider_format ~= "" then
+          local metadata = {
+            row_count = row_count, col_count = col_count,
+            result_set_num = i, total_result_sets = #resultSets,
+            run_time = run_time, total_time = total_time,
+            chunk_number = resultSet.chunk_number, batch_number = resultSet.batch_number,
+            date = date_str, time = time_str, result_width = 80,
+          }
+          local divider_lines = UiQuery.parse_divider_format(divider_format, metadata)
+          for _, div_line in ipairs(divider_lines) do
+            builder:styled(div_line, "muted")
+          end
+        end
+      end
+    end
+
+    -- Add blank line between result sets
+    if i > 1 then
+      builder:blank()
+    end
+
+    -- Format this result set
+    UiQuery.format_single_result_set_styled(rows, resultSet.columns, builder, results_config)
+  end
+
+  -- After result sets, show rowsAffected for non-SELECT statements
+  if query_metadata and query_metadata.rowsAffected then
+    local rows_affected = query_metadata.rowsAffected
+    local num_result_sets = #resultSets
+
+    if type(rows_affected) == "table" then
+      local has_messages = false
+      for i = num_result_sets + 1, #rows_affected do
+        local count = rows_affected[i]
+        if type(count) == "number" then
+          if not has_messages then
+            builder:blank()
+            has_messages = true
+          end
+          if count > 0 then
+            local row_word = count == 1 and "row" or "rows"
+            builder:result_message(string.format("(%d %s affected)", count, row_word))
+          else
+            builder:styled("Commands completed successfully.", "success")
+          end
+        end
+      end
+    end
+  end
+
+  -- Add total execution time at the end
+  if total_ms then
+    builder:blank()
+    builder:styled(string.format("Total execution time: %s", total_time), "muted")
+  end
+
+  return builder
 end
 
 ---Save query to file

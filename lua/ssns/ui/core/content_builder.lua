@@ -62,6 +62,18 @@ local STYLE_MAPPINGS = {
   dropdown_active = "SsnsFloatInputActive", -- Active/focused dropdown
   dropdown_arrow = "SsnsUiHint",    -- Dropdown arrow indicator
 
+  -- Result buffer styles
+  result_header = "SsnsResultHeader",     -- Column headers (bold light blue)
+  result_border = "SsnsResultBorder",     -- Table borders (dark gray)
+  result_null = "SsnsResultNull",         -- NULL values (gray italic)
+  result_message = "SsnsResultMessage",   -- Status messages like "(X rows affected)"
+  result_string = "SsnsResultString",     -- String values (orange)
+  result_number = "SsnsResultNumber",     -- Numeric values (light green)
+  result_date = "SsnsResultDate",         -- Date/time values (gold)
+  result_bool = "SsnsResultBool",         -- Boolean values (blue)
+  result_binary = "SsnsResultBinary",     -- Binary values (gray)
+  result_guid = "SsnsResultGuid",         -- GUID/UUID values (orange-brown)
+
   -- Special
   normal = nil,                     -- No highlight, use default
   none = nil,                       -- Explicit no highlight
@@ -1064,6 +1076,246 @@ function ContentBuilder.print_styles()
     local group = STYLE_MAPPINGS[name] or "(none)"
     print(string.format("  %-15s -> %s", name, group))
   end
+end
+
+-- ============================================================================
+-- Result Buffer Formatting
+-- ============================================================================
+
+---SQL datatype to style mappings
+local DATATYPE_STYLES = {
+  -- String types
+  varchar = "result_string", nvarchar = "result_string",
+  char = "result_string", nchar = "result_string",
+  text = "result_string", ntext = "result_string",
+  xml = "result_string",
+
+  -- Numeric types
+  int = "result_number", bigint = "result_number",
+  smallint = "result_number", tinyint = "result_number",
+  decimal = "result_number", numeric = "result_number",
+  float = "result_number", real = "result_number",
+  money = "result_number", smallmoney = "result_number",
+
+  -- Date/time types
+  date = "result_date", time = "result_date",
+  datetime = "result_date", datetime2 = "result_date",
+  smalldatetime = "result_date", datetimeoffset = "result_date",
+  timestamp = "result_date",
+
+  -- Boolean
+  bit = "result_bool", boolean = "result_bool",
+
+  -- Binary
+  binary = "result_binary", varbinary = "result_binary",
+  image = "result_binary",
+
+  -- GUID/UUID
+  uniqueidentifier = "result_guid", uuid = "result_guid",
+}
+
+---Border character sets for result tables
+local BORDER_CHARS = {
+  box = {
+    top_left = "┌", top_right = "┐",
+    bottom_left = "└", bottom_right = "┘",
+    horizontal = "─", vertical = "│",
+    t_down = "┬", t_up = "┴",
+    t_right = "├", t_left = "┤",
+    cross = "┼",
+  },
+  ascii = {
+    top_left = "+", top_right = "+",
+    bottom_left = "+", bottom_right = "+",
+    horizontal = "-", vertical = "|",
+    t_down = "+", t_up = "+",
+    t_right = "+", t_left = "+",
+    cross = "+",
+  },
+}
+
+---Map SQL datatype to style name
+---@param datatype string SQL datatype (e.g., "varchar", "int", "datetime")
+---@return string style Style name for ContentBuilder
+function ContentBuilder.datatype_to_style(datatype)
+  if not datatype then return "value" end
+  -- Normalize: lowercase and strip size info like "varchar(50)"
+  local normalized = datatype:lower():match("^([a-z_]+)")
+  return DATATYPE_STYLES[normalized] or "value"
+end
+
+---Get border characters for a style
+---@param style string Border style: "box" or "ascii"
+---@return table chars Border character set
+function ContentBuilder.get_border_chars(style)
+  return BORDER_CHARS[style] or BORDER_CHARS.box
+end
+
+---Add a result table header row with borders
+---@param columns table[] Array of { name: string, width: number }
+---@param border_style string "box" or "ascii"
+---@return ContentBuilder self
+function ContentBuilder:result_header_row(columns, border_style)
+  local chars = ContentBuilder.get_border_chars(border_style)
+  local line = { text = "", highlights = {} }
+  local pos = 0
+
+  -- Build header line: │ col1 │ col2 │ col3 │
+  line.text = chars.vertical
+  pos = #chars.vertical
+  table.insert(line.highlights, { col_start = 0, col_end = pos, style = "result_border" })
+
+  for i, col in ipairs(columns) do
+    local padded = " " .. tostring(col.name) .. string.rep(" ", col.width - #tostring(col.name)) .. " "
+    local col_start = pos
+    pos = pos + #padded
+
+    -- Highlight column name
+    table.insert(line.highlights, { col_start = col_start, col_end = pos, style = "result_header" })
+
+    line.text = line.text .. padded .. chars.vertical
+    local border_start = pos
+    pos = pos + #chars.vertical
+    table.insert(line.highlights, { col_start = border_start, col_end = pos, style = "result_border" })
+  end
+
+  table.insert(self._lines, line)
+  return self
+end
+
+---Add a result table top border row
+---@param columns table[] Array of { width: number }
+---@param border_style string "box" or "ascii"
+---@return ContentBuilder self
+function ContentBuilder:result_top_border(columns, border_style)
+  local chars = ContentBuilder.get_border_chars(border_style)
+  local parts = { chars.top_left }
+
+  for i, col in ipairs(columns) do
+    -- Width + 2 for padding spaces
+    table.insert(parts, string.rep(chars.horizontal, col.width + 2))
+    if i < #columns then
+      table.insert(parts, chars.t_down)
+    end
+  end
+  table.insert(parts, chars.top_right)
+
+  local text = table.concat(parts, "")
+  local line = {
+    text = text,
+    highlights = {{ col_start = 0, col_end = #text, style = "result_border" }},
+  }
+  table.insert(self._lines, line)
+  return self
+end
+
+---Add a result table separator row (between header and data)
+---@param columns table[] Array of { width: number }
+---@param border_style string "box" or "ascii"
+---@return ContentBuilder self
+function ContentBuilder:result_separator(columns, border_style)
+  local chars = ContentBuilder.get_border_chars(border_style)
+  local parts = { chars.t_right }
+
+  for i, col in ipairs(columns) do
+    table.insert(parts, string.rep(chars.horizontal, col.width + 2))
+    if i < #columns then
+      table.insert(parts, chars.cross)
+    end
+  end
+  table.insert(parts, chars.t_left)
+
+  local text = table.concat(parts, "")
+  local line = {
+    text = text,
+    highlights = {{ col_start = 0, col_end = #text, style = "result_border" }},
+  }
+  table.insert(self._lines, line)
+  return self
+end
+
+---Add a result table bottom border row
+---@param columns table[] Array of { width: number }
+---@param border_style string "box" or "ascii"
+---@return ContentBuilder self
+function ContentBuilder:result_bottom_border(columns, border_style)
+  local chars = ContentBuilder.get_border_chars(border_style)
+  local parts = { chars.bottom_left }
+
+  for i, col in ipairs(columns) do
+    table.insert(parts, string.rep(chars.horizontal, col.width + 2))
+    if i < #columns then
+      table.insert(parts, chars.t_up)
+    end
+  end
+  table.insert(parts, chars.bottom_right)
+
+  local text = table.concat(parts, "")
+  local line = {
+    text = text,
+    highlights = {{ col_start = 0, col_end = #text, style = "result_border" }},
+  }
+  table.insert(self._lines, line)
+  return self
+end
+
+---Add a result data row with datatype coloring
+---@param values table[] Array of { value: any, width: number, datatype: string?, is_null: boolean? }
+---@param color_mode string "datatype" | "uniform" | "none"
+---@param border_style string "box" or "ascii"
+---@param highlight_null boolean Whether to highlight NULL values distinctly
+---@return ContentBuilder self
+function ContentBuilder:result_data_row(values, color_mode, border_style, highlight_null)
+  local chars = ContentBuilder.get_border_chars(border_style)
+  local line = { text = "", highlights = {} }
+  local pos = 0
+
+  -- Build data row: │ val1 │ val2 │ val3 │
+  line.text = chars.vertical
+  pos = #chars.vertical
+  table.insert(line.highlights, { col_start = 0, col_end = pos, style = "result_border" })
+
+  for i, val in ipairs(values) do
+    local value_str = tostring(val.value or "")
+    -- Replace newlines with space for display
+    value_str = value_str:gsub("\n", " ")
+
+    local padded = " " .. value_str .. string.rep(" ", val.width - #value_str) .. " "
+    local col_start = pos
+    pos = pos + #padded
+
+    -- Determine style based on color mode
+    local style = nil
+    if color_mode ~= "none" then
+      if highlight_null and val.is_null then
+        style = "result_null"
+      elseif color_mode == "datatype" and val.datatype then
+        style = ContentBuilder.datatype_to_style(val.datatype)
+      elseif color_mode == "uniform" then
+        style = "value"
+      end
+    end
+
+    if style then
+      table.insert(line.highlights, { col_start = col_start, col_end = pos, style = style })
+    end
+
+    line.text = line.text .. padded .. chars.vertical
+    local border_start = pos
+    pos = pos + #chars.vertical
+    table.insert(line.highlights, { col_start = border_start, col_end = pos, style = "result_border" })
+  end
+
+  table.insert(self._lines, line)
+  return self
+end
+
+---Add a result message line (e.g., "(X rows affected)")
+---@param text string Message text
+---@param style string? Style to use (default: "result_message")
+---@return ContentBuilder self
+function ContentBuilder:result_message(text, style)
+  return self:styled(text, style or "result_message")
 end
 
 return ContentBuilder
