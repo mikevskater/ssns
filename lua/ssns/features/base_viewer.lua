@@ -55,6 +55,19 @@ function M.create(opts)
     self.current_float = nil
   end
 
+  ---Set additional keymaps (call before show)
+  ---@param keymaps table<string, function> Keymap table
+  function viewer:set_keymaps(keymaps)
+    self.extra_keymaps = keymaps or {}
+  end
+
+  ---Add a single keymap (call before show)
+  ---@param key string Key to map
+  ---@param fn function Function to call
+  function viewer:add_keymap(key, fn)
+    self.extra_keymaps[key] = fn
+  end
+
   ---Show the viewer with content from a build function
   ---@param build_fn function(cb: ContentBuilder): table? Function that builds content, optionally returns JSON data
   function viewer:show(build_fn)
