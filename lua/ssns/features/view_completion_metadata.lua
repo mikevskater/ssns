@@ -4,25 +4,22 @@
 ---@module ssns.features.view_completion_metadata
 local ViewCompletionMetadata = {}
 
-local UiFloat = require('ssns.ui.core.float')
-local ContentBuilder = require('ssns.ui.core.content_builder')
-local JsonUtils = require('ssns.utils.json')
+local BaseViewer = require('ssns.features.base_viewer')
 local StatementContext = require('ssns.completion.statement_context')
-local StatementCache = require('ssns.completion.statement_cache')
 local Resolver = require('ssns.completion.metadata.resolver')
 local BufferConnection = require('ssns.utils.buffer_connection')
 
--- Store reference to current floating window for cleanup
-local current_float = nil
+-- Create viewer instance
+local viewer = BaseViewer.create({
+  title = "Completion Metadata",
+  min_width = 70,
+  max_width = 120,
+  footer = "q: close | r: refresh",
+})
 
 ---Close the current floating window
 function ViewCompletionMetadata.close_current_float()
-  if current_float then
-    if current_float.close then
-      pcall(function() current_float:close() end)
-    end
-  end
-  current_float = nil
+  viewer:close()
 end
 
 ---Get columns from a resolved table
@@ -43,45 +40,43 @@ end
 
 ---View completion metadata
 function ViewCompletionMetadata.view_metadata()
-  -- Close any existing float
-  ViewCompletionMetadata.close_current_float()
-
   local bufnr = vim.api.nvim_get_current_buf()
   local cursor = vim.api.nvim_win_get_cursor(0)
   local line_num = cursor[1]
   local col = cursor[2] + 1  -- Convert 0-indexed to 1-indexed
 
-  -- Build styled content
-  local cb = ContentBuilder.new()
-
-  cb:header("Completion Metadata Resolution")
-  cb:separator("=", 50)
-  cb:blank()
-
-  -- Cursor position info
-  cb:section("Cursor Position")
-  cb:separator("-", 30)
-  cb:spans({
-    { text = "  Buffer: ", style = "label" },
-    { text = tostring(bufnr), style = "number" },
-  })
-  cb:spans({
-    { text = "  Line: ", style = "label" },
-    { text = tostring(line_num), style = "number" },
-    { text = ", Column: " },
-    { text = tostring(col), style = "number" },
-  })
-  cb:blank()
+  -- Set refresh callback
+  viewer.on_refresh = ViewCompletionMetadata.view_metadata
 
   -- Get connection early (needed before goto)
   local connection = BufferConnection.get_connection(bufnr)
 
   -- Get statement context
   local context = StatementContext.detect_full(bufnr, line_num, col)
-  if not context then
-    cb:styled("(No context detected at cursor)", "muted")
-    goto show_window
-  end
+
+  -- Show with JSON output
+  viewer:show_with_json(function(cb)
+    BaseViewer.add_header(cb, "Completion Metadata Resolution")
+
+    -- Cursor position info
+    cb:section("Cursor Position")
+    cb:separator("-", 30)
+    cb:spans({
+      { text = "  Buffer: ", style = "label" },
+      { text = tostring(bufnr), style = "number" },
+    })
+    cb:spans({
+      { text = "  Line: ", style = "label" },
+      { text = tostring(line_num), style = "number" },
+      { text = ", Column: " },
+      { text = tostring(col), style = "number" },
+    })
+    cb:blank()
+
+    if not context then
+      cb:styled("(No context detected at cursor)", "muted")
+      return nil
+    end
 
   -- Connection info
   cb:section("Connection")
@@ -390,15 +385,7 @@ function ViewCompletionMetadata.view_metadata()
     cb:blank()
   end
 
-  -- JSON output
-  ::show_window::
-  cb:blank()
-  cb:header("Context JSON")
-  cb:separator("=", 50)
-  cb:blank()
-
-  if context then
-    -- Create cleaned version for JSON (avoid circular refs)
+    -- Return JSON data
     local json_context = {
       type = context.type,
       mode = context.mode,
@@ -437,28 +424,8 @@ function ViewCompletionMetadata.view_metadata()
       end
     end
 
-    local json_lines = JsonUtils.prettify_lines(json_context)
-    for _, line in ipairs(json_lines) do
-      cb:line(line)
-    end
-  else
-    cb:styled("(No context)", "muted")
-  end
-
-  -- Create floating window
-  current_float = UiFloat.create_styled(cb, {
-    title = "Completion Metadata",
-    border = "rounded",
-    min_width = 70,
-    max_width = 120,
-    wrap = false,
-    keymaps = {
-      ['r'] = function()
-        ViewCompletionMetadata.view_metadata()
-      end,
-    },
-    footer = "q: close | r: refresh",
-  })
+    return json_context
+  end, "Context JSON")
 end
 
 return ViewCompletionMetadata
