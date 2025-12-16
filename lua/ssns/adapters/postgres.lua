@@ -26,28 +26,7 @@ function PostgresAdapter.new(connection_config)
   return self
 end
 
----Execute a query against PostgreSQL using Node.js backend
----@param connection ConnectionData? The connection config (optional, uses adapter's config if nil)
----@param query string The SQL query to execute
----@param opts table? Options (reserved for future use)
----@return table result Node.js result object { success, resultSets, metadata, error }
-function PostgresAdapter:execute(connection, query, opts)
-  opts = opts or {}
-  local ConnectionModule = require('ssns.connection')
-
-  -- Use passed connection config if provided, otherwise use adapter's config
-  local conn_config = connection or self.connection_config
-  return ConnectionModule.execute(conn_config, query, opts)
-end
-
----Test PostgreSQL connection
----@param connection any
----@return boolean success
----@return string? error_message
-function PostgresAdapter:test_connection(connection)
-  local ConnectionModule = require('ssns.connection')
-  return ConnectionModule.test(self.connection_config)
-end
+-- execute() and test_connection() inherited from BaseAdapter
 
 -- ============================================================================
 -- Database Object Queries
@@ -359,31 +338,7 @@ GROUP BY table_schema, table_name;
 ]], schema_filter, table_name)
 end
 
----Parse table definition result and return normalized format
----@param result table Node.js result object
----@return string? definition The CREATE TABLE statement
-function PostgresAdapter:parse_table_definition(result)
-  if result and result.success and result.resultSets and #result.resultSets > 0 then
-    local rows = result.resultSets[1].rows or {}
-    if #rows > 0 then
-      return rows[1].definition
-    end
-  end
-  return nil
-end
-
----Parse object definition result (for views, procedures, functions)
----@param result table Node.js result object
----@return string? definition The object definition
-function PostgresAdapter:parse_definition(result)
-  if result and result.success and result.resultSets and #result.resultSets > 0 then
-    local rows = result.resultSets[1].rows or {}
-    if #rows > 0 then
-      return rows[1].definition
-    end
-  end
-  return nil
-end
+-- parse_table_definition() and parse_definition() inherited from BaseAdapter
 
 -- ============================================================================
 -- Bulk Loading Methods (for SSNSSearch)
@@ -625,41 +580,7 @@ end
 -- Result Parsing Methods
 -- ============================================================================
 
----Parse database list results
----@param result table Node.js result object { success, resultSets, metadata, error }
----@return table databases Array of { name } objects
-function PostgresAdapter:parse_databases(result)
-  local databases = {}
-
-  if result.success and result.resultSets and #result.resultSets > 0 then
-    local rows = result.resultSets[1].rows or {}
-    for _, row in ipairs(rows) do
-      if row.name then
-        table.insert(databases, { name = row.name })
-      end
-    end
-  end
-
-  return databases
-end
-
----Parse schema list results
----@param result table Node.js result object { success, resultSets, metadata, error }
----@return table schemas Array of { name } objects
-function PostgresAdapter:parse_schemas(result)
-  local schemas = {}
-
-  if result.success and result.resultSets and #result.resultSets > 0 then
-    local rows = result.resultSets[1].rows or {}
-    for _, row in ipairs(rows) do
-      if row.name then
-        table.insert(schemas, { name = row.name })
-      end
-    end
-  end
-
-  return schemas
-end
+-- parse_databases() and parse_schemas() inherited from BaseAdapter
 
 ---Parse table list results
 ---@param result table Node.js result object { success, resultSets, metadata, error }

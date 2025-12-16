@@ -26,28 +26,7 @@ function SqlServerAdapter.new(connection_config)
   return self
 end
 
----Execute a query against SQL Server using Node.js backend
----@param connection ConnectionData? The connection config (optional, uses adapter's config if nil)
----@param query string The SQL query to execute
----@param opts table? Options (reserved for future use)
----@return table result Node.js result object { success, resultSets, metadata, error }
-function SqlServerAdapter:execute(connection, query, opts)
-  opts = opts or {}
-  local ConnectionModule = require('ssns.connection')
-
-  -- Use passed connection config if provided, otherwise use adapter's config
-  local conn_config = connection or self.connection_config
-  return ConnectionModule.execute(conn_config, query, opts)
-end
-
----Test SQL Server connection
----@param connection any
----@return boolean success
----@return string? error_message
-function SqlServerAdapter:test_connection(connection)
-  local ConnectionModule = require('ssns.connection')
-  return ConnectionModule.test(self.connection_config)
-end
+-- execute() and test_connection() inherited from BaseAdapter
 
 -- ============================================================================
 -- Database Object Queries
@@ -672,37 +651,7 @@ SELECT @SQL AS definition;
 ]], database_name, table_filter)
 end
 
----Parse table definition result and return normalized format
----@param result table Node.js result object
----@return string? definition The CREATE TABLE statement
-function SqlServerAdapter:parse_table_definition(result)
-  if result and result.success and result.resultSets and #result.resultSets > 0 then
-    local rows = result.resultSets[1].rows or {}
-    if #rows > 0 then
-      return rows[1].definition
-    end
-  end
-  return nil
-end
-
----Parse object definition result (for views, procedures, functions)
----@param result table Node.js result object
----@return string? definition The object definition
-function SqlServerAdapter:parse_definition(result)
-  if result and result.success and result.resultSets and #result.resultSets > 0 then
-    local rows = result.resultSets[1].rows or {}
-    if #rows > 0 then
-      local definition = rows[1].definition
-      -- Remove Windows-style carriage returns (\r) to normalize line endings
-      -- OBJECT_DEFINITION() returns \r\n, but we want just \n for consistency
-      if definition then
-        definition = definition:gsub('\r', '')
-      end
-      return definition
-    end
-  end
-  return nil
-end
+-- parse_table_definition() and parse_definition() inherited from BaseAdapter
 
 ---Get query to retrieve ALL definitions for views, procedures, functions in a database
 ---Uses sys.sql_modules for efficient bulk loading (does NOT include tables - those need CREATE TABLE scripts)
@@ -855,45 +804,7 @@ end
 -- Result Parsing Methods
 -- ============================================================================
 
----Parse database list results
----@param result table Node.js result object { success, resultSets, metadata, error }
----@return table databases Array of { name } objects
-function SqlServerAdapter:parse_databases(result)
-  local databases = {}
-
-  -- Extract rows from first result set
-  if result.success and result.resultSets and #result.resultSets > 0 then
-    local rows = result.resultSets[1].rows or {}
-    for _, row in ipairs(rows) do
-      -- Extract 'name' column value
-      if row.name then
-        table.insert(databases, { name = row.name })
-      end
-    end
-  end
-
-  return databases
-end
-
----Parse schema list results
----@param result table Node.js result object { success, resultSets, metadata, error }
----@return table schemas Array of { name } objects
-function SqlServerAdapter:parse_schemas(result)
-  local schemas = {}
-
-  -- Extract rows from first result set
-  if result.success and result.resultSets and #result.resultSets > 0 then
-    local rows = result.resultSets[1].rows or {}
-    for _, row in ipairs(rows) do
-      -- Extract 'name' column value
-      if row.name then
-        table.insert(schemas, { name = row.name })
-      end
-    end
-  end
-
-  return schemas
-end
+-- parse_databases() and parse_schemas() inherited from BaseAdapter
 
 ---Parse table list results
 ---@param result table Node.js result object { success, resultSets, metadata, error }

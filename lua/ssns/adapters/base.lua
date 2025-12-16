@@ -43,19 +43,27 @@ function BaseAdapter.new(db_type, connection_config)
 end
 
 ---Execute a query against the database (synchronous)
----@param connection any The database connection object
+---Default implementation that works for all adapters
+---@param connection any The database connection config (or nil to use adapter's config)
 ---@param query string The SQL query to execute
----@return table results Array of result rows
-function BaseAdapter:execute(connection, query)
-  error("BaseAdapter:execute() must be implemented by subclass")
+---@param opts table? Optional parameters
+---@return table results Query result object
+function BaseAdapter:execute(connection, query, opts)
+  opts = opts or {}
+  local ConnectionModule = require('ssns.connection')
+  -- Use passed connection config if provided, otherwise use adapter's config
+  local conn_config = connection or self.connection_config
+  return ConnectionModule.execute(conn_config, query, opts)
 end
 
 ---Test if the connection is valid
----@param connection any The database connection object
+---Default implementation that works for all adapters
+---@param connection any The database connection object (unused, uses adapter's config)
 ---@return boolean success
 ---@return string? error_message
 function BaseAdapter:test_connection(connection)
-  error("BaseAdapter:test_connection() must be implemented by subclass")
+  local ConnectionModule = require('ssns.connection')
+  return ConnectionModule.test(self.connection_config)
 end
 
 -- ============================================================================
@@ -176,18 +184,41 @@ end
 -- Result Parsing Methods
 -- ============================================================================
 
+---Helper to parse a simple name list from query results
+---Used by parse_databases, parse_schemas, and similar methods
+---@param result table Raw query results
+---@param field_name string? Field name to extract (default: "name")
+---@return table items Array of {name: string}
+function BaseAdapter:_parse_simple_list(result, field_name)
+  field_name = field_name or "name"
+  local items = {}
+
+  if result and result.success and result.resultSets and #result.resultSets > 0 then
+    local rows = result.resultSets[1].rows or {}
+    for _, row in ipairs(rows) do
+      if row[field_name] then
+        table.insert(items, { name = row[field_name] })
+      end
+    end
+  end
+
+  return items
+end
+
 ---Parse database list results into structured data
+---Default implementation works for all adapters (expects 'name' column)
 ---@param results table Raw query results
 ---@return table databases Array of {name: string}
 function BaseAdapter:parse_databases(results)
-  error("BaseAdapter:parse_databases() must be implemented by subclass")
+  return self:_parse_simple_list(results, "name")
 end
 
 ---Parse schema list results into structured data
+---Default implementation works for all adapters (expects 'name' column)
 ---@param results table Raw query results
 ---@return table schemas Array of {name: string}
 function BaseAdapter:parse_schemas(results)
-  error("BaseAdapter:parse_schemas() must be implemented by subclass")
+  return self:_parse_simple_list(results, "name")
 end
 
 ---Parse table list results into structured data
@@ -244,6 +275,40 @@ end
 ---@return table parameters Array of {name: string, data_type: string, mode: string, default: string?}
 function BaseAdapter:parse_parameters(results)
   error("BaseAdapter:parse_parameters() must be implemented by subclass")
+end
+
+---Parse table definition result (for CREATE TABLE script)
+---Default implementation works for all adapters (expects 'definition' column)
+---@param result table Node.js result object
+---@return string? definition The table definition
+function BaseAdapter:parse_table_definition(result)
+  if result and result.success and result.resultSets and #result.resultSets > 0 then
+    local rows = result.resultSets[1].rows or {}
+    if #rows > 0 then
+      return rows[1].definition
+    end
+  end
+  return nil
+end
+
+---Parse object definition result (for views, procedures, functions)
+---Default implementation works for all adapters (expects 'definition' column)
+---Normalizes line endings (\r\n -> \n)
+---@param result table Node.js result object
+---@return string? definition The object definition
+function BaseAdapter:parse_definition(result)
+  if result and result.success and result.resultSets and #result.resultSets > 0 then
+    local rows = result.resultSets[1].rows or {}
+    if #rows > 0 then
+      local definition = rows[1].definition
+      -- Remove Windows-style carriage returns (\r) to normalize line endings
+      if definition then
+        definition = definition:gsub('\r', '')
+      end
+      return definition
+    end
+  end
+  return nil
 end
 
 -- ============================================================================
