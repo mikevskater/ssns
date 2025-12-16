@@ -77,6 +77,7 @@
 ---@field show_row_numbers boolean Show row number column (default: true)
 ---@field preserve_newlines boolean Honor newlines in values, rendering as multi-line cells (default: true)
 ---@field row_separators boolean|string Show separators between data rows: true | false | "auto" (default: "auto" = on for multi-line, off for truncate)
+---@field max_display_rows number Maximum rows to display per result set (0 = no limit, default: 0). All rows still available for export.
 
 ---@class QueryHistoryConfig
 ---@field enabled boolean Enable query history tracking (default: true)
@@ -592,6 +593,10 @@ local default_config = {
     -- true = always show, false = never show
     -- "auto" = show for multi-line modes (word/char), hide for truncate mode
     row_separators = "auto",
+
+    -- Maximum rows to display per result set in the buffer (0 = no limit)
+    -- Any value > 0 limits displayed rows. All rows are still saved for export.
+    max_display_rows = 0,
   },
 
   query_history = {

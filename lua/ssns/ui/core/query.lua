@@ -1349,6 +1349,11 @@ function UiQuery.format_single_result_set_styled(result_set, columns_metadata, b
     show_row_separators = (row_separators_config == true)
   end
 
+  -- Max rows to display (0 = no limit, >0 = limit)
+  local max_display_rows = results_config.max_display_rows or 0
+  local total_rows = #result_set
+  local display_rows_truncated = max_display_rows > 0 and total_rows > max_display_rows
+
   -- In truncate mode, preserve_newlines is ignored (always single line)
   if wrap_mode == "truncate" then
     preserve_newlines = false
@@ -1489,8 +1494,12 @@ function UiQuery.format_single_result_set_styled(result_set, columns_metadata, b
   builder:result_separator_with_rownum(col_info, border_style, row_num_width)
 
   -- Build data rows with multi-line support and row separators
-  if #result_set > 0 then
-    for row_idx, row in ipairs(result_set) do
+  -- Limit to max_display_rows if configured (0 = no limit)
+  local rows_to_display = (max_display_rows > 0) and math.min(total_rows, max_display_rows) or total_rows
+
+  if total_rows > 0 then
+    for row_idx = 1, rows_to_display do
+      local row = result_set[row_idx]
       -- Pre-calculate wrapped lines for each cell in this row
       local cell_lines = {}
       for i, col in ipairs(columns) do
@@ -1546,6 +1555,15 @@ function UiQuery.format_single_result_set_styled(result_set, columns_metadata, b
   end
 
   builder:result_bottom_border_with_rownum(col_info, border_style, row_num_width)
+
+  -- Show truncation message if rows were limited
+  if display_rows_truncated then
+    builder:blank()
+    builder:styled(
+      string.format("(Showing %d of %d rows - use export for full data)", rows_to_display, total_rows),
+      "muted"
+    )
+  end
 
   return result_width
 end
