@@ -1377,7 +1377,8 @@ function ContentBuilder.wrap_text(text, max_width, mode, preserve_newlines)
     segments = vim.split(normalized, "\n", { plain = true })
   else
     -- Collapse all newlines to spaces
-    segments = { text:gsub("\r\n", " "):gsub("\n", " "):gsub("\r", " ") }
+    -- Use parentheses to capture only the string (gsub returns string, count)
+    segments = { (text:gsub("\r\n", " "):gsub("\n", " "):gsub("\r", " ")) }
   end
 
   -- Wrap each segment

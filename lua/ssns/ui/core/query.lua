@@ -1508,7 +1508,8 @@ function UiQuery.format_single_result_set_styled(result_set, columns_metadata, b
           -- Just split by newlines, no wrapping needed
           lines = vim.split(value_str:gsub("\r\n", "\n"):gsub("\r", "\n"), "\n", { plain = true })
         else
-          lines = { value_str:gsub("[\r\n]", " ") }
+          -- Use parentheses to capture only the string (gsub returns string, count)
+          lines = { (value_str:gsub("[\r\n]", " ")) }
         end
 
         table.insert(cell_lines, {
