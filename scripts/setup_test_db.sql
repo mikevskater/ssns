@@ -1,3 +1,6 @@
+USE master;
+GO
+
 -- ============================================================================
 -- SSNS Test Database Setup Script
 -- Creates all database objects required for IntelliSense testing
