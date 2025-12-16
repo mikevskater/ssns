@@ -4,25 +4,23 @@
 ---@module ssns.features.view_fk_graph
 local ViewFKGraph = {}
 
-local UiFloat = require('ssns.ui.core.float')
-local ContentBuilder = require('ssns.ui.core.content_builder')
-local JsonUtils = require('ssns.utils.json')
+local BaseViewer = require('ssns.features.base_viewer')
 local FKGraph = require('ssns.completion.fk_graph')
 local StatementContext = require('ssns.completion.statement_context')
 local Resolver = require('ssns.completion.metadata.resolver')
 local BufferConnection = require('ssns.utils.buffer_connection')
 
--- Store reference to current floating window for cleanup
-local current_float = nil
+-- Create viewer instance
+local viewer = BaseViewer.create({
+  title = "FK Graph",
+  min_width = 60,
+  max_width = 110,
+  footer = "q: close | r: refresh",
+})
 
 ---Close the current floating window
 function ViewFKGraph.close_current_float()
-  if current_float then
-    if current_float.close then
-      pcall(function() current_float:close() end)
-    end
-  end
-  current_float = nil
+  viewer:close()
 end
 
 ---Get FK constraints from a table
@@ -59,18 +57,15 @@ local function get_fk_constraints(table_obj)
 end
 
 ---Build styled content for FK graph
+---@param cb ContentBuilder
 ---@param bufnr number
 ---@param line_num number
 ---@param col number
----@return ContentBuilder cb
 ---@return table json_data
-local function build_styled_content(bufnr, line_num, col)
-  local cb = ContentBuilder.new()
+local function build_styled_content(cb, bufnr, line_num, col)
   local json_data = { tables_in_scope = {}, fk_constraints = {} }
 
-  cb:header("Foreign Key Relationship Graph")
-  cb:separator("=", 50)
-  cb:blank()
+  BaseViewer.add_header(cb, "Foreign Key Relationship Graph")
 
   -- Get connection
   local connection = BufferConnection.get_connection(bufnr)
@@ -269,47 +264,23 @@ local function build_styled_content(bufnr, line_num, col)
     end
   end
 
-  return cb, json_data
+  return json_data
 end
 
 ---View FK graph
 function ViewFKGraph.view_graph()
-  -- Close any existing float
-  ViewFKGraph.close_current_float()
-
   local bufnr = vim.api.nvim_get_current_buf()
   local cursor = vim.api.nvim_win_get_cursor(0)
   local line_num = cursor[1]
   local col = cursor[2] + 1
 
-  -- Build styled content
-  local cb, json_data = build_styled_content(bufnr, line_num, col)
+  -- Set refresh callback
+  viewer.on_refresh = ViewFKGraph.view_graph
 
-  -- Add JSON output
-  cb:blank()
-  cb:header("FK Data JSON")
-  cb:separator("=", 50)
-  cb:blank()
-
-  local json_lines = JsonUtils.prettify_lines(json_data)
-  for _, line in ipairs(json_lines) do
-    cb:line(line)
-  end
-
-  -- Create floating window
-  current_float = UiFloat.create_styled(cb, {
-    title = "FK Graph",
-    border = "rounded",
-    min_width = 60,
-    max_width = 110,
-    wrap = false,
-    keymaps = {
-      ['r'] = function()
-        ViewFKGraph.view_graph()
-      end,
-    },
-    footer = "q: close | r: refresh",
-  })
+  -- Show with JSON output
+  viewer:show_with_json(function(cb)
+    return build_styled_content(cb, bufnr, line_num, col)
+  end, "FK Data JSON")
 end
 
 return ViewFKGraph
