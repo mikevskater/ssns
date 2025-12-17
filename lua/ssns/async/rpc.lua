@@ -28,12 +28,41 @@ function AsyncRPC.handle_callback(callback_id, result, err)
   -- Remove from pending
   pending_callbacks[callback_id] = nil
 
+  -- Normalize the result to match Connection.execute format
+  -- Node.js returns { resultSets, metadata, error } but Lua adapters expect { success, resultSets, metadata, error }
+  local normalized_result = result
+  if result and type(result) == "table" then
+    -- Check if there was a SQL error in the result
+    local error_obj = result.error
+    if type(error_obj) == "table" and error_obj.message then
+      normalized_result = {
+        success = false,
+        resultSets = {},
+        metadata = result.metadata or {},
+        error = {
+          message = tostring(error_obj.message),
+          code = error_obj.code,
+          lineNumber = error_obj.lineNumber,
+          procName = error_obj.procName
+        }
+      }
+    else
+      -- Success - add success = true to match Connection.execute format
+      normalized_result = {
+        success = true,
+        resultSets = result.resultSets or {},
+        metadata = result.metadata or {},
+        error = nil
+      }
+    end
+  end
+
   -- Call the appropriate handler
   vim.schedule(function()
     if err and callback.on_error then
       callback.on_error(err)
     elseif callback.on_complete then
-      callback.on_complete(result, err)
+      callback.on_complete(normalized_result, err)
     end
   end)
 end
