@@ -2,27 +2,10 @@
 ---@class KeywordsProvider
 local KeywordsProvider = {}
 
----Get keyword completions for the given context
----@param ctx table Context from source (has bufnr, connection, sql_context)
----@param callback function Callback(items)
-function KeywordsProvider.get_completions(ctx, callback)
-  -- Wrap in pcall for error handling
-  local success, result = pcall(function()
-    return KeywordsProvider._get_completions_impl(ctx)
-  end)
+local BaseProvider = require('ssns.completion.providers.base_provider')
 
-  -- Schedule callback with results or empty array on error
-  vim.schedule(function()
-    if success then
-      callback(result or {})
-    else
-      if vim.g.ssns_debug then
-        vim.notify("[SSNS] Keywords provider error: " .. tostring(result), vim.log.levels.ERROR)
-      end
-      callback({})
-    end
-  end)
-end
+-- Use BaseProvider.create_safe_wrapper for standardized error handling
+KeywordsProvider.get_completions = BaseProvider.create_safe_wrapper(KeywordsProvider, "Keywords", true)
 
 ---Internal implementation of keyword completion
 ---@param ctx table Context { bufnr, connection, sql_context }

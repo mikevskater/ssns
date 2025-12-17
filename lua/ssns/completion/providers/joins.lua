@@ -3,34 +3,12 @@
 ---@class JoinsProvider
 local JoinsProvider = {}
 
+local BaseProvider = require('ssns.completion.providers.base_provider')
 local FKGraph = require('ssns.completion.fk_graph')
 local TokenContext = require('ssns.completion.token_context')
 
----Get JOIN completions for the given context
----@param ctx table Context from source (has bufnr, connection info, sql_context)
----@param callback function Callback(items)
-function JoinsProvider.get_completions(ctx, callback)
-  -- Wrap in pcall for error handling
-  local success, result = pcall(function()
-    return JoinsProvider._get_completions_impl(ctx)
-  end)
-
-  -- Schedule callback with results or empty array on error
-  vim.schedule(function()
-    if success then
-      callback(result or {})
-    else
-      -- Log error in debug mode if available
-      if vim.g.ssns_debug then
-        vim.notify(
-          string.format("[SSNS Completion] Joins provider error: %s", tostring(result)),
-          vim.log.levels.ERROR
-        )
-      end
-      callback({})
-    end
-  end)
-end
+-- Use BaseProvider.create_safe_wrapper for standardized error handling
+JoinsProvider.get_completions = BaseProvider.create_safe_wrapper(JoinsProvider, "Joins", true)
 
 ---Internal implementation of JOIN completion retrieval
 ---@param ctx table Context from source

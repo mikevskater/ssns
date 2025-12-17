@@ -3,57 +3,10 @@
 ---@class SchemasProvider
 local SchemasProvider = {}
 
-local UsageTracker = require('ssns.completion.usage_tracker')
-local Config = require('ssns.config')
+local BaseProvider = require('ssns.completion.providers.base_provider')
 
----Get usage weight for an item
----@param connection table Connection context
----@param item_type string Type ("table", "column", etc.)
----@param item_path string Full path to item
----@return number weight Usage weight (0 if not found or tracking disabled)
-local function get_usage_weight(connection, item_type, item_path)
-  local config = Config.get()
-
-  -- If tracking disabled, return 0 (no weight)
-  if not config.completion or not config.completion.track_usage then
-    return 0
-  end
-
-  -- Get weight from UsageTracker
-  local success, weight = pcall(function()
-    return UsageTracker.get_weight(connection, item_type, item_path)
-  end)
-
-  if success then
-    return weight or 0
-  else
-    return 0
-  end
-end
-
----Get schema completions for the given context
----@param ctx table Context from source (has bufnr, connection, sql_context)
----@param callback function Callback(items)
-function SchemasProvider.get_completions(ctx, callback)
-  -- Wrap in pcall for error handling
-  local success, result = pcall(function()
-    return SchemasProvider._get_completions_impl(ctx)
-  end)
-
-  -- Call callback directly (no vim.schedule needed - work is synchronous)
-  -- The caller (wrapped_callback in source.lua) handles async scheduling
-  if success then
-    callback(result or {})
-  else
-    if vim.g.ssns_debug then
-      vim.notify(
-        string.format("[SSNS Completion] Schemas provider error: %s", tostring(result)),
-        vim.log.levels.ERROR
-      )
-    end
-    callback({})
-  end
-end
+-- Use BaseProvider.create_safe_wrapper for standardized error handling
+SchemasProvider.get_completions = BaseProvider.create_safe_wrapper(SchemasProvider, "Schemas", false)
 
 ---Internal implementation of schema completion
 ---@param ctx table Context { bufnr, connection, sql_context }
@@ -130,13 +83,13 @@ function SchemasProvider._get_completions_impl(ctx)
       local db_name = connection.database.name or connection.database.db_name or connection.database.database_name
       local schema_path = db_name and string.format("%s.%s", db_name, schema_name) or schema_name
 
-      -- Get weight
-      local weight = get_usage_weight(connection, "schema", schema_path)
+      -- Get weight using BaseProvider
+      local weight = BaseProvider.get_usage_weight(connection, "schema", schema_path)
 
-      -- Priority calculation
+      -- Priority calculation with special handling for system schemas
       local priority
       if weight > 0 then
-        priority = math.max(0, 4999 - weight)
+        priority = BaseProvider.calculate_priority(weight, idx)
       else
         -- Default schemas (dbo, sys) get special treatment
         if schema_name == "dbo" then
@@ -148,8 +101,8 @@ function SchemasProvider._get_completions_impl(ctx)
         end
       end
 
-      -- Update sortText with new priority
-      item.sortText = string.format("%05d_%s", priority, schema_name)
+      -- Update sortText
+      item.sortText = BaseProvider.format_sort_text(priority, schema_name)
 
       -- Store weight in data for debugging
       item.data.weight = weight
