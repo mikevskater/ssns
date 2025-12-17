@@ -393,11 +393,11 @@ function ThemeManager.apply_colors(colors)
   -- Scrollbar background: transparent to blend with window
   vim.api.nvim_set_hl(0, "SsnsScrollbar", colors.scrollbar or { bg = "NONE" })
   -- Thumb: uses title color for visibility (the draggable part)
-  vim.api.nvim_set_hl(0, "SsnsScrollbarThumb", colors.scrollbar_thumb or { link = "SsnsFloatTitle" })
+  vim.api.nvim_set_hl(0, "SsnsScrollbarThumb", colors.scrollbar_thumb or { link = "FloatTitle" })
   -- Track: dimmer, uses border color (the background track)
-  vim.api.nvim_set_hl(0, "SsnsScrollbarTrack", colors.scrollbar_track or { link = "SsnsFloatBorder" })
+  vim.api.nvim_set_hl(0, "SsnsScrollbarTrack", colors.scrollbar_track or { link = "FloatBorder" })
   -- Arrows: uses title color for consistency with thumb
-  vim.api.nvim_set_hl(0, "SsnsScrollbarArrow", colors.scrollbar_arrow or { link = "SsnsFloatTitle" })
+  vim.api.nvim_set_hl(0, "SsnsScrollbarArrow", colors.scrollbar_arrow or { link = "Comment" })
 
   -- Result buffer highlights (foreground only - no background colors)
   vim.api.nvim_set_hl(0, "SsnsResultHeader", colors.result_header or { fg = "#9CDCFE", bold = true })
