@@ -13,7 +13,85 @@ local UiQuery
 ---@type QueryResults
 local QueryResults
 
----Execute query in buffer
+---Active async tasks for query buffers (for cancellation)
+---@type table<number, string> bufnr -> task_id
+local active_query_tasks = {}
+
+---Get or create a results buffer for a query buffer
+---@param query_bufnr number Query buffer number
+---@return number results_bufnr Results buffer number
+---@return boolean is_new Whether the buffer was newly created
+local function get_or_create_results_buffer(query_bufnr)
+  -- Generate unique results buffer name based on query buffer
+  local query_buf_name = vim.api.nvim_buf_get_name(query_bufnr)
+  local short_name = query_buf_name:match("%[([^%]]+)%]") or tostring(query_bufnr)
+  local results_buf_name = string.format("SSNS Results [%s]", short_name)
+
+  -- Try to find existing results buffer
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_valid(buf) then
+      local buf_name = vim.api.nvim_buf_get_name(buf)
+      if buf_name == results_buf_name then
+        return buf, false
+      end
+    end
+  end
+
+  -- Create new buffer
+  local result_buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_name(result_buf, results_buf_name)
+  vim.api.nvim_buf_set_option(result_buf, 'buftype', 'nofile')
+  vim.api.nvim_buf_set_option(result_buf, 'swapfile', false)
+  vim.api.nvim_buf_set_option(result_buf, 'bufhidden', 'hide')
+
+  return result_buf, true
+end
+
+---Show results window for a buffer
+---@param result_buf number Results buffer number
+---@return number win_id Window ID
+local function show_results_window(result_buf)
+  -- Check if window already exists for this buffer
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(win) == result_buf then
+      return win
+    end
+  end
+
+  -- Create new split window
+  vim.cmd('botright split')
+  local result_win = vim.api.nvim_get_current_win()
+  vim.api.nvim_win_set_buf(result_win, result_buf)
+  vim.api.nvim_win_set_height(result_win, 12)
+
+  return result_win
+end
+
+---Cancel any running query for a buffer
+---@param bufnr number Query buffer number
+---@return boolean cancelled True if a query was cancelled
+function QueryExecute.cancel_query(bufnr)
+  local task_id = active_query_tasks[bufnr]
+  if task_id then
+    local Async = require('ssns.async')
+    local cancelled = Async.cancel(task_id, "Query cancelled by user")
+    if cancelled then
+      active_query_tasks[bufnr] = nil
+      vim.notify("SSNS: Query cancelled", vim.log.levels.INFO)
+    end
+    return cancelled
+  end
+  return false
+end
+
+---Check if a query is running for a buffer
+---@param bufnr number Query buffer number
+---@return boolean is_running
+function QueryExecute.is_query_running(bufnr)
+  return active_query_tasks[bufnr] ~= nil
+end
+
+---Execute query in buffer (async with spinner)
 ---@param bufnr number The buffer number
 ---@param visual boolean Whether to execute visual selection
 function QueryExecute.execute_query(bufnr, visual)
@@ -32,6 +110,11 @@ function QueryExecute.execute_query(bufnr, visual)
   if not server:is_connected() then
     vim.notify("SSNS: Server is not connected", vim.log.levels.ERROR)
     return
+  end
+
+  -- Cancel any existing query for this buffer
+  if active_query_tasks[bufnr] then
+    QueryExecute.cancel_query(bufnr)
   end
 
   -- Get SQL to execute
@@ -59,9 +142,6 @@ function QueryExecute.execute_query(bufnr, visual)
   local ns_id = vim.api.nvim_create_namespace('ssns_sql_error')
   vim.api.nvim_buf_clear_namespace(bufnr, ns_id, 0, -1)
 
-  -- Execute query
-  vim.notify("SSNS: Executing query...", vim.log.levels.INFO)
-
   -- Get buffer's current database context
   -- Priority: last_database > database.db_name > nil
   local buffer_db = buffer_info.last_database
@@ -69,92 +149,131 @@ function QueryExecute.execute_query(bufnr, visual)
     buffer_db = buffer_info.database.db_name
   end
 
-  -- Execute with buffer context (handles USE statements and GO separators)
-  local Connection = require('ssns.connection')
+  -- Get or create results buffer and show it immediately
+  local results_bufnr, _ = get_or_create_results_buffer(bufnr)
+  show_results_window(results_bufnr)
+
+  -- Make results buffer modifiable for spinner
+  vim.api.nvim_buf_set_option(results_bufnr, 'modifiable', true)
+  vim.api.nvim_buf_set_lines(results_bufnr, 0, -1, false, {""})
+
+  -- Capture start time for tracking
   local start_time = vim.loop.hrtime()
-  local result, last_database = Connection.execute_with_buffer_context(
+
+  -- Execute async with spinner in results buffer
+  local Connection = require('ssns.connection')
+  local Async = require('ssns.async')
+
+  local task_id = Connection.execute_with_buffer_context_async(
     server.connection_config,
     sql,
-    buffer_db
+    buffer_db,
+    {
+      bufnr = results_bufnr,
+      spinner_text = "Executing query...",
+      show_runtime = true,
+      line = 0,
+      timeout_ms = 300000, -- 5 minutes for long queries
+      on_complete = function(result, last_database, err)
+        -- Clear task tracking
+        active_query_tasks[bufnr] = nil
+
+        local end_time = vim.loop.hrtime()
+        local execution_time_ms = (end_time - start_time) / 1000000
+
+        -- Handle cancellation
+        if err and (err:match("cancelled") or err:match("Operation cancelled")) then
+          QueryResults.show_cancelled(results_bufnr, execution_time_ms)
+          return
+        end
+
+        -- Handle other errors
+        if err then
+          vim.notify("SSNS: Query error: " .. tostring(err), vim.log.levels.ERROR)
+          return
+        end
+
+        -- Update buffer state with last database used
+        if last_database then
+          buffer_info.last_database = last_database
+          -- Update buffer variable for completion source
+          vim.api.nvim_buf_set_var(bufnr, 'ssns_db_key', string.format("%s:%s", server.name, last_database))
+        end
+
+        -- Track query in history
+        local buffer_name = vim.api.nvim_buf_get_name(bufnr)
+        if buffer_name == "" then
+          buffer_name = string.format("Query Buffer %d", bufnr)
+        else
+          buffer_name = vim.fn.fnamemodify(buffer_name, ':t')
+        end
+
+        local current_database = buffer_info.last_database
+          or (buffer_info.database and buffer_info.database.db_name)
+          or "master"
+
+        -- Check if query succeeded
+        if not result or not result.success then
+          -- Track error in history
+          local error_obj = result and result.error or { message = "Unknown error" }
+          QueryHistory.add_entry(bufnr, buffer_name, {
+            query = sql,
+            server_name = server.name,
+            database = current_database,
+            timestamp = os.date("%Y-%m-%d %H:%M:%S"),
+            execution_time_ms = execution_time_ms,
+            status = "error",
+            error_message = error_obj.message or "Unknown error",
+            error_line = error_obj.lineNumber,
+          })
+
+          -- Display detailed error with structured information
+          QueryExecute.display_error(error_obj, sql, bufnr)
+          return
+        end
+
+        -- Track success in history
+        local row_count = 0
+        if result.resultSets and result.resultSets[1] and result.resultSets[1].rows then
+          row_count = #result.resultSets[1].rows
+        end
+
+        QueryHistory.add_entry(bufnr, buffer_name, {
+          query = sql,
+          server_name = server.name,
+          database = current_database,
+          timestamp = os.date("%Y-%m-%d %H:%M:%S"),
+          execution_time_ms = execution_time_ms,
+          status = "success",
+          row_count = row_count,
+        })
+
+        -- Track usage from query analysis
+        local Config = require('ssns.config')
+        local config = Config.get()
+
+        if config.completion and config.completion.track_usage then
+          local success_usage, err_usage = pcall(function()
+            local UsageAnalyzer = require('ssns.completion.usage_analyzer')
+            UsageAnalyzer.analyze_and_record(sql, {
+              connection_config = server.connection_config
+            })
+          end)
+
+          if not success_usage then
+            local Debug = require('ssns.debug')
+            Debug.log("[USAGE] Query analysis error: " .. tostring(err_usage))
+          end
+        end
+
+        -- Display results with execution metadata
+        QueryResults.display_results(result, sql, execution_time_ms, bufnr)
+      end,
+    }
   )
-  local end_time = vim.loop.hrtime()
-  local execution_time_ms = (end_time - start_time) / 1000000  -- Convert nanoseconds to milliseconds
 
-  -- Update buffer state with last database used
-  if last_database then
-    buffer_info.last_database = last_database
-    -- Update buffer variable for completion source
-    vim.api.nvim_buf_set_var(bufnr, 'ssns_db_key', string.format("%s:%s", server.name, last_database))
-  end
-
-  -- Track query in history
-  local buffer_name = vim.api.nvim_buf_get_name(bufnr)
-  if buffer_name == "" then
-    buffer_name = string.format("Query Buffer %d", bufnr)
-  else
-    buffer_name = vim.fn.fnamemodify(buffer_name, ':t')  -- Get filename only
-  end
-
-  local current_database = buffer_info.last_database
-    or (buffer_info.database and buffer_info.database.db_name)
-    or "master"
-
-  -- Check if query succeeded
-  if not result.success then
-    -- Track error in history
-    QueryHistory.add_entry(bufnr, buffer_name, {
-      query = sql,
-      server_name = server.name,
-      database = current_database,
-      timestamp = os.date("%Y-%m-%d %H:%M:%S"),
-      execution_time_ms = execution_time_ms,
-      status = "error",
-      error_message = result.error and result.error.message or "Unknown error",
-      error_line = result.error and result.error.lineNumber or nil,
-    })
-
-    -- Display detailed error with structured information
-    QueryExecute.display_error(result.error, sql, bufnr)
-    return
-  end
-
-  -- Track success in history
-  local row_count = 0
-  if result.resultSets and result.resultSets[1] and result.resultSets[1].rows then
-    row_count = #result.resultSets[1].rows
-  end
-
-  QueryHistory.add_entry(bufnr, buffer_name, {
-    query = sql,
-    server_name = server.name,
-    database = current_database,
-    timestamp = os.date("%Y-%m-%d %H:%M:%S"),
-    execution_time_ms = execution_time_ms,
-    status = "success",
-    row_count = row_count,
-  })
-
-  -- Track usage from query analysis
-  local Config = require('ssns.config')
-  local config = Config.get()
-
-  if config.completion and config.completion.track_usage then
-    local success, err = pcall(function()
-      local UsageAnalyzer = require('ssns.completion.usage_analyzer')
-      UsageAnalyzer.analyze_and_record(sql, {
-        connection_config = server.connection_config
-      })
-    end)
-
-    if not success then
-      -- Silent failure - log only
-      local Debug = require('ssns.debug')
-      Debug.log("[USAGE] Query analysis error: " .. tostring(err))
-    end
-  end
-
-  -- Display results with execution metadata (pass query buffer for per-buffer tracking)
-  QueryResults.display_results(result, sql, execution_time_ms, bufnr)
+  -- Track the task for potential cancellation
+  active_query_tasks[bufnr] = task_id
 end
 
 ---Execute statement under cursor
