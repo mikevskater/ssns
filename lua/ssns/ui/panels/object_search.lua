@@ -82,6 +82,9 @@ local loading_cancel_token = nil
 ---@type TextSpinner? Text spinner for loading animation
 local loading_text_spinner = nil
 
+-- Forward declaration for render_settings (used in spinner animation)
+local render_settings
+
 ---@type ObjectSearchUIState
 local ui_state = {
   selected_server = nil,
@@ -1216,6 +1219,7 @@ local function get_server_options()
 end
 
 ---Build database dropdown options from selected server
+---Note: This function only reads cached data - async loading is handled by server dropdown change handler
 ---@return DropdownOption[] options
 local function get_database_options()
   local options = {}
@@ -1226,20 +1230,13 @@ local function get_database_options()
 
   local server = ui_state.selected_server
 
-  -- Ensure server is connected
-  if not server:is_connected() then
+  -- Ensure server is connected and loaded
+  -- Don't trigger loading here - it's handled asynchronously by the server dropdown handler
+  if not server:is_connected() or not server.is_loaded then
     return options
   end
 
-  -- Load databases if needed (check return value)
-  if not server.is_loaded then
-    local ok = server:load()
-    if not ok then
-      return options
-    end
-  end
-
-  -- Get databases directly from server
+  -- Get databases directly from server (already loaded)
   local databases = server.databases or {}
 
   for _, db in ipairs(databases) do
@@ -1280,7 +1277,7 @@ end
 ---Render the settings panel with dropdowns and toggles
 ---@param state MultiPanelState
 ---@return ContentBuilder cb
-local function render_settings(state)
+render_settings = function(state)
   local cb = ContentBuilder.new()
 
   -- Row 1: Server dropdown
@@ -2117,7 +2114,7 @@ local function show_server_picker()
       local selected = state.data.servers[state.selected_idx]
       UiFloatInteractive.close(state)
 
-      -- Connect if not connected
+      -- Find or create server
       local server = selected.server
       if not server then
         server = Cache.find_server(selected.name)
@@ -2126,24 +2123,37 @@ local function show_server_picker()
         end
       end
 
-      if server and not server:is_connected() then
-        vim.notify("Connecting to " .. selected.name .. "...", vim.log.levels.INFO)
-        local ok, err = server:connect()
-        if not ok then
-          vim.notify("Failed to connect: " .. (err or "Unknown"), vim.log.levels.ERROR)
-          return
-        end
+      if not server then
+        vim.notify("Failed to create server connection", vim.log.levels.ERROR)
+        return
       end
 
-      if server then
-        ui_state.selected_server = server
-        -- Clear databases and reload
-        ui_state.selected_databases = {}
-        ui_state.all_databases_selected = false
-        ui_state.loaded_objects = {}
-        ui_state.filtered_results = {}
+      -- Set up state for new server
+      ui_state.selected_server = server
+      ui_state.selected_databases = {}
+      ui_state.all_databases_selected = false
+      ui_state.loaded_objects = {}
+      ui_state.filtered_results = {}
 
-        -- Auto-show database picker
+      -- Connect and load asynchronously if needed
+      if not server:is_connected() or not server.is_loaded then
+        vim.notify("Connecting to " .. selected.name .. "...", vim.log.levels.INFO)
+
+        server:connect_and_load_async({
+          on_complete = function(success, err)
+            if not success then
+              vim.notify("Failed to connect: " .. (err or "Unknown"), vim.log.levels.ERROR)
+              return
+            end
+
+            -- Auto-show database picker after successful connect
+            vim.schedule(function()
+              show_database_picker()
+            end)
+          end,
+        })
+      else
+        -- Already connected and loaded - show database picker directly
         vim.schedule(function()
           show_database_picker()
         end)
@@ -2163,119 +2173,134 @@ show_database_picker = function()
   local UiFloatInteractive = require('ssns.ui.base.float_interactive')
   local ContentBuilder = require('ssns.ui.core.content_builder')
 
-  -- Load databases if needed
-  if not server.databases or #server.databases == 0 then
-    server:load()
-  end
+  ---Helper to create the picker once databases are loaded
+  local function create_picker()
+    local databases = server:get_databases({ skip_load = true }) or {}
 
-  local databases = server:get_databases({ skip_load = true }) or {}
+    if #databases == 0 then
+      vim.notify("No databases found on server", vim.log.levels.WARN)
+      return
+    end
 
-  if #databases == 0 then
-    vim.notify("No databases found on server", vim.log.levels.WARN)
-    return
-  end
+    -- Initialize selection state
+    local selection = {}
+    for name, _ in pairs(ui_state.selected_databases) do
+      selection[name] = true
+    end
 
-  -- Initialize selection state
-  local selection = {}
-  for name, _ in pairs(ui_state.selected_databases) do
-    selection[name] = true
-  end
+    local all_selected = ui_state.all_databases_selected
 
-  local all_selected = ui_state.all_databases_selected
+    local picker_state = UiFloatInteractive.create({
+      title = "Select Databases",
+      footer = " <Space>=Toggle | <CR>=Confirm | a=All | <Esc>=Cancel ",
+      width = 50,
+      height = math.min(#databases + 6, 25),
+      item_count = #databases + 1,  -- +1 for SELECT ALL
+      header_lines = 3,
+      initial_data = {
+        databases = databases,
+        selection = selection,
+        all_selected = all_selected,
+      },
+      on_render = function(state)
+        local cb = ContentBuilder.new()
+        cb:blank()
+        cb:line(" Select databases to search:")
+        cb:blank()
 
-  local picker_state = UiFloatInteractive.create({
-    title = "Select Databases",
-    footer = " <Space>=Toggle | <CR>=Confirm | a=All | <Esc>=Cancel ",
-    width = 50,
-    height = math.min(#databases + 6, 25),
-    item_count = #databases + 1,  -- +1 for SELECT ALL
-    header_lines = 3,
-    initial_data = {
-      databases = databases,
-      selection = selection,
-      all_selected = all_selected,
-    },
-    on_render = function(state)
-      local cb = ContentBuilder.new()
-      cb:blank()
-      cb:line(" Select databases to search:")
-      cb:blank()
-
-      -- SELECT ALL option
-      local all_prefix = state.selected_idx == 1 and " ▶ " or "   "
-      local all_check = state.data.all_selected and "[x]" or "[ ]"
-      cb:spans({
-        { text = all_prefix, style = state.selected_idx == 1 and "emphasis" or "muted" },
-        { text = all_check .. " ", style = state.data.all_selected and "success" or "muted" },
-        { text = "SELECT ALL", style = "strong" },
-      })
-
-      -- Individual databases (no blank line to maintain cursor alignment)
-      for i, db in ipairs(state.data.databases) do
-        local prefix = state.selected_idx == i + 1 and " ▶ " or "   "
-        local check = (state.data.selection[db.db_name] or state.data.all_selected) and "[x]" or "[ ]"
-        local style = (state.data.selection[db.db_name] or state.data.all_selected) and "success" or "muted"
-
+        -- SELECT ALL option
+        local all_prefix = state.selected_idx == 1 and " ▶ " or "   "
+        local all_check = state.data.all_selected and "[x]" or "[ ]"
         cb:spans({
-          { text = prefix, style = state.selected_idx == i + 1 and "emphasis" or "muted" },
-          { text = check .. " ", style = style },
-          { text = db.db_name, style = "database" },
+          { text = all_prefix, style = state.selected_idx == 1 and "emphasis" or "muted" },
+          { text = all_check .. " ", style = state.data.all_selected and "success" or "muted" },
+          { text = "SELECT ALL", style = "strong" },
         })
-      end
 
-      return cb:build_lines(), cb:build_highlights()
-    end,
-    on_select = function(state)
-      -- Confirm selection
-      UiFloatInteractive.close(state)
+        -- Individual databases (no blank line to maintain cursor alignment)
+        for i, db in ipairs(state.data.databases) do
+          local prefix = state.selected_idx == i + 1 and " ▶ " or "   "
+          local check = (state.data.selection[db.db_name] or state.data.all_selected) and "[x]" or "[ ]"
+          local style = (state.data.selection[db.db_name] or state.data.all_selected) and "success" or "muted"
 
-      ui_state.all_databases_selected = state.data.all_selected
-      ui_state.selected_databases = {}
-
-      if state.data.all_selected then
-        for _, db in ipairs(state.data.databases) do
-          ui_state.selected_databases[db.db_name] = db
+          cb:spans({
+            { text = prefix, style = state.selected_idx == i + 1 and "emphasis" or "muted" },
+            { text = check .. " ", style = style },
+            { text = db.db_name, style = "database" },
+          })
         end
-      else
-        for _, db in ipairs(state.data.databases) do
-          if state.data.selection[db.db_name] then
+
+        return cb:build_lines(), cb:build_highlights()
+      end,
+      on_select = function(state)
+        -- Confirm selection
+        UiFloatInteractive.close(state)
+
+        ui_state.all_databases_selected = state.data.all_selected
+        ui_state.selected_databases = {}
+
+        if state.data.all_selected then
+          for _, db in ipairs(state.data.databases) do
             ui_state.selected_databases[db.db_name] = db
           end
+        else
+          for _, db in ipairs(state.data.databases) do
+            if state.data.selection[db.db_name] then
+              ui_state.selected_databases[db.db_name] = db
+            end
+          end
         end
-      end
 
-      -- Start loading objects
-      vim.schedule(function()
-        load_objects_for_databases()
-      end)
-    end,
-    custom_keymaps = {
-      ["<Space>"] = function(state)
-        if state.selected_idx == 1 then
-          -- Toggle all
+        -- Start loading objects
+        vim.schedule(function()
+          load_objects_for_databases()
+        end)
+      end,
+      custom_keymaps = {
+        ["<Space>"] = function(state)
+          if state.selected_idx == 1 then
+            -- Toggle all
+            state.data.all_selected = not state.data.all_selected
+            if state.data.all_selected then
+              state.data.selection = {}
+            end
+          else
+            -- Toggle individual
+            local db = state.data.databases[state.selected_idx - 1]
+            if db then
+              state.data.selection[db.db_name] = not state.data.selection[db.db_name]
+              state.data.all_selected = false
+            end
+          end
+          UiFloatInteractive.render(state)
+        end,
+        ["a"] = function(state)
           state.data.all_selected = not state.data.all_selected
           if state.data.all_selected then
             state.data.selection = {}
           end
-        else
-          -- Toggle individual
-          local db = state.data.databases[state.selected_idx - 1]
-          if db then
-            state.data.selection[db.db_name] = not state.data.selection[db.db_name]
-            state.data.all_selected = false
-          end
+          UiFloatInteractive.render(state)
+        end,
+      },
+    })
+  end
+
+  -- Load databases asynchronously if needed, then show picker
+  if not server.databases or #server.databases == 0 then
+    vim.notify("Loading databases...", vim.log.levels.INFO)
+    server:load_async({
+      on_complete = function(success, err)
+        if not success then
+          vim.notify("Failed to load databases: " .. (err or "Unknown"), vim.log.levels.ERROR)
+          return
         end
-        UiFloatInteractive.render(state)
+        vim.schedule(create_picker)
       end,
-      ["a"] = function(state)
-        state.data.all_selected = not state.data.all_selected
-        if state.data.all_selected then
-          state.data.selection = {}
-        end
-        UiFloatInteractive.render(state)
-      end,
-    },
-  })
+    })
+  else
+    -- Already loaded - show picker directly
+    create_picker()
+  end
 end
 
 ---Refresh objects (reload from database)
@@ -2627,37 +2652,26 @@ function UiObjectSearch.show(options)
           multi_panel:render_panel("settings")
           multi_panel:render_panel("results")
 
-          -- Use vim.schedule to allow UI to update before blocking operations
-          vim.schedule(function()
-            local connect_ok = true
-            local load_ok = true
+          -- Use async connect and load
+          server:connect_and_load_async({
+            on_complete = function(success, err)
+              -- Stop loading state
+              ui_state.server_loading = false
+              stop_spinner_animation()
 
-            -- Connect if needed
-            if not server:is_connected() then
-              connect_ok, _ = server:connect()
-              if not connect_ok then
-                vim.notify("Failed to connect to " .. value, vim.log.levels.ERROR)
+              if not success then
+                vim.notify("Failed to connect to " .. value .. ": " .. (err or "Unknown error"), vim.log.levels.ERROR)
               end
-            end
 
-            -- Load databases if connected
-            if connect_ok and not server.is_loaded then
-              load_ok = server:load()
-              if not load_ok then
-                vim.notify("Failed to load databases from " .. value, vim.log.levels.WARN)
+              -- Refresh settings panel to show database options
+              if multi_panel and multi_panel:is_valid() then
+                local final_cb = render_settings(multi_panel)
+                multi_panel:update_inputs("settings", final_cb)
+                multi_panel:render_panel("settings")
+                multi_panel:render_panel("results")
               end
-            end
-
-            -- Stop loading state
-            ui_state.server_loading = false
-            stop_spinner_animation()
-
-            -- Refresh settings panel to show database options
-            local final_cb = render_settings(multi_panel)
-            multi_panel:update_inputs("settings", final_cb)
-            multi_panel:render_panel("settings")
-            multi_panel:render_panel("results")
-          end)
+            end,
+          })
         end
       end
     end,

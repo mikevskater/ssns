@@ -397,6 +397,94 @@ function ServerClass:to_string()
   )
 end
 
+-- ============================================================================
+-- Async Methods
+-- ============================================================================
+
+---@class ServerAsyncOpts
+---@field timeout_ms number? Timeout in milliseconds
+---@field cancel_token CancellationToken? Cancellation token
+---@field on_complete fun(success: boolean, error: string?)? Completion callback
+
+---Connect to the database server asynchronously
+---@param opts ServerAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function ServerClass:connect_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    local success, err = self:connect()
+    if not success then
+      return nil, err
+    end
+    return success
+  end, {
+    name = opts.name or string.format("Connecting to %s", self.name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_complete = opts.on_complete,
+  })
+end
+
+---Load databases from the server asynchronously
+---@param opts ServerAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function ServerClass:load_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    local success = self:load()
+    return success
+  end, {
+    name = opts.name or string.format("Loading databases from %s", self.name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_complete = opts.on_complete,
+  })
+end
+
+---Connect and load databases asynchronously (combined operation)
+---@param opts ServerAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function ServerClass:connect_and_load_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Connecting...")
+
+    -- Connect first
+    if not self:is_connected() then
+      local success, err = self:connect()
+      if not success then
+        return nil, err
+      end
+    end
+
+    ctx.throw_if_cancelled()
+    ctx.report_progress(50, "Loading databases...")
+
+    -- Then load
+    local load_success = self:load()
+    if not load_success then
+      return nil, "Failed to load databases"
+    end
+
+    ctx.report_progress(100, "Complete")
+    return true
+  end, {
+    name = opts.name or string.format("Connecting to %s", self.name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_complete = opts.on_complete,
+  })
+end
+
 -- Export ConnectionState with the class
 ServerClass.ConnectionState = ConnectionState
 
