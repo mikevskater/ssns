@@ -8,6 +8,8 @@ local Cache = require('ssns.cache')
 local KeymapManager = require('ssns.keymap_manager')
 local UiQuery = require('ssns.ui.core.query')
 local ContentBuilder = require('ssns.ui.core.content_builder')
+local Cancellation = require('ssns.async.cancellation')
+local Spinner = require('ssns.async.spinner')
 
 -- ============================================================================
 -- Type Definitions
@@ -42,9 +44,10 @@ local ContentBuilder = require('ssns.ui.core.content_builder')
 ---@field selected_databases table<string, DbClass> Map of db_name -> DbClass
 ---@field all_databases_selected boolean Whether SELECT ALL is active
 ---@field loaded_objects SearchableObject[] Flattened list of searchable objects
----@field loading_status string "idle"|"loading"|"loaded"|"error"
+---@field loading_status string "idle"|"loading"|"loaded"|"error"|"cancelled"
 ---@field loading_progress number 0-100 progress percentage
 ---@field loading_message string Current loading status message
+---@field loading_detail string? Current operation detail (e.g., "tables", "views")
 ---@field search_term string Committed search term
 ---@field search_term_before_edit string For ESC revert
 ---@field search_editing boolean Currently editing search
@@ -72,7 +75,45 @@ local search_augroup = nil
 ---@type string Last focused right panel ("definition" or "metadata")
 local last_right_panel = "definition"
 
+---@type CancellationToken? Active cancellation token for object loading
+local loading_cancel_token = nil
 
+---@type TextSpinner? Text spinner for loading animation
+local loading_text_spinner = nil
+
+---Start the text spinner animation
+local function start_spinner_animation()
+  if loading_text_spinner and loading_text_spinner:is_running() then
+    return  -- Already running
+  end
+
+  loading_text_spinner = Spinner.create_text_spinner({
+    on_tick = function()
+      -- Stop if no longer loading
+      if ui_state.loading_status ~= "loading" then
+        if loading_text_spinner then
+          loading_text_spinner:stop()
+        end
+        return
+      end
+
+      -- Re-render results panel to update spinner and runtime
+      if multi_panel then
+        multi_panel:render_panel("results")
+      end
+    end,
+  })
+
+  loading_text_spinner:start(100)  -- 100ms interval
+end
+
+---Stop the text spinner animation
+local function stop_spinner_animation()
+  if loading_text_spinner then
+    loading_text_spinner:stop()
+    loading_text_spinner = nil
+  end
+end
 
 ---@type ObjectSearchUIState
 local ui_state = {
@@ -83,6 +124,7 @@ local ui_state = {
   loading_status = "idle",
   loading_progress = 0,
   loading_message = "",
+  loading_detail = nil,
   search_term = "",
   search_term_before_edit = "",
   search_editing = false,
@@ -410,11 +452,23 @@ end
 
 ---Load all objects for selected databases
 ---@param callback function? Callback when complete
+---Cancel any active object loading operation
+local function cancel_object_loading()
+  if loading_cancel_token then
+    loading_cancel_token:cancel("User cancelled")
+  end
+end
+
+---Load all objects for selected databases with async support and cancellation
+---@param callback function? Callback when complete
 local function load_objects_for_databases(callback)
   if not ui_state.selected_server then
     vim.notify("No server selected", vim.log.levels.WARN)
     return
   end
+
+  -- Cancel any existing loading operation
+  cancel_object_loading()
 
   local server = ui_state.selected_server
   local databases = {}
@@ -429,85 +483,155 @@ local function load_objects_for_databases(callback)
     return
   end
 
+  -- Initialize loading state
+  loading_cancel_token = Cancellation.create_token()
   ui_state.loading_status = "loading"
   ui_state.loading_progress = 0
   ui_state.loading_message = "Loading objects..."
+  ui_state.loading_detail = nil
   ui_state.loaded_objects = {}
+
+  -- Start spinner animation
+  start_spinner_animation()
 
   if multi_panel then
     multi_panel:render_panel("results")
+    multi_panel:render_panel("filters")
   end
 
   -- Process databases in sequence using vim.schedule to avoid blocking
   local db_idx = 1
   local total_dbs = #databases
+  local cancel_token = loading_cancel_token  -- Capture for closure
+
+  ---Finalize loading (success or cancel)
+  local function finalize_loading(status, message)
+    stop_spinner_animation()
+    loading_cancel_token = nil
+
+    ui_state.loading_status = status
+    ui_state.loading_detail = nil
+
+    if status == "loaded" then
+      ui_state.loading_progress = 100
+      ui_state.loading_message = message or string.format("Loaded %d objects", #ui_state.loaded_objects)
+
+      -- Apply search filter
+      UiObjectSearch._apply_search(ui_state.search_term)
+    elseif status == "cancelled" then
+      ui_state.loading_message = "Loading cancelled"
+
+      -- Apply search to partial results if any
+      if #ui_state.loaded_objects > 0 then
+        UiObjectSearch._apply_search(ui_state.search_term)
+      end
+    end
+
+    if multi_panel then
+      multi_panel:render_all()
+    end
+
+    if callback then callback(status) end
+  end
+
+  ---Update loading detail and re-render
+  local function update_detail(detail)
+    ui_state.loading_detail = detail
+    -- Note: Results panel is re-rendered by spinner timer
+  end
 
   local function process_next_database()
+    -- Check cancellation
+    if cancel_token.is_cancelled then
+      finalize_loading("cancelled")
+      return
+    end
+
     if db_idx > total_dbs then
-      -- Done loading
-      ui_state.loading_status = "loaded"
-      ui_state.loading_progress = 100
-      ui_state.loading_message = string.format("Loaded %d objects", #ui_state.loaded_objects)
-
-      -- Apply initial filter (always call _apply_search to apply system filter)
-      UiObjectSearch._apply_search(ui_state.search_term)
-
-      if multi_panel then
-        multi_panel:render_all()
-      end
-
-      if callback then callback() end
+      -- Done loading all databases
+      finalize_loading("loaded")
       return
     end
 
     local db = databases[db_idx]
-    ui_state.loading_message = string.format("Loading %s (%d/%d)...", db.db_name, db_idx, total_dbs)
+    ui_state.loading_message = string.format("Loading %s (%d/%d)", db.db_name, db_idx, total_dbs)
     ui_state.loading_progress = math.floor((db_idx - 1) / total_dbs * 100)
-
-    if multi_panel then
-      multi_panel:render_panel("results")
-    end
 
     -- Bulk load objects for this database
     vim.schedule(function()
+      -- Check cancellation again before starting expensive operations
+      if cancel_token.is_cancelled then
+        finalize_loading("cancelled")
+        return
+      end
+
       local definitions_map = {}
       local metadata_map = {}
 
-      -- Load all object types
+      -- Load all object types with granular progress updates
       local ok, err = pcall(function()
-        -- First, ensure schemas are loaded (required for schema-based DBs like SQL Server)
-        -- This populates db.schemas so bulk load can distribute objects to them
+        -- First, ensure schemas are loaded
+        update_detail("Loading schemas...")
+        if cancel_token.is_cancelled then return end
         db:load()
 
-        -- Now bulk load all object types (these distribute to existing schemas)
+        -- Bulk load tables
+        update_detail("Loading tables...")
+        if cancel_token.is_cancelled then return end
         db:load_all_tables_bulk()
+
+        -- Bulk load views
+        update_detail("Loading views...")
+        if cancel_token.is_cancelled then return end
         db:load_all_views_bulk()
+
+        -- Bulk load procedures
+        update_detail("Loading procedures...")
+        if cancel_token.is_cancelled then return end
         db:load_all_procedures_bulk()
+
+        -- Bulk load functions
+        update_detail("Loading functions...")
+        if cancel_token.is_cancelled then return end
         db:load_all_functions_bulk()
+
+        -- Bulk load synonyms if supported
         if db.load_all_synonyms_bulk then
+          update_detail("Loading synonyms...")
+          if cancel_token.is_cancelled then return end
           db:load_all_synonyms_bulk()
         end
 
-        -- Bulk load definitions for all object types (tables, views, procedures, functions)
+        -- Bulk load definitions
         if db.load_all_definitions_bulk then
+          update_detail("Loading definitions...")
+          if cancel_token.is_cancelled then return end
           definitions_map = db:load_all_definitions_bulk()
         end
 
-        -- Bulk load metadata (columns for tables/views, parameters for procedures/functions)
+        -- Bulk load metadata (columns/parameters)
         if db.load_all_metadata_bulk then
+          update_detail("Loading metadata...")
+          if cancel_token.is_cancelled then return end
           metadata_map = db:load_all_metadata_bulk()
         end
       end)
 
+      -- Check cancellation after bulk load
+      if cancel_token.is_cancelled then
+        finalize_loading("cancelled")
+        return
+      end
+
       if not ok then
-        vim.notify(string.format("Error loading %s: %s", db.db_name, err), vim.log.levels.WARN)
+        vim.notify(string.format("Error loading %s: %s", db.db_name, tostring(err)), vim.log.levels.WARN)
       end
 
       -- Flatten objects from this database
+      update_detail("Processing objects...")
       local db_objects = flatten_database_objects(db, server)
       for _, obj in ipairs(db_objects) do
         -- Apply bulk-loaded definition and metadata if available
-        -- Skip schemas as they don't have definitions or metadata
         if obj.object_type ~= "schema" then
           local key = string.format("%s.%s.%s", obj.schema_name or "dbo", obj.object_type, obj.name)
 
@@ -1127,9 +1251,65 @@ end
 local function render_results(state)
   local cb = ContentBuilder.new()
 
-  -- Don't show results while loading
-  if ui_state.loading_status == "loading" then
+  -- Show loading status with spinner and progress
+  if ui_state.loading_status == "loading" and loading_text_spinner then
+    cb:blank()
+
+    -- Animated spinner with runtime (using TextSpinner with user's configured style)
+    local spinner_char = loading_text_spinner:get_frame()
+    local runtime = loading_text_spinner:get_runtime()
+
+    cb:spans({
+      { text = "   ", style = "normal" },
+      { text = spinner_char, style = "success" },
+      { text = " ", style = "normal" },
+      { text = ui_state.loading_message, style = "emphasis" },
+    })
+
+    cb:spans({
+      { text = "   Runtime: ", style = "muted" },
+      { text = runtime, style = "value" },
+    })
+
+    if ui_state.loading_detail then
+      cb:spans({
+        { text = "   ", style = "normal" },
+        { text = ui_state.loading_detail, style = "comment" },
+      })
+    end
+
+    cb:blank()
+
+    -- Show objects loaded so far
+    if #ui_state.loaded_objects > 0 then
+      cb:spans({
+        { text = "   Objects loaded: ", style = "muted" },
+        { text = tostring(#ui_state.loaded_objects), style = "value" },
+      })
+    end
+
+    cb:blank()
+    cb:styled("   Press <C-c> to cancel", "comment")
+
     return cb:build_lines(), cb:build_highlights()
+  end
+
+  -- Show cancelled status
+  if ui_state.loading_status == "cancelled" then
+    cb:blank()
+    cb:spans({
+      { text = "   ", style = "normal" },
+      { text = "✗", style = "error" },
+      { text = " Loading cancelled", style = "warning" },
+    })
+    if #ui_state.loaded_objects > 0 then
+      cb:spans({
+        { text = "   Partial results: ", style = "muted" },
+        { text = tostring(#ui_state.loaded_objects), style = "value" },
+        { text = " objects loaded", style = "muted" },
+      })
+    end
+    cb:blank()
   end
 
   -- Results list
@@ -2014,6 +2194,15 @@ end
 
 ---Close the object search window
 function UiObjectSearch.close()
+  -- Cancel any active loading operation
+  cancel_object_loading()
+
+  -- Stop spinner animation
+  stop_spinner_animation()
+
+  -- Clear loading state
+  loading_cancel_token = nil
+
   if search_augroup then
     pcall(vim.api.nvim_del_augroup_by_id, search_augroup)
     search_augroup = nil
@@ -2502,6 +2691,14 @@ function UiObjectSearch.show(options)
     return {
       [common.close or "q"] = function() UiObjectSearch.close() end,
       [common.cancel or "<Esc>"] = function() UiObjectSearch.close() end,
+      ["<C-c>"] = function()
+        -- Cancel object loading if in progress
+        if ui_state.loading_status == "loading" then
+          cancel_object_loading()
+        else
+          UiObjectSearch.close()
+        end
+      end,
       ["<Tab>"] = navigate_tab,
       ["<S-Tab>"] = navigate_shift_tab,
       ["/"] = activate_search,
