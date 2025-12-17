@@ -393,4 +393,77 @@ function FunctionClass:get_metadata_info()
   }
 end
 
+-- ============================================================================
+-- Async Methods
+-- ============================================================================
+
+---@class FunctionLoadAsyncOpts : ExecutorOpts
+---@field on_complete fun(result: any, error: string?)? Completion callback
+
+---Load parameters for this function asynchronously
+---@param opts FunctionLoadAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function FunctionClass:load_parameters_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Loading parameters...")
+    local parameters = self:load_parameters()
+    ctx.report_progress(100, "Parameters loaded")
+    return parameters
+  end, {
+    name = opts.name or string.format("Loading parameters for %s", self.function_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
+---Load columns for this table-valued function asynchronously
+---@param opts FunctionLoadAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function FunctionClass:load_columns_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Loading columns...")
+    local columns = self:load_columns()
+    ctx.report_progress(100, "Columns loaded")
+    return columns
+  end, {
+    name = opts.name or string.format("Loading columns for %s", self.function_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
+---Load function definition asynchronously
+---@param opts FunctionLoadAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function FunctionClass:load_definition_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Loading definition...")
+    local definition = self:load_definition()
+    ctx.report_progress(100, "Definition loaded")
+    return definition
+  end, {
+    name = opts.name or string.format("Loading definition for %s", self.function_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
 return FunctionClass
