@@ -631,4 +631,99 @@ function TableClass:get_metadata_info()
   }
 end
 
+-- ============================================================================
+-- Async Methods
+-- ============================================================================
+
+---@class TableLoadAsyncOpts : ExecutorOpts
+---@field on_complete fun(result: any, error: string?)? Completion callback
+
+---Load columns for this table asynchronously
+---@param opts TableLoadAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function TableClass:load_columns_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Loading columns...")
+    local columns = self:load_columns()
+    ctx.report_progress(100, "Columns loaded")
+    return columns
+  end, {
+    name = opts.name or string.format("Loading columns for %s", self.table_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
+---Load indexes for this table asynchronously
+---@param opts TableLoadAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function TableClass:load_indexes_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Loading indexes...")
+    local indexes = self:load_indexes()
+    ctx.report_progress(100, "Indexes loaded")
+    return indexes
+  end, {
+    name = opts.name or string.format("Loading indexes for %s", self.table_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
+---Load constraints for this table asynchronously
+---@param opts TableLoadAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function TableClass:load_constraints_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Loading constraints...")
+    local constraints = self:load_constraints()
+    ctx.report_progress(100, "Constraints loaded")
+    return constraints
+  end, {
+    name = opts.name or string.format("Loading constraints for %s", self.table_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
+---Load table definition asynchronously
+---@param opts TableLoadAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function TableClass:load_definition_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Loading definition...")
+    local definition = self:load_definition()
+    ctx.report_progress(100, "Definition loaded")
+    return definition
+  end, {
+    name = opts.name or string.format("Loading definition for %s", self.table_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
 return TableClass
