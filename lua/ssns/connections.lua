@@ -581,6 +581,26 @@ function Connections.find_async(name, callback)
   end)
 end
 
+---Get all favorite connections asynchronously
+---@param callback fun(favorites: ConnectionData[], error: string?)
+function Connections.get_favorites_async(callback)
+  Connections.load_async(function(connections, err)
+    if err then
+      callback({}, err)
+      return
+    end
+
+    local favorites = {}
+    for _, conn in ipairs(connections) do
+      if conn.favorite or conn.auto_connect then
+        table.insert(favorites, conn)
+      end
+    end
+
+    callback(favorites, nil)
+  end)
+end
+
 ---Toggle favorite status for a connection asynchronously
 ---@param name string Connection name
 ---@param callback fun(success: boolean, new_state: boolean?, error: string?)
