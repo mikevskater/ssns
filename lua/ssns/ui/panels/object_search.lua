@@ -48,6 +48,7 @@ local Spinner = require('ssns.async.spinner')
 ---@field loading_progress number 0-100 progress percentage
 ---@field loading_message string Current loading status message
 ---@field loading_detail string? Current operation detail (e.g., "tables", "views")
+---@field server_loading boolean Whether server is connecting/loading databases
 ---@field search_term string Committed search term
 ---@field search_term_before_edit string For ESC revert
 ---@field search_editing boolean Currently editing search
@@ -89,17 +90,28 @@ local function start_spinner_animation()
 
   loading_text_spinner = Spinner.create_text_spinner({
     on_tick = function()
-      -- Stop if no longer loading
-      if ui_state.loading_status ~= "loading" then
+      -- Stop if no loading activity
+      local is_loading_objects = ui_state.loading_status == "loading"
+      local is_loading_server = ui_state.server_loading
+
+      if not is_loading_objects and not is_loading_server then
         if loading_text_spinner then
           loading_text_spinner:stop()
         end
         return
       end
 
-      -- Re-render results panel to update spinner and runtime
+      -- Re-render relevant panels to update spinner
       if multi_panel then
-        multi_panel:render_panel("results")
+        if is_loading_objects then
+          multi_panel:render_panel("results")
+        end
+        if is_loading_server then
+          -- Re-render settings panel to animate database dropdown spinner
+          local new_cb = render_settings(multi_panel)
+          multi_panel:update_inputs("settings", new_cb)
+          multi_panel:render_panel("settings")
+        end
       end
     end,
   })
@@ -125,6 +137,7 @@ local ui_state = {
   loading_progress = 0,
   loading_message = "",
   loading_detail = nil,
+  server_loading = false,
   search_term = "",
   search_term_before_edit = "",
   search_editing = false,
@@ -206,6 +219,8 @@ local function reset_state()
     loading_status = "idle",
     loading_progress = 0,
     loading_message = "",
+    loading_detail = nil,
+    server_loading = false,
     search_term = "",
     search_term_before_edit = "",
     search_editing = false,
@@ -557,74 +572,16 @@ local function load_objects_for_databases(callback)
     ui_state.loading_message = string.format("Loading %s (%d/%d)", db.db_name, db_idx, total_dbs)
     ui_state.loading_progress = math.floor((db_idx - 1) / total_dbs * 100)
 
-    -- Bulk load objects for this database
-    vim.schedule(function()
-      -- Check cancellation again before starting expensive operations
+    -- Async operation chain state
+    local definitions_map = {}
+    local metadata_map = {}
+
+    ---Finalize this database and move to next
+    local function finalize_db_and_continue()
+      -- Check cancellation
       if cancel_token.is_cancelled then
         finalize_loading("cancelled")
         return
-      end
-
-      local definitions_map = {}
-      local metadata_map = {}
-
-      -- Load all object types with granular progress updates
-      local ok, err = pcall(function()
-        -- First, ensure schemas are loaded
-        update_detail("Loading schemas...")
-        if cancel_token.is_cancelled then return end
-        db:load()
-
-        -- Bulk load tables
-        update_detail("Loading tables...")
-        if cancel_token.is_cancelled then return end
-        db:load_all_tables_bulk()
-
-        -- Bulk load views
-        update_detail("Loading views...")
-        if cancel_token.is_cancelled then return end
-        db:load_all_views_bulk()
-
-        -- Bulk load procedures
-        update_detail("Loading procedures...")
-        if cancel_token.is_cancelled then return end
-        db:load_all_procedures_bulk()
-
-        -- Bulk load functions
-        update_detail("Loading functions...")
-        if cancel_token.is_cancelled then return end
-        db:load_all_functions_bulk()
-
-        -- Bulk load synonyms if supported
-        if db.load_all_synonyms_bulk then
-          update_detail("Loading synonyms...")
-          if cancel_token.is_cancelled then return end
-          db:load_all_synonyms_bulk()
-        end
-
-        -- Bulk load definitions
-        if db.load_all_definitions_bulk then
-          update_detail("Loading definitions...")
-          if cancel_token.is_cancelled then return end
-          definitions_map = db:load_all_definitions_bulk()
-        end
-
-        -- Bulk load metadata (columns/parameters)
-        if db.load_all_metadata_bulk then
-          update_detail("Loading metadata...")
-          if cancel_token.is_cancelled then return end
-          metadata_map = db:load_all_metadata_bulk()
-        end
-      end)
-
-      -- Check cancellation after bulk load
-      if cancel_token.is_cancelled then
-        finalize_loading("cancelled")
-        return
-      end
-
-      if not ok then
-        vim.notify(string.format("Error loading %s: %s", db.db_name, tostring(err)), vim.log.levels.WARN)
       end
 
       -- Flatten objects from this database
@@ -651,10 +608,144 @@ local function load_objects_for_databases(callback)
         table.insert(ui_state.loaded_objects, obj)
       end
 
+      -- Apply search filter incrementally to show results as they load
+      UiObjectSearch._apply_search(ui_state.search_term)
+
       -- Move to next database
       db_idx = db_idx + 1
       vim.schedule(process_next_database)
-    end)
+    end
+
+    ---Chain async operations with callbacks
+    ---@param operations { name: string, fn: fun(on_done: fun(result: any)) }[]
+    ---@param on_all_done fun()
+    local function run_async_chain(operations, on_all_done)
+      local op_idx = 1
+
+      local function run_next()
+        if cancel_token.is_cancelled then
+          finalize_loading("cancelled")
+          return
+        end
+
+        if op_idx > #operations then
+          on_all_done()
+          return
+        end
+
+        local op = operations[op_idx]
+        update_detail(op.name)
+
+        op.fn(function(result)
+          op_idx = op_idx + 1
+          vim.schedule(run_next)
+        end)
+      end
+
+      vim.schedule(run_next)
+    end
+
+    -- Build async operation chain for this database
+    local operations = {
+      {
+        name = "Loading schemas...",
+        fn = function(on_done)
+          if db.load_async then
+            db:load_async({
+              cancel_token = cancel_token,
+              on_complete = function() on_done() end,
+            })
+          else
+            pcall(function() db:load() end)
+            on_done()
+          end
+        end,
+      },
+      {
+        name = "Loading tables...",
+        fn = function(on_done)
+          db:load_all_tables_bulk_async({
+            cancel_token = cancel_token,
+            on_complete = function() on_done() end,
+          })
+        end,
+      },
+      {
+        name = "Loading views...",
+        fn = function(on_done)
+          db:load_all_views_bulk_async({
+            cancel_token = cancel_token,
+            on_complete = function() on_done() end,
+          })
+        end,
+      },
+      {
+        name = "Loading procedures...",
+        fn = function(on_done)
+          db:load_all_procedures_bulk_async({
+            cancel_token = cancel_token,
+            on_complete = function() on_done() end,
+          })
+        end,
+      },
+      {
+        name = "Loading functions...",
+        fn = function(on_done)
+          db:load_all_functions_bulk_async({
+            cancel_token = cancel_token,
+            on_complete = function() on_done() end,
+          })
+        end,
+      },
+    }
+
+    -- Add synonyms if supported
+    if db.load_all_synonyms_bulk_async then
+      table.insert(operations, {
+        name = "Loading synonyms...",
+        fn = function(on_done)
+          db:load_all_synonyms_bulk_async({
+            cancel_token = cancel_token,
+            on_complete = function() on_done() end,
+          })
+        end,
+      })
+    end
+
+    -- Add definitions if supported
+    if db.load_all_definitions_bulk_async then
+      table.insert(operations, {
+        name = "Loading definitions...",
+        fn = function(on_done)
+          db:load_all_definitions_bulk_async({
+            cancel_token = cancel_token,
+            on_complete = function(result)
+              if result then definitions_map = result end
+              on_done()
+            end,
+          })
+        end,
+      })
+    end
+
+    -- Add metadata if supported
+    if db.load_all_metadata_bulk_async then
+      table.insert(operations, {
+        name = "Loading metadata...",
+        fn = function(on_done)
+          db:load_all_metadata_bulk_async({
+            cancel_token = cancel_token,
+            on_complete = function(result)
+              if result then metadata_map = result end
+              on_done()
+            end,
+          })
+        end,
+      })
+    end
+
+    -- Start the async chain
+    run_async_chain(operations, finalize_db_and_continue)
   end
 
   -- Start processing
@@ -1201,15 +1292,36 @@ local function render_settings(state)
     width = 28,
   })
 
-  -- Row 2: Database multi-dropdown
+  -- Row 2: Database multi-dropdown (show loading state when server is connecting/loading)
+  local db_placeholder = "(select databases)"
+  local db_options = {}
+  local db_disabled = false
+
+  if ui_state.server_loading then
+    -- Show loading spinner in placeholder
+    local spinner_char = loading_text_spinner and loading_text_spinner:get_frame() or "⠋"
+    db_placeholder = spinner_char .. " Loading databases..."
+    db_disabled = true
+  elseif not ui_state.selected_server then
+    db_placeholder = "(select server first)"
+    db_disabled = true
+  else
+    db_options = get_database_options()
+    if #db_options == 0 then
+      db_placeholder = "(no databases found)"
+      db_disabled = true
+    end
+  end
+
   cb:multi_dropdown("databases", {
     label = "Databases",
-    options = get_database_options(),
+    options = db_options,
     values = get_selected_db_names(),
     display_mode = "count",
-    select_all_option = true,
-    placeholder = "(select databases)",
+    select_all_option = not db_disabled,
+    placeholder = db_placeholder,
     width = 28,
+    disabled = db_disabled,
   })
 
   -- Row 3: Search options multi-dropdown (list mode)
@@ -1251,68 +1363,57 @@ end
 local function render_results(state)
   local cb = ContentBuilder.new()
 
-  -- Show loading status with spinner and progress
+  -- Show loading status header when loading (but continue to show results below)
   if ui_state.loading_status == "loading" and loading_text_spinner then
-    cb:blank()
-
     -- Animated spinner with runtime (using TextSpinner with user's configured style)
     local spinner_char = loading_text_spinner:get_frame()
     local runtime = loading_text_spinner:get_runtime()
 
     cb:spans({
-      { text = "   ", style = "normal" },
+      { text = " ", style = "normal" },
       { text = spinner_char, style = "success" },
       { text = " ", style = "normal" },
       { text = ui_state.loading_message, style = "emphasis" },
-    })
-
-    cb:spans({
-      { text = "   Runtime: ", style = "muted" },
+      { text = " · ", style = "muted" },
       { text = runtime, style = "value" },
+      { text = " · ", style = "muted" },
+      { text = "<C-c>", style = "comment" },
+      { text = " cancel", style = "muted" },
     })
 
     if ui_state.loading_detail then
       cb:spans({
-        { text = "   ", style = "normal" },
+        { text = " ", style = "normal" },
         { text = ui_state.loading_detail, style = "comment" },
       })
     end
 
-    cb:blank()
-
-    -- Show objects loaded so far
-    if #ui_state.loaded_objects > 0 then
+    -- Show match count if we have results
+    if #ui_state.filtered_results > 0 then
       cb:spans({
-        { text = "   Objects loaded: ", style = "muted" },
-        { text = tostring(#ui_state.loaded_objects), style = "value" },
+        { text = " Matches: ", style = "muted" },
+        { text = tostring(#ui_state.filtered_results), style = "value" },
+        { text = " (loading more...)", style = "comment" },
       })
     end
 
     cb:blank()
-    cb:styled("   Press <C-c> to cancel", "comment")
-
-    return cb:build_lines(), cb:build_highlights()
   end
 
-  -- Show cancelled status
+  -- Show cancelled status header
   if ui_state.loading_status == "cancelled" then
-    cb:blank()
     cb:spans({
-      { text = "   ", style = "normal" },
+      { text = " ", style = "normal" },
       { text = "✗", style = "error" },
       { text = " Loading cancelled", style = "warning" },
+      { text = " · ", style = "muted" },
+      { text = tostring(#ui_state.loaded_objects), style = "value" },
+      { text = " objects loaded", style = "muted" },
     })
-    if #ui_state.loaded_objects > 0 then
-      cb:spans({
-        { text = "   Partial results: ", style = "muted" },
-        { text = tostring(#ui_state.loaded_objects), style = "value" },
-        { text = " objects loaded", style = "muted" },
-      })
-    end
     cb:blank()
   end
 
-  -- Results list
+  -- Results list (show during loading AND after)
   for i, result in ipairs(ui_state.filtered_results) do
     local is_selected = (i == ui_state.selected_result_idx)
     local prefix = is_selected and " ▶ " or "   "
@@ -1336,7 +1437,12 @@ local function render_results(state)
   end
 
   if #ui_state.filtered_results == 0 then
-    if #ui_state.loaded_objects == 0 then
+    if ui_state.loading_status == "loading" then
+      -- Don't show "no matches" during loading - more results may come
+      if #ui_state.loaded_objects == 0 then
+        cb:styled("   Waiting for objects...", "comment")
+      end
+    elseif #ui_state.loaded_objects == 0 then
       cb:styled("   Press 'd' to select databases and load objects", "comment")
     else
       cb:styled("   (No matches)", "comment")
@@ -2502,36 +2608,56 @@ function UiObjectSearch.show(options)
         end
 
         if server then
-          if not server:is_connected() then
-            vim.notify("Connecting to " .. value .. "...", vim.log.levels.INFO)
-            local ok, err = server:connect()
-            if not ok then
-              vim.notify("Failed to connect: " .. (err or "Unknown"), vim.log.levels.ERROR)
-              return
-            end
-          end
-
-          -- Explicitly load databases after connecting
-          if not server.is_loaded then
-            vim.notify("Loading databases...", vim.log.levels.INFO)
-            local ok = server:load()
-            if not ok then
-              vim.notify("Failed to load databases", vim.log.levels.WARN)
-            end
-          end
-
-          ui_state.selected_server = server
-          -- Reset databases
+          -- Reset state for new server
           ui_state.selected_databases = {}
           ui_state.all_databases_selected = false
           ui_state.loaded_objects = {}
           ui_state.filtered_results = {}
 
-          -- Refresh settings panel to show new database options
+          -- Show loading state in database dropdown
+          ui_state.server_loading = true
+          ui_state.selected_server = server
+
+          -- Start spinner animation for database dropdown
+          start_spinner_animation()
+
+          -- Update UI to show loading state immediately
           local new_cb = render_settings(multi_panel)
           multi_panel:update_inputs("settings", new_cb)
           multi_panel:render_panel("settings")
           multi_panel:render_panel("results")
+
+          -- Use vim.schedule to allow UI to update before blocking operations
+          vim.schedule(function()
+            local connect_ok = true
+            local load_ok = true
+
+            -- Connect if needed
+            if not server:is_connected() then
+              connect_ok, _ = server:connect()
+              if not connect_ok then
+                vim.notify("Failed to connect to " .. value, vim.log.levels.ERROR)
+              end
+            end
+
+            -- Load databases if connected
+            if connect_ok and not server.is_loaded then
+              load_ok = server:load()
+              if not load_ok then
+                vim.notify("Failed to load databases from " .. value, vim.log.levels.WARN)
+              end
+            end
+
+            -- Stop loading state
+            ui_state.server_loading = false
+            stop_spinner_animation()
+
+            -- Refresh settings panel to show database options
+            local final_cb = render_settings(multi_panel)
+            multi_panel:update_inputs("settings", final_cb)
+            multi_panel:render_panel("settings")
+            multi_panel:render_panel("results")
+          end)
         end
       end
     end,
