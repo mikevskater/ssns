@@ -893,4 +893,193 @@ function DbClass:to_string()
   )
 end
 
+-- ============================================================================
+-- Async Methods
+-- ============================================================================
+
+---@class DbLoadAsyncOpts : ExecutorOpts
+---@field on_complete fun(success: boolean, error: string?)? Completion callback
+
+---Load database structure asynchronously
+---@param opts DbLoadAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function DbClass:load_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    local success = self:load()
+    return success
+  end, {
+    name = opts.name or string.format("Loading database %s", self.db_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_complete = opts.on_complete,
+  })
+end
+
+---@class BulkLoadAsyncOpts : ExecutorOpts
+---@field on_complete fun(success: boolean, error: string?)? Completion callback
+
+---Load all tables for all schemas asynchronously
+---@param opts BulkLoadAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function DbClass:load_all_tables_bulk_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Loading tables...")
+    local success = self:load_all_tables_bulk()
+    ctx.report_progress(100, "Tables loaded")
+    return success
+  end, {
+    name = opts.name or string.format("Loading tables for %s", self.db_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
+---Load all views for all schemas asynchronously
+---@param opts BulkLoadAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function DbClass:load_all_views_bulk_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Loading views...")
+    local success = self:load_all_views_bulk()
+    ctx.report_progress(100, "Views loaded")
+    return success
+  end, {
+    name = opts.name or string.format("Loading views for %s", self.db_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
+---Load all procedures for all schemas asynchronously
+---@param opts BulkLoadAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function DbClass:load_all_procedures_bulk_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Loading procedures...")
+    local success = self:load_all_procedures_bulk()
+    ctx.report_progress(100, "Procedures loaded")
+    return success
+  end, {
+    name = opts.name or string.format("Loading procedures for %s", self.db_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
+---Load all functions for all schemas asynchronously
+---@param opts BulkLoadAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function DbClass:load_all_functions_bulk_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Loading functions...")
+    local success = self:load_all_functions_bulk()
+    ctx.report_progress(100, "Functions loaded")
+    return success
+  end, {
+    name = opts.name or string.format("Loading functions for %s", self.db_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
+---Load all synonyms for all schemas asynchronously
+---@param opts BulkLoadAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function DbClass:load_all_synonyms_bulk_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Loading synonyms...")
+    local success = self:load_all_synonyms_bulk()
+    ctx.report_progress(100, "Synonyms loaded")
+    return success
+  end, {
+    name = opts.name or string.format("Loading synonyms for %s", self.db_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
+---@class DefinitionsAsyncOpts : ExecutorOpts
+---@field on_complete fun(definitions: table<string, string>?, error: string?)? Completion callback
+
+---Load all definitions asynchronously
+---@param opts DefinitionsAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function DbClass:load_all_definitions_bulk_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Loading definitions...")
+    local definitions = self:load_all_definitions_bulk()
+    ctx.report_progress(100, "Definitions loaded")
+    return definitions
+  end, {
+    name = opts.name or string.format("Loading definitions for %s", self.db_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
+---@class MetadataAsyncOpts : ExecutorOpts
+---@field on_complete fun(metadata: table<string, string>?, error: string?)? Completion callback
+
+---Load all metadata asynchronously
+---@param opts MetadataAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function DbClass:load_all_metadata_bulk_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Loading metadata...")
+    local metadata = self:load_all_metadata_bulk()
+    ctx.report_progress(100, "Metadata loaded")
+    return metadata
+  end, {
+    name = opts.name or string.format("Loading metadata for %s", self.db_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
 return DbClass
