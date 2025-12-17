@@ -118,6 +118,41 @@ function M.register()
   end, {
     desc = "Reset completion performance statistics",
   })
+
+  -- :SSNSAsyncStatus - Show async RPC status and instructions
+  vim.api.nvim_create_user_command("SSNSAsyncStatus", function()
+    local AsyncRPC = require('ssns.async.rpc')
+    -- Reset cache to get fresh check
+    AsyncRPC.reset_availability_cache()
+    local status = AsyncRPC.get_status()
+
+    local lines = {
+      "SSNS Async RPC Status",
+      "=====================",
+      "",
+      string.format("Status: %s", status.available and "ENABLED" or "NOT AVAILABLE"),
+      string.format("Pending callbacks: %d", status.pending_count),
+      "",
+    }
+
+    if status.available then
+      table.insert(lines, "Non-blocking async is working correctly.")
+      table.insert(lines, "UI should remain responsive during database queries.")
+    else
+      table.insert(lines, "Non-blocking async is NOT available.")
+      table.insert(lines, "UI may freeze during database queries.")
+      table.insert(lines, "")
+      table.insert(lines, "To enable non-blocking async:")
+      table.insert(lines, "  1. Run :UpdateRemotePlugins")
+      table.insert(lines, "  2. Restart Neovim")
+      table.insert(lines, "")
+      table.insert(lines, "After restarting, run :SSNSAsyncStatus to verify.")
+    end
+
+    vim.notify(table.concat(lines, "\n"), status.available and vim.log.levels.INFO or vim.log.levels.WARN)
+  end, {
+    desc = "Show async RPC status and setup instructions",
+  })
 end
 
 return M

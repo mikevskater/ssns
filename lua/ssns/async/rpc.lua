@@ -45,10 +45,93 @@ end
 ---@field use_cache boolean? Use query cache (default: true)
 ---@field ttl number? Cache TTL
 
+---Track if we've shown the unavailable warning
+local shown_unavailable_warning = false
+
+---Track if we've verified the function works
+local verified_available = nil
+
 ---Check if the async RPC function is available
+---Remote plugin functions aren't detected by vim.fn.exists until the host starts
 ---@return boolean available True if SSNSExecuteQueryAsync is registered
 function AsyncRPC.is_available()
-  return vim.fn.exists('*SSNSExecuteQueryAsync') == 1
+  -- Return cached result if already verified
+  if verified_available ~= nil then
+    return verified_available
+  end
+
+  -- Try calling SSNSExecuteQueryAsync directly with minimal args
+  -- The function is registered in rplugin.vim, but vim.fn.exists doesn't detect
+  -- remote plugin functions reliably until they're actually called
+  local ok, result = pcall(function()
+    -- Call with empty/invalid args - it will return { started: false, error: ... }
+    -- but that proves the function exists and the host is running
+    return vim.fn.SSNSExecuteQueryAsync({ '{}', '', 'test_availability_check' })
+  end)
+
+  if ok and type(result) == "table" then
+    -- Function exists and responded (even if with an error about missing params)
+    verified_available = true
+    return true
+  end
+
+  -- Check the error - if it's "Unknown function" then it's not available
+  -- If it's any other error, the function exists but had an issue
+  if not ok and result then
+    local err_str = tostring(result)
+    if err_str:match("Unknown function") or err_str:match("E117") then
+      verified_available = false
+      return false
+    else
+      -- Some other error means the function exists
+      verified_available = true
+      return true
+    end
+  end
+
+  -- Not available
+  verified_available = false
+  return false
+end
+
+---Reset the availability cache (useful after UpdateRemotePlugins)
+function AsyncRPC.reset_availability_cache()
+  verified_available = nil
+end
+
+---Check availability and show instructions if not available (once per session)
+---@param silent boolean? If true, don't show notification
+---@return boolean available
+function AsyncRPC.check_and_notify(silent)
+  local available = AsyncRPC.is_available()
+  if not available and not shown_unavailable_warning and not silent then
+    shown_unavailable_warning = true
+    vim.defer_fn(function()
+      vim.notify(
+        "SSNS: Non-blocking async not available. Run :UpdateRemotePlugins and restart Neovim for best performance.",
+        vim.log.levels.INFO
+      )
+    end, 100)
+  end
+  return available
+end
+
+---Get status information about RPC async
+---@return table status { available: boolean, pending_count: number, message: string }
+function AsyncRPC.get_status()
+  local available = AsyncRPC.is_available()
+  local pending = AsyncRPC.get_pending_count()
+  local message
+  if available then
+    message = "Non-blocking RPC async is enabled"
+  else
+    message = "RPC async not available - run :UpdateRemotePlugins and restart"
+  end
+  return {
+    available = available,
+    pending_count = pending,
+    message = message,
+  }
 end
 
 ---Execute a query asynchronously via RPC (non-blocking)

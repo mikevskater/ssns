@@ -49,7 +49,7 @@ function TreeActions.toggle_node(UiTree)
     -- Fall back to vim.schedule async if RPC async not available
     -- Last resort: synchronous loading
     local AsyncRPC = require('ssns.async.rpc')
-    local rpc_available = AsyncRPC.is_available()
+    local rpc_available = AsyncRPC.check_and_notify()  -- Shows info once if not available
 
     local rpc_async_fn = nil
     local async_load_fn = nil

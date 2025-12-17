@@ -614,6 +614,13 @@ local function load_objects_for_databases(callback)
       -- Apply search filter incrementally to show results as they load
       UiObjectSearch._apply_search(ui_state.search_term)
 
+      -- Re-render results panel to show incremental results
+      if multi_panel then
+        multi_panel:render_panel("results")
+        -- Force display update so results are visible immediately
+        vim.cmd('redraw')
+      end
+
       -- Move to next database
       db_idx = db_idx + 1
       vim.schedule(process_next_database)
@@ -639,6 +646,15 @@ local function load_objects_for_databases(callback)
         local op = operations[op_idx]
         update_detail(op.name)
 
+        -- Re-render results panel to show current operation before blocking call
+        if multi_panel then
+          multi_panel:render_panel("results")
+        end
+
+        -- Force display update BEFORE blocking RPC call
+        -- This ensures spinner/progress text is visible even if next call blocks
+        vim.cmd('redraw')
+
         op.fn(function(result)
           op_idx = op_idx + 1
           vim.schedule(run_next)
@@ -648,7 +664,12 @@ local function load_objects_for_databases(callback)
       vim.schedule(run_next)
     end
 
+    -- Check if RPC async is available (truly non-blocking)
+    local AsyncRPC = require('ssns.async.rpc')
+    local use_rpc_async = AsyncRPC.check_and_notify()  -- Shows info once if not available
+
     -- Build async operation chain for this database
+    -- Prefer RPC async methods for non-blocking UI, fall back to vim.schedule async
     local operations = {
       {
         name = "Loading schemas...",
@@ -667,50 +688,80 @@ local function load_objects_for_databases(callback)
       {
         name = "Loading tables...",
         fn = function(on_done)
-          db:load_all_tables_bulk_async({
-            cancel_token = cancel_token,
-            on_complete = function() on_done() end,
-          })
+          if use_rpc_async and db.load_all_tables_bulk_rpc_async then
+            db:load_all_tables_bulk_rpc_async({
+              on_complete = function() on_done() end,
+            })
+          else
+            db:load_all_tables_bulk_async({
+              cancel_token = cancel_token,
+              on_complete = function() on_done() end,
+            })
+          end
         end,
       },
       {
         name = "Loading views...",
         fn = function(on_done)
-          db:load_all_views_bulk_async({
-            cancel_token = cancel_token,
-            on_complete = function() on_done() end,
-          })
+          if use_rpc_async and db.load_all_views_bulk_rpc_async then
+            db:load_all_views_bulk_rpc_async({
+              on_complete = function() on_done() end,
+            })
+          else
+            db:load_all_views_bulk_async({
+              cancel_token = cancel_token,
+              on_complete = function() on_done() end,
+            })
+          end
         end,
       },
       {
         name = "Loading procedures...",
         fn = function(on_done)
-          db:load_all_procedures_bulk_async({
-            cancel_token = cancel_token,
-            on_complete = function() on_done() end,
-          })
+          if use_rpc_async and db.load_all_procedures_bulk_rpc_async then
+            db:load_all_procedures_bulk_rpc_async({
+              on_complete = function() on_done() end,
+            })
+          else
+            db:load_all_procedures_bulk_async({
+              cancel_token = cancel_token,
+              on_complete = function() on_done() end,
+            })
+          end
         end,
       },
       {
         name = "Loading functions...",
         fn = function(on_done)
-          db:load_all_functions_bulk_async({
-            cancel_token = cancel_token,
-            on_complete = function() on_done() end,
-          })
+          if use_rpc_async and db.load_all_functions_bulk_rpc_async then
+            db:load_all_functions_bulk_rpc_async({
+              on_complete = function() on_done() end,
+            })
+          else
+            db:load_all_functions_bulk_async({
+              cancel_token = cancel_token,
+              on_complete = function() on_done() end,
+            })
+          end
         end,
       },
     }
 
     -- Add synonyms if supported
-    if db.load_all_synonyms_bulk_async then
+    if db.load_all_synonyms_bulk_async or db.load_all_synonyms_bulk_rpc_async then
       table.insert(operations, {
         name = "Loading synonyms...",
         fn = function(on_done)
-          db:load_all_synonyms_bulk_async({
-            cancel_token = cancel_token,
-            on_complete = function() on_done() end,
-          })
+          if use_rpc_async and db.load_all_synonyms_bulk_rpc_async then
+            db:load_all_synonyms_bulk_rpc_async({
+              on_complete = function() on_done() end,
+            })
+          elseif db.load_all_synonyms_bulk_async then
+            db:load_all_synonyms_bulk_async({
+              cancel_token = cancel_token,
+              on_complete = function() on_done() end,
+            })
+          end
         end,
       })
     end
