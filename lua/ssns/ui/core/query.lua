@@ -17,13 +17,13 @@ UiQuery.buffer_counter = {}
 ---@type table<number, userdata>
 UiQuery.auto_save_timers = {}
 
----Store last query results for export and re-display
----@type {resultSets: table[]?, sql: string?, execution_time_ms: number?, metadata: table?}?
-UiQuery.last_results = nil
+---Store query results per buffer for export and re-display
+---@type table<number, {resultSets: table[]?, sql: string?, execution_time_ms: number?, metadata: table?, result_set_ranges: table[]?}>
+UiQuery.buffer_results = {}
 
----Store last results window height for restore on toggle
----@type number?
-UiQuery.last_results_window_height = nil
+---Store results window height per query buffer for restore on toggle
+---@type table<number, number>
+UiQuery.buffer_results_window_height = {}
 
 ---Generate a unique buffer name
 ---@param object_name string? The object name (table, view, etc.)
@@ -580,8 +580,8 @@ function UiQuery.execute_query(bufnr, visual)
     end
   end
 
-  -- Display results with execution metadata
-  UiQuery.display_results(result, sql, execution_time_ms)
+  -- Display results with execution metadata (pass query buffer for per-buffer tracking)
+  UiQuery.display_results(result, sql, execution_time_ms, bufnr)
 end
 
 ---Execute statement under cursor
@@ -622,7 +622,7 @@ function UiQuery.execute_statement_under_cursor(bufnr)
     return
   end
 
-  UiQuery.display_results(result, sql)
+  UiQuery.display_results(result, sql, nil, bufnr)
 end
 
 ---Display query error with structured information
@@ -747,21 +747,30 @@ end
 ---@param result table Node.js result object { success, resultSets, metadata, error }
 ---@param sql string The SQL that was executed
 ---@param execution_time_ms number? Execution time in milliseconds
-function UiQuery.display_results(result, sql, execution_time_ms)
-  -- Store results for later export and re-display
-  UiQuery.last_results = {
+---@param query_bufnr number? The query buffer number (for per-buffer results tracking)
+function UiQuery.display_results(result, sql, execution_time_ms, query_bufnr)
+  -- Use provided buffer or current buffer
+  query_bufnr = query_bufnr or vim.api.nvim_get_current_buf()
+
+  -- Store results for this specific query buffer
+  UiQuery.buffer_results[query_bufnr] = {
     resultSets = result.resultSets,
     sql = sql,
     execution_time_ms = execution_time_ms,
     metadata = result.metadata,
   }
 
-  -- Try to find existing results buffer
+  -- Generate unique results buffer name based on query buffer
+  local query_buf_name = vim.api.nvim_buf_get_name(query_bufnr)
+  local short_name = query_buf_name:match("%[([^%]]+)%]") or tostring(query_bufnr)
+  local results_buf_name = string.format("SSNS Results [%s]", short_name)
+
+  -- Try to find existing results buffer for this query buffer
   local result_buf = nil
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_valid(buf) then
       local buf_name = vim.api.nvim_buf_get_name(buf)
-      if buf_name:match("SSNS Results") then
+      if buf_name == results_buf_name then
         result_buf = buf
         break
       end
@@ -771,12 +780,17 @@ function UiQuery.display_results(result, sql, execution_time_ms)
   -- Create new buffer if not found
   if not result_buf then
     result_buf = vim.api.nvim_create_buf(false, true)
-    vim.api.nvim_buf_set_name(result_buf, "SSNS Results")
+    vim.api.nvim_buf_set_name(result_buf, results_buf_name)
     vim.api.nvim_buf_set_option(result_buf, 'buftype', 'nofile')
+    -- Store association: results buffer -> query buffer
+    vim.api.nvim_buf_set_var(result_buf, 'ssns_query_bufnr', query_bufnr)
   end
 
-  -- Format results with styled ContentBuilder
-  local builder = UiQuery.format_results_styled(result.resultSets, sql, execution_time_ms, result.metadata)
+  -- Format results with styled ContentBuilder (also returns line ranges for cursor-based export)
+  local builder, result_set_ranges = UiQuery.format_results_styled(result.resultSets, sql, execution_time_ms, result.metadata)
+
+  -- Store result set ranges for cursor-based export
+  UiQuery.buffer_results[query_bufnr].result_set_ranges = result_set_ranges
 
   -- Create namespace for result highlights
   local ns_id = vim.api.nvim_create_namespace("ssns_results")
@@ -810,14 +824,41 @@ function UiQuery.display_results(result, sql, execution_time_ms)
   UiQuery.setup_results_keymaps(result_buf)
 end
 
----Toggle the results window (show if hidden, hide if visible)
-function UiQuery.toggle_results()
-  -- Find the results buffer
+---Toggle the results window for a specific query buffer (show if hidden, hide if visible)
+---@param query_bufnr number? The query buffer number (defaults to current buffer or associated query buffer)
+function UiQuery.toggle_results(query_bufnr)
+  local current_buf = vim.api.nvim_get_current_buf()
+
+  -- Determine the query buffer:
+  -- 1. If explicitly provided, use it
+  -- 2. If current buffer is a results buffer, get its associated query buffer
+  -- 3. If current buffer is a query buffer, use it
+  -- 4. Otherwise, no results to show
+  if not query_bufnr then
+    -- Check if current buffer is a results buffer
+    local ok, associated_query = pcall(vim.api.nvim_buf_get_var, current_buf, 'ssns_query_bufnr')
+    if ok and associated_query then
+      query_bufnr = associated_query
+    elseif UiQuery.query_buffers[current_buf] then
+      -- Current buffer is a query buffer
+      query_bufnr = current_buf
+    else
+      vim.notify("SSNS: No query buffer context - run a query first", vim.log.levels.INFO)
+      return
+    end
+  end
+
+  -- Generate the expected results buffer name
+  local query_buf_name = vim.api.nvim_buf_get_name(query_bufnr)
+  local short_name = query_buf_name:match("%[([^%]]+)%]") or tostring(query_bufnr)
+  local results_buf_name = string.format("SSNS Results [%s]", short_name)
+
+  -- Find existing results buffer for this query buffer
   local result_buf = nil
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_valid(buf) then
       local buf_name = vim.api.nvim_buf_get_name(buf)
-      if buf_name:match("SSNS Results") then
+      if buf_name == results_buf_name then
         result_buf = buf
         break
       end
@@ -826,23 +867,28 @@ function UiQuery.toggle_results()
 
   -- If no results buffer exists, try to recreate from stored results
   if not result_buf then
-    if not UiQuery.last_results or not UiQuery.last_results.resultSets then
-      vim.notify("SSNS: No results to show", vim.log.levels.INFO)
+    local stored = UiQuery.buffer_results[query_bufnr]
+    if not stored or not stored.resultSets then
+      vim.notify("SSNS: No results to show for this buffer", vim.log.levels.INFO)
       return
     end
 
     -- Recreate the results buffer from stored data
     result_buf = vim.api.nvim_create_buf(false, true)
-    vim.api.nvim_buf_set_name(result_buf, "SSNS Results")
+    vim.api.nvim_buf_set_name(result_buf, results_buf_name)
     vim.api.nvim_buf_set_option(result_buf, 'buftype', 'nofile')
+    vim.api.nvim_buf_set_var(result_buf, 'ssns_query_bufnr', query_bufnr)
 
     -- Re-format and populate with styled results
-    local builder = UiQuery.format_results_styled(
-      UiQuery.last_results.resultSets,
-      UiQuery.last_results.sql,
-      UiQuery.last_results.execution_time_ms,
-      UiQuery.last_results.metadata
+    local builder, result_set_ranges = UiQuery.format_results_styled(
+      stored.resultSets,
+      stored.sql,
+      stored.execution_time_ms,
+      stored.metadata
     )
+
+    -- Update stored ranges in case they weren't saved before
+    stored.result_set_ranges = result_set_ranges
 
     -- Create namespace and render styled content
     local ns_id = vim.api.nvim_create_namespace("ssns_results")
@@ -860,7 +906,7 @@ function UiQuery.toggle_results()
 
   if result_win then
     -- Results window is visible, save height and close it
-    UiQuery.last_results_window_height = vim.api.nvim_win_get_height(result_win)
+    UiQuery.buffer_results_window_height[query_bufnr] = vim.api.nvim_win_get_height(result_win)
     vim.api.nvim_win_close(result_win, false)
   else
     -- Results window is hidden, open it in a split
@@ -869,7 +915,7 @@ function UiQuery.toggle_results()
     local new_win = vim.api.nvim_get_current_win()
 
     -- Restore previous height or use default of 10
-    local height = UiQuery.last_results_window_height or 10
+    local height = UiQuery.buffer_results_window_height[query_bufnr] or 10
     vim.api.nvim_win_set_height(new_win, height)
 
     -- Setup keymaps for results buffer
@@ -1252,18 +1298,22 @@ end
 ---@param execution_time_ms number? Execution time in milliseconds
 ---@param query_metadata table? Query metadata including rowsAffected and timing
 ---@return ContentBuilder builder ContentBuilder with all styled content
+---@return table[] result_set_ranges Array of {start_line, end_line, index} for cursor-based result set detection
 function UiQuery.format_results_styled(resultSets, sql, execution_time_ms, query_metadata)
   local ContentBuilder = require('ssns.ui.core.content_builder')
   local Config = require('ssns.config')
   local results_config = Config.get_results()
   local ui_config = Config.get_ui()
 
+  -- Track line ranges for each result set (for cursor-based export)
+  local result_set_ranges = {}
+
   local builder = ContentBuilder.new()
 
   -- Validate input
   if type(resultSets) ~= "table" then
     builder:line(tostring(resultSets))
-    return builder
+    return builder, result_set_ranges
   end
 
   -- Check if empty (no result sets) - show rowsAffected messages
@@ -1301,7 +1351,7 @@ function UiQuery.format_results_styled(resultSets, sql, execution_time_ms, query
         builder:styled(string.format("Total execution time: %s", time_str), "muted")
       end
 
-      return builder
+      return builder, result_set_ranges
     end
 
     -- No metadata, just show completion message
@@ -1311,7 +1361,7 @@ function UiQuery.format_results_styled(resultSets, sql, execution_time_ms, query
       builder:styled(string.format("Total execution time: %s", time_str), "muted")
     end
     builder:blank()
-    return builder
+    return builder, result_set_ranges
   end
 
   -- Process each result set
@@ -1375,8 +1425,15 @@ function UiQuery.format_results_styled(resultSets, sql, execution_time_ms, query
       builder:blank()
     end
 
+    -- Track start line for this result set (1-indexed for cursor position)
+    local start_line = builder:line_count() + 1
+
     -- Format this result set
     UiQuery.format_single_result_set_styled(rows, resultSet.columns, builder, results_config)
+
+    -- Track end line for this result set
+    local end_line = builder:line_count()
+    table.insert(result_set_ranges, { start_line = start_line, end_line = end_line, index = i })
   end
 
   -- After result sets, show rowsAffected for non-SELECT statements
@@ -1410,7 +1467,7 @@ function UiQuery.format_results_styled(resultSets, sql, execution_time_ms, query
     builder:styled(string.format("Total execution time: %s", total_time), "muted")
   end
 
-  return builder
+  return builder, result_set_ranges
 end
 
 ---Save query to file
@@ -1664,7 +1721,8 @@ function UiQuery.show_results_controls()
       keys = {
         { key = km.close or "q", desc = "Close results window" },
         { key = km.toggle or query_km.toggle_results or "C-r", desc = "Toggle results window" },
-        { key = km.export_csv or "A-e", desc = "Export results to CSV file" },
+        { key = km.export_csv or "A-e", desc = "Export cursor result set to CSV" },
+        { key = km.export_all_csv or "A-E", desc = "Export ALL result sets to CSV files" },
         { key = km.yank_csv or "A-y", desc = "Yank results as CSV to clipboard" },
       },
     },
@@ -1673,12 +1731,16 @@ function UiQuery.show_results_controls()
   UiFloat._show_controls_popup(controls)
 end
 
----Save results window height before closing
+---Save results window height before closing (per query buffer)
 ---@param win number? Window handle (nil = current window)
 local function save_results_window_height(win)
   win = win or vim.api.nvim_get_current_win()
   if vim.api.nvim_win_is_valid(win) then
-    UiQuery.last_results_window_height = vim.api.nvim_win_get_height(win)
+    local result_buf = vim.api.nvim_win_get_buf(win)
+    local ok, query_bufnr = pcall(vim.api.nvim_buf_get_var, result_buf, 'ssns_query_bufnr')
+    if ok and query_bufnr then
+      UiQuery.buffer_results_window_height[query_bufnr] = vim.api.nvim_win_get_height(win)
+    end
   end
 end
 
@@ -1698,10 +1760,15 @@ function UiQuery.setup_results_keymaps(result_buf)
       UiQuery.toggle_results()
     end, desc = "Toggle results window" },
 
-    -- Export to CSV
+    -- Export cursor-hovered result set to CSV
     { mode = "n", lhs = km.export_csv or "<A-e>", rhs = function()
       UiQuery.export_results_to_csv()
-    end, desc = "Export results to CSV" },
+    end, desc = "Export cursor result set to CSV" },
+
+    -- Export ALL result sets to separate CSV files
+    { mode = "n", lhs = km.export_all_csv or "<A-E>", rhs = function()
+      UiQuery.export_all_results_to_csv()
+    end, desc = "Export ALL result sets to CSV files" },
 
     -- Yank as CSV to clipboard
     { mode = "n", lhs = km.yank_csv or "<A-y>", rhs = function()
@@ -1722,11 +1789,14 @@ function UiQuery.setup_results_keymaps(result_buf)
   vim.api.nvim_create_autocmd("BufWinLeave", {
     buffer = result_buf,
     callback = function()
-      -- Save the height of the window that's being closed
+      -- Save the height of the window that's being closed (per query buffer)
       -- At this point, the window is still valid
       local win = vim.fn.bufwinid(result_buf)
       if win ~= -1 and vim.api.nvim_win_is_valid(win) then
-        UiQuery.last_results_window_height = vim.api.nvim_win_get_height(win)
+        local ok, query_bufnr = pcall(vim.api.nvim_buf_get_var, result_buf, 'ssns_query_bufnr')
+        if ok and query_bufnr then
+          UiQuery.buffer_results_window_height[query_bufnr] = vim.api.nvim_win_get_height(win)
+        end
       end
     end,
     desc = "Save results window height on close",
@@ -1884,22 +1954,94 @@ local function get_temp_dir()
   return temp
 end
 
+---Get the query buffer number from current context
+---@return number? query_bufnr The query buffer number or nil
+local function get_current_query_bufnr()
+  local current_buf = vim.api.nvim_get_current_buf()
+
+  -- Check if current buffer is a results buffer with associated query buffer
+  local ok, query_bufnr = pcall(vim.api.nvim_buf_get_var, current_buf, 'ssns_query_bufnr')
+  if ok and query_bufnr then
+    return query_bufnr
+  end
+
+  -- Check if current buffer is a query buffer
+  if UiQuery.query_buffers[current_buf] then
+    return current_buf
+  end
+
+  return nil
+end
+
+---Get the result set index that the cursor is currently on
+---@param query_bufnr number The query buffer number
+---@param cursor_line number The 1-indexed cursor line in the results buffer
+---@return number? result_set_index The 1-indexed result set index, or nil if not found
+local function get_result_set_at_cursor(query_bufnr, cursor_line)
+  local stored = UiQuery.buffer_results[query_bufnr]
+  if not stored or not stored.result_set_ranges then
+    return nil
+  end
+
+  for _, range in ipairs(stored.result_set_ranges) do
+    if cursor_line >= range.start_line and cursor_line <= range.end_line then
+      return range.index
+    end
+  end
+
+  -- If cursor is not within any result set, find the closest one
+  -- (useful when cursor is on divider lines or execution time line)
+  local closest_index = nil
+  local min_distance = math.huge
+
+  for _, range in ipairs(stored.result_set_ranges) do
+    local distance = math.min(
+      math.abs(cursor_line - range.start_line),
+      math.abs(cursor_line - range.end_line)
+    )
+    if distance < min_distance then
+      min_distance = distance
+      closest_index = range.index
+    end
+  end
+
+  return closest_index
+end
+
 ---Export results to CSV file and open in default application
+---Exports only the result set under the cursor (or closest if cursor is between result sets)
 ---@param filepath string? Optional file path (uses config export_directory if not provided)
 function UiQuery.export_results_to_csv(filepath)
-  if not UiQuery.last_results or not UiQuery.last_results.resultSets then
+  local query_bufnr = get_current_query_bufnr()
+  local stored = query_bufnr and UiQuery.buffer_results[query_bufnr]
+
+  if not stored or not stored.resultSets then
     vim.notify("SSNS: No results to export", vim.log.levels.WARN)
     return
   end
 
-  local csv_content = UiQuery.results_to_csv(UiQuery.last_results.resultSets, 0)
+  -- Determine which result set to export based on cursor position
+  local cursor_line = vim.api.nvim_win_get_cursor(0)[1]  -- 1-indexed
+  local result_set_index = get_result_set_at_cursor(query_bufnr, cursor_line)
+
+  -- Default to first result set if we can't determine cursor position
+  if not result_set_index then
+    result_set_index = 1
+  end
+
+  local csv_content = UiQuery.results_to_csv(stored.resultSets, result_set_index)
   if csv_content == "" then
     vim.notify("SSNS: No data to export", vim.log.levels.WARN)
     return
   end
 
-  -- Generate filename with timestamp
-  local filename = os.date("ssns_results_%Y%m%d_%H%M%S.csv")
+  -- Generate filename with timestamp and result set number
+  local filename
+  if #stored.resultSets > 1 then
+    filename = os.date("ssns_result_set_" .. result_set_index .. "_%Y%m%d_%H%M%S.csv")
+  else
+    filename = os.date("ssns_results_%Y%m%d_%H%M%S.csv")
+  end
 
   if not filepath then
     local Config = require('ssns.config')
@@ -1952,20 +2094,119 @@ function UiQuery.export_results_to_csv(filepath)
   file:write(csv_content)
   file:close()
 
-  vim.notify(string.format("SSNS: Results exported to %s", filepath), vim.log.levels.INFO)
+  -- Count rows in this result set
+  local row_count = 0
+  if stored.resultSets[result_set_index] and stored.resultSets[result_set_index].rows then
+    row_count = #stored.resultSets[result_set_index].rows
+  end
+
+  if #stored.resultSets > 1 then
+    vim.notify(string.format("SSNS: Result set %d (%d rows) exported to %s", result_set_index, row_count, filepath), vim.log.levels.INFO)
+  else
+    vim.notify(string.format("SSNS: Results (%d rows) exported to %s", row_count, filepath), vim.log.levels.INFO)
+  end
 
   -- Open in default application
   open_with_default_app(filepath)
 end
 
+---Export ALL result sets to separate CSV files and open in default application
+---Each result set is exported to its own file with sequential numbering
+function UiQuery.export_all_results_to_csv()
+  local query_bufnr = get_current_query_bufnr()
+  local stored = query_bufnr and UiQuery.buffer_results[query_bufnr]
+
+  if not stored or not stored.resultSets or #stored.resultSets == 0 then
+    vim.notify("SSNS: No results to export", vim.log.levels.WARN)
+    return
+  end
+
+  local Config = require('ssns.config')
+  local query_config = Config.get_query()
+  local export_dir = query_config.export_directory
+
+  -- Determine export directory
+  local dir
+  if export_dir == "" then
+    -- Empty string means prompt for location - use input to get directory
+    dir = vim.fn.input({
+      prompt = "Export directory: ",
+      default = vim.fn.getcwd(),
+      completion = "dir",
+    })
+
+    if dir == "" then
+      vim.notify("SSNS: Export cancelled", vim.log.levels.INFO)
+      return
+    end
+  else
+    dir = export_dir or get_temp_dir()
+  end
+
+  dir = vim.fn.expand(dir)  -- Handle ~ and env vars
+
+  -- Ensure directory exists
+  if vim.fn.isdirectory(dir) == 0 then
+    vim.fn.mkdir(dir, "p")
+  end
+
+  -- Generate base filename with timestamp
+  local timestamp = os.date("%Y%m%d_%H%M%S")
+  local exported_files = {}
+  local total_rows = 0
+
+  for i, resultSet in ipairs(stored.resultSets) do
+    local csv_content = UiQuery.results_to_csv(stored.resultSets, i)
+    if csv_content ~= "" then
+      local filename = string.format("ssns_result_set_%d_%s.csv", i, timestamp)
+      local filepath = dir .. "/" .. filename
+
+      -- Normalize path separators for Windows
+      if vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1 then
+        filepath = filepath:gsub("/", "\\")
+      end
+
+      -- Write to file
+      local file, err = io.open(filepath, "w")
+      if file then
+        file:write(csv_content)
+        file:close()
+        table.insert(exported_files, filepath)
+
+        -- Count rows
+        if resultSet.rows then
+          total_rows = total_rows + #resultSet.rows
+        end
+      else
+        vim.notify(string.format("SSNS: Failed to write %s: %s", filename, err or "unknown error"), vim.log.levels.WARN)
+      end
+    end
+  end
+
+  if #exported_files == 0 then
+    vim.notify("SSNS: No data to export", vim.log.levels.WARN)
+    return
+  end
+
+  vim.notify(string.format("SSNS: Exported %d result sets (%d total rows) to %s", #exported_files, total_rows, dir), vim.log.levels.INFO)
+
+  -- Open each file in default application
+  for _, filepath in ipairs(exported_files) do
+    open_with_default_app(filepath)
+  end
+end
+
 ---Yank results as CSV to clipboard
 function UiQuery.yank_results_as_csv()
-  if not UiQuery.last_results or not UiQuery.last_results.resultSets then
+  local query_bufnr = get_current_query_bufnr()
+  local stored = query_bufnr and UiQuery.buffer_results[query_bufnr]
+
+  if not stored or not stored.resultSets then
     vim.notify("SSNS: No results to copy", vim.log.levels.WARN)
     return
   end
 
-  local csv_content = UiQuery.results_to_csv(UiQuery.last_results.resultSets, 0)
+  local csv_content = UiQuery.results_to_csv(stored.resultSets, 0)
   if csv_content == "" then
     vim.notify("SSNS: No data to copy", vim.log.levels.WARN)
     return
@@ -1977,7 +2218,7 @@ function UiQuery.yank_results_as_csv()
 
   -- Count rows for feedback
   local row_count = 0
-  for _, resultSet in ipairs(UiQuery.last_results.resultSets) do
+  for _, resultSet in ipairs(stored.resultSets) do
     if resultSet.rows then
       row_count = row_count + #resultSet.rows
     end
@@ -1986,15 +2227,22 @@ function UiQuery.yank_results_as_csv()
   vim.notify(string.format("SSNS: Copied %d rows as CSV to clipboard", row_count), vim.log.levels.INFO)
 end
 
----Get the last results (for external access)
----@return table? last_results The stored results or nil
-function UiQuery.get_last_results()
-  return UiQuery.last_results
+---Get the results for a specific query buffer (for external access)
+---@param query_bufnr number? The query buffer number (defaults to current context)
+---@return table? results The stored results or nil
+function UiQuery.get_buffer_results(query_bufnr)
+  query_bufnr = query_bufnr or get_current_query_bufnr()
+  return query_bufnr and UiQuery.buffer_results[query_bufnr]
 end
 
----Clear stored results
-function UiQuery.clear_last_results()
-  UiQuery.last_results = nil
+---Clear stored results for a specific query buffer
+---@param query_bufnr number? The query buffer number (defaults to current context, nil clears all)
+function UiQuery.clear_buffer_results(query_bufnr)
+  if query_bufnr then
+    UiQuery.buffer_results[query_bufnr] = nil
+  else
+    UiQuery.buffer_results = {}
+  end
 end
 
 return UiQuery
