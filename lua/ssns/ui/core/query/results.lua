@@ -841,6 +841,45 @@ function QueryResults.setup_results_keymaps(result_buf)
   })
 end
 
+---Show cancelled message in results buffer
+---@param results_bufnr number Results buffer number
+---@param execution_time_ms number? Elapsed time before cancellation
+function QueryResults.show_cancelled(results_bufnr, execution_time_ms)
+  if not vim.api.nvim_buf_is_valid(results_bufnr) then
+    return
+  end
+
+  local lines = {
+    "",
+    "  === QUERY CANCELLED ===",
+    "",
+  }
+
+  if execution_time_ms then
+    local time_str
+    if execution_time_ms < 1000 then
+      time_str = string.format("%.0f ms", execution_time_ms)
+    else
+      time_str = string.format("%.2f seconds", execution_time_ms / 1000)
+    end
+    table.insert(lines, string.format("  Cancelled after: %s", time_str))
+    table.insert(lines, "")
+  end
+
+  table.insert(lines, "  Query execution was cancelled by user.")
+  table.insert(lines, "")
+  table.insert(lines, "  =========================")
+
+  vim.api.nvim_buf_set_option(results_bufnr, 'modifiable', true)
+  vim.api.nvim_buf_set_lines(results_bufnr, 0, -1, false, lines)
+  vim.api.nvim_buf_set_option(results_bufnr, 'modifiable', false)
+
+  -- Add highlight for cancelled message
+  local ns_id = vim.api.nvim_create_namespace('ssns_results_cancelled')
+  vim.api.nvim_buf_clear_namespace(results_bufnr, ns_id, 0, -1)
+  vim.api.nvim_buf_add_highlight(results_bufnr, ns_id, 'WarningMsg', 1, 0, -1)
+end
+
 ---Initialize the results module with parent reference
 ---@param parent UiQuery The parent UiQuery module
 function QueryResults._init(parent)
