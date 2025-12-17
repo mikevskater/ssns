@@ -206,12 +206,12 @@ local function _setup_auto_save()
 
   local interval = (config.completion.usage_save_interval or 30) * 1000  -- Convert to ms
 
-  -- Create timer for periodic saves
+  -- Create timer for periodic saves (async to avoid blocking UI)
   UsageTracker.save_timer = vim.loop.new_timer()
   UsageTracker.save_timer:start(interval, interval, vim.schedule_wrap(function()
     if UsageTracker.is_dirty then
-      debug_log("Auto-saving (timer)")
-      UsageTracker.save_to_file()
+      debug_log("Auto-saving (timer, async)")
+      UsageTracker.save_to_file_async()
     end
   end))
 
@@ -416,13 +416,13 @@ function UsageTracker.clear_weights(connection_key)
       UsageTracker.is_dirty = true
       debug_log(string.format("Cleared weights for: %s", connection_key))
 
-      -- Auto-save
+      -- Auto-save (async to avoid blocking)
       if not Config then
         Config = require('ssns.config')
       end
       local config = Config.get()
       if config.completion.usage_auto_save then
-        UsageTracker.save_to_file()
+        UsageTracker.save_to_file_async()
       end
 
       return true
@@ -436,13 +436,13 @@ function UsageTracker.clear_weights(connection_key)
     UsageTracker.is_dirty = true
     debug_log("Cleared all weights")
 
-    -- Auto-save
+    -- Auto-save (async to avoid blocking)
     if not Config then
       Config = require('ssns.config')
     end
     local config = Config.get()
     if config.completion.usage_auto_save then
-      UsageTracker.save_to_file()
+      UsageTracker.save_to_file_async()
     end
 
     return true
