@@ -634,4 +634,165 @@ function SchemaClass:to_string()
   )
 end
 
+-- ============================================================================
+-- Async Methods
+-- ============================================================================
+
+---@class SchemaLoadAsyncOpts : ExecutorOpts
+---@field on_complete fun(success: boolean, error: string?)? Completion callback
+
+---Load all objects in this schema asynchronously
+---@param opts SchemaLoadAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function SchemaClass:load_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Loading schema...")
+    local success = self:load()
+    ctx.report_progress(100, "Schema loaded")
+    return success
+  end, {
+    name = opts.name or string.format("Loading schema %s", self.schema_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
+---Load tables in this schema asynchronously
+---@param opts SchemaLoadAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function SchemaClass:load_tables_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Loading tables...")
+    local success = self:load_tables()
+    ctx.report_progress(100, "Tables loaded")
+    return success
+  end, {
+    name = opts.name or string.format("Loading tables for %s", self.schema_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
+---Load views in this schema asynchronously
+---@param opts SchemaLoadAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function SchemaClass:load_views_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Loading views...")
+    local success = self:load_views()
+    ctx.report_progress(100, "Views loaded")
+    return success
+  end, {
+    name = opts.name or string.format("Loading views for %s", self.schema_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
+---Load procedures in this schema asynchronously
+---@param opts SchemaLoadAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function SchemaClass:load_procedures_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Loading procedures...")
+    local success = self:load_procedures()
+    ctx.report_progress(100, "Procedures loaded")
+    return success
+  end, {
+    name = opts.name or string.format("Loading procedures for %s", self.schema_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
+---Load functions in this schema asynchronously
+---@param opts SchemaLoadAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function SchemaClass:load_functions_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Loading functions...")
+    local success = self:load_functions()
+    ctx.report_progress(100, "Functions loaded")
+    return success
+  end, {
+    name = opts.name or string.format("Loading functions for %s", self.schema_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
+---Load synonyms in this schema asynchronously
+---@param opts SchemaLoadAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function SchemaClass:load_synonyms_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Loading synonyms...")
+    local success = self:load_synonyms()
+    ctx.report_progress(100, "Synonyms loaded")
+    return success
+  end, {
+    name = opts.name or string.format("Loading synonyms for %s", self.schema_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
+---Load all columns for all tables and views in this schema asynchronously
+---@param opts SchemaLoadAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function SchemaClass:load_all_columns_bulk_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Loading columns...")
+    local success = self:load_all_columns_bulk()
+    ctx.report_progress(100, "Columns loaded")
+    return success
+  end, {
+    name = opts.name or string.format("Loading columns for %s", self.schema_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
 return SchemaClass
