@@ -2,14 +2,18 @@
 ---@class SpinnerModule
 local Spinner = {}
 
----Spinner animation frames
-local FRAMES = {
+---Spinner animation frames (exported for text-based rendering)
+---@type table<string, string[]>
+Spinner.FRAMES = {
   braille = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" },
   dots = { "⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷" },
   line = { "-", "\\", "|", "/" },
   bounce = { "⠁", "⠂", "⠄", "⠂" },
   arc = { "◜", "◠", "◝", "◞", "◡", "◟" },
 }
+
+-- Local reference for internal use
+local FRAMES = Spinner.FRAMES
 
 ---Active spinners indexed by ID
 ---@type table<string, SpinnerInstance>
@@ -269,6 +273,146 @@ function Spinner.clear_buffer(bufnr)
   if vim.api.nvim_buf_is_valid(bufnr) then
     vim.api.nvim_buf_clear_namespace(bufnr, ns_id, 0, -1)
   end
+end
+
+-- ============================================================================
+-- Text-Based Spinner Support
+-- ============================================================================
+-- These functions support text-based spinner rendering (e.g., in ContentBuilder)
+-- where virtual text overlays aren't appropriate
+
+---Get the user's configured spinner style
+---@return string style The configured spinner style (default: "braille")
+function Spinner.get_configured_style()
+  local ok, Config = pcall(require, 'ssns.config')
+  if ok then
+    local cfg = Config.get()
+    if cfg.async and cfg.async.spinner_style then
+      return cfg.async.spinner_style
+    end
+  end
+  return "braille"
+end
+
+---Get spinner frames for a style
+---@param style string? Style name (defaults to user's configured style)
+---@return string[] frames Array of spinner frame characters
+function Spinner.get_frames(style)
+  style = style or Spinner.get_configured_style()
+  return FRAMES[style] or FRAMES.braille
+end
+
+---Format elapsed time as HH:MM:SS or MM:SS (exported for text-based spinners)
+---@param elapsed_ms number Elapsed time in milliseconds
+---@return string formatted Runtime string
+function Spinner.format_runtime(elapsed_ms)
+  return format_runtime(elapsed_ms)
+end
+
+---Format elapsed time from hrtime start
+---@param start_time number Start time from vim.loop.hrtime()
+---@return string formatted Runtime string
+function Spinner.format_runtime_from_hrtime(start_time)
+  if not start_time then return "00:00" end
+  local elapsed_ms = (vim.loop.hrtime() - start_time) / 1e6
+  return format_runtime(elapsed_ms)
+end
+
+-- ============================================================================
+-- TextSpinner Class - For text-based spinner management
+-- ============================================================================
+
+---@class TextSpinner
+---@field style string Animation style
+---@field frames string[] Animation frames
+---@field frame_idx number Current frame index (1-indexed)
+---@field start_time number Start time (vim.loop.hrtime)
+---@field timer userdata? Timer handle for auto-advance
+---@field on_tick function? Callback called on each tick
+local TextSpinner = {}
+TextSpinner.__index = TextSpinner
+
+---Create a new text spinner instance
+---@param opts { style: string?, on_tick: function? }? Options
+---@return TextSpinner
+function Spinner.create_text_spinner(opts)
+  opts = opts or {}
+
+  local style = opts.style or Spinner.get_configured_style()
+  local frames = FRAMES[style] or FRAMES.braille
+
+  local self = setmetatable({
+    style = style,
+    frames = frames,
+    frame_idx = 1,
+    start_time = vim.loop.hrtime(),
+    timer = nil,
+    on_tick = opts.on_tick,
+  }, TextSpinner)
+
+  return self
+end
+
+---Get the current spinner frame character
+---@return string frame Current spinner frame
+function TextSpinner:get_frame()
+  return self.frames[self.frame_idx]
+end
+
+---Advance to the next frame
+---@return string frame The new current frame
+function TextSpinner:advance()
+  self.frame_idx = (self.frame_idx % #self.frames) + 1
+  return self:get_frame()
+end
+
+---Get formatted runtime string
+---@return string runtime Formatted as MM:SS or HH:MM:SS
+function TextSpinner:get_runtime()
+  return Spinner.format_runtime_from_hrtime(self.start_time)
+end
+
+---Get elapsed time in milliseconds
+---@return number elapsed_ms
+function TextSpinner:get_elapsed_ms()
+  return (vim.loop.hrtime() - self.start_time) / 1e6
+end
+
+---Start auto-advancing timer
+---@param interval_ms number? Interval in milliseconds (default: 100)
+function TextSpinner:start(interval_ms)
+  if self.timer then return end  -- Already running
+
+  interval_ms = interval_ms or 100
+
+  self.timer = vim.loop.new_timer()
+  self.timer:start(0, interval_ms, vim.schedule_wrap(function()
+    self:advance()
+    if self.on_tick then
+      self.on_tick(self)
+    end
+  end))
+end
+
+---Stop the auto-advancing timer
+function TextSpinner:stop()
+  if self.timer then
+    self.timer:stop()
+    self.timer:close()
+    self.timer = nil
+  end
+end
+
+---Reset the spinner (frame index and start time)
+function TextSpinner:reset()
+  self.frame_idx = 1
+  self.start_time = vim.loop.hrtime()
+end
+
+---Check if the timer is running
+---@return boolean is_running
+function TextSpinner:is_running()
+  return self.timer ~= nil
 end
 
 return Spinner
