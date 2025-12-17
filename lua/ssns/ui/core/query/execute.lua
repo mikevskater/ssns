@@ -43,6 +43,8 @@ local function get_or_create_results_buffer(query_bufnr)
   vim.api.nvim_buf_set_option(result_buf, 'buftype', 'nofile')
   vim.api.nvim_buf_set_option(result_buf, 'swapfile', false)
   vim.api.nvim_buf_set_option(result_buf, 'bufhidden', 'hide')
+  -- Store association: results buffer -> query buffer
+  vim.api.nvim_buf_set_var(result_buf, 'ssns_query_bufnr', query_bufnr)
 
   return result_buf, true
 end
@@ -266,8 +268,8 @@ function QueryExecute.execute_query(bufnr, visual)
           end
         end
 
-        -- Display results with execution metadata
-        QueryResults.display_results(result, sql, execution_time_ms, bufnr)
+        -- Display results with execution metadata (pass pre-created results buffer)
+        QueryResults.display_results(result, sql, execution_time_ms, bufnr, results_bufnr)
       end,
     }
   )

@@ -560,7 +560,8 @@ end
 ---@param sql string The SQL that was executed
 ---@param execution_time_ms number? Execution time in milliseconds
 ---@param query_bufnr number? The query buffer number (for per-buffer results tracking)
-function QueryResults.display_results(result, sql, execution_time_ms, query_bufnr)
+---@param results_bufnr number? Pre-created results buffer (from async execute)
+function QueryResults.display_results(result, sql, execution_time_ms, query_bufnr, results_bufnr)
   local ContentBuilder = require('ssns.ui.core.content_builder')
 
   -- Use provided buffer or current buffer
@@ -574,30 +575,33 @@ function QueryResults.display_results(result, sql, execution_time_ms, query_bufn
     metadata = result.metadata,
   }
 
-  -- Generate unique results buffer name based on query buffer
-  local query_buf_name = vim.api.nvim_buf_get_name(query_bufnr)
-  local short_name = query_buf_name:match("%[([^%]]+)%]") or tostring(query_bufnr)
-  local results_buf_name = string.format("SSNS Results [%s]", short_name)
+  -- Use pre-created results buffer if provided, otherwise find/create one
+  local result_buf = results_bufnr
+  if not result_buf then
+    -- Generate unique results buffer name based on query buffer
+    local query_buf_name = vim.api.nvim_buf_get_name(query_bufnr)
+    local short_name = query_buf_name:match("%[([^%]]+)%]") or tostring(query_bufnr)
+    local results_buf_name = string.format("SSNS Results [%s]", short_name)
 
-  -- Try to find existing results buffer for this query buffer
-  local result_buf = nil
-  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_valid(buf) then
-      local buf_name = vim.api.nvim_buf_get_name(buf)
-      if buf_name == results_buf_name then
-        result_buf = buf
-        break
+    -- Try to find existing results buffer for this query buffer
+    for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_is_valid(buf) then
+        local buf_name = vim.api.nvim_buf_get_name(buf)
+        if buf_name == results_buf_name then
+          result_buf = buf
+          break
+        end
       end
     end
-  end
 
-  -- Create new buffer if not found
-  if not result_buf then
-    result_buf = vim.api.nvim_create_buf(false, true)
-    vim.api.nvim_buf_set_name(result_buf, results_buf_name)
-    vim.api.nvim_buf_set_option(result_buf, 'buftype', 'nofile')
-    -- Store association: results buffer -> query buffer
-    vim.api.nvim_buf_set_var(result_buf, 'ssns_query_bufnr', query_bufnr)
+    -- Create new buffer if not found
+    if not result_buf then
+      result_buf = vim.api.nvim_create_buf(false, true)
+      vim.api.nvim_buf_set_name(result_buf, results_buf_name)
+      vim.api.nvim_buf_set_option(result_buf, 'buftype', 'nofile')
+      -- Store association: results buffer -> query buffer
+      vim.api.nvim_buf_set_var(result_buf, 'ssns_query_bufnr', query_bufnr)
+    end
   end
 
   -- Format results with styled ContentBuilder (also returns line ranges for cursor-based export)
