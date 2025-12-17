@@ -1082,4 +1082,421 @@ function DbClass:load_all_metadata_bulk_async(opts)
   })
 end
 
+---@class GetObjectsAsyncOpts : ExecutorOpts
+---@field schema_filter string? Optional schema filter
+---@field on_complete fun(objects: table[]?, error: string?)? Completion callback
+
+---Get all tables asynchronously (uses lazy/eager loading based on config)
+---This is the preferred method for tree UI - it respects config settings
+---@param opts GetObjectsAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function DbClass:get_tables_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Loading tables...")
+    local tables = self:get_tables(opts.schema_filter)
+    ctx.report_progress(100, "Tables loaded")
+    return tables
+  end, {
+    name = opts.name or string.format("Loading tables for %s", self.db_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
+---Get all views asynchronously (uses lazy/eager loading based on config)
+---This is the preferred method for tree UI - it respects config settings
+---@param opts GetObjectsAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function DbClass:get_views_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Loading views...")
+    local views = self:get_views(opts.schema_filter)
+    ctx.report_progress(100, "Views loaded")
+    return views
+  end, {
+    name = opts.name or string.format("Loading views for %s", self.db_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
+---Get all procedures asynchronously (uses lazy/eager loading based on config)
+---This is the preferred method for tree UI - it respects config settings
+---@param opts GetObjectsAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function DbClass:get_procedures_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Loading procedures...")
+    local procedures = self:get_procedures(opts.schema_filter)
+    ctx.report_progress(100, "Procedures loaded")
+    return procedures
+  end, {
+    name = opts.name or string.format("Loading procedures for %s", self.db_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
+---Get all functions asynchronously (uses lazy/eager loading based on config)
+---This is the preferred method for tree UI - it respects config settings
+---@param opts GetObjectsAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function DbClass:get_functions_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Loading functions...")
+    local functions = self:get_functions(opts.schema_filter)
+    ctx.report_progress(100, "Functions loaded")
+    return functions
+  end, {
+    name = opts.name or string.format("Loading functions for %s", self.db_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
+---Get all synonyms asynchronously (uses lazy/eager loading based on config)
+---This is the preferred method for tree UI - it respects config settings
+---@param opts GetObjectsAsyncOpts? Options
+---@return string task_id Task ID for tracking/cancellation
+function DbClass:get_synonyms_async(opts)
+  opts = opts or {}
+  local Executor = require('ssns.async.executor')
+
+  return Executor.run(function(ctx)
+    ctx.throw_if_cancelled()
+    ctx.report_progress(0, "Loading synonyms...")
+    local synonyms = self:get_synonyms(opts.schema_filter)
+    ctx.report_progress(100, "Synonyms loaded")
+    return synonyms
+  end, {
+    name = opts.name or string.format("Loading synonyms for %s", self.db_name),
+    timeout_ms = opts.timeout_ms,
+    cancel_token = opts.cancel_token,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
+-- ============================================================================
+-- RPC ASYNC METHODS (Non-blocking)
+-- ============================================================================
+-- These methods use the async RPC mechanism where queries run in Node.js
+-- background and call back when complete. The UI stays fully responsive.
+
+---@class RPCAsyncOpts
+---@field on_complete fun(result: any, error: string?)? Completion callback
+---@field on_error fun(error: string)? Error callback
+---@field timeout_ms number? Timeout in milliseconds (default: 60000)
+
+---Load all tables for all schemas using RPC async (non-blocking)
+---UI remains responsive during the query execution
+---@param opts RPCAsyncOpts? Options
+---@return string callback_id Callback ID for cancellation
+function DbClass:load_all_tables_bulk_rpc_async(opts)
+  opts = opts or {}
+
+  if not self.schemas then
+    if opts.on_complete then opts.on_complete(false, "Not a schema-based server") end
+    return "no-op"
+  end
+
+  local adapter = self:get_adapter()
+
+  -- Get the bulk query (nil schema = all schemas)
+  local query = adapter:get_tables_query(self.db_name, nil)
+
+  -- Execute via RPC async
+  return adapter:execute_rpc_async(self:_get_db_connection_config(), query, {
+    timeout_ms = opts.timeout_ms or 60000,
+    on_complete = function(results, err)
+      if err then
+        if opts.on_error then opts.on_error(err)
+        elseif opts.on_complete then opts.on_complete(nil, err) end
+        return
+      end
+
+      -- Parse results using adapter's standard parser
+      local table_data_list = adapter:parse_tables(results)
+
+      -- Group tables by schema
+      local tables_by_schema = {}
+      for _, table_data in ipairs(table_data_list) do
+        local schema_name = table_data.schema
+        if not tables_by_schema[schema_name] then
+          tables_by_schema[schema_name] = {}
+        end
+        table.insert(tables_by_schema[schema_name], table_data)
+      end
+
+      -- Distribute to schemas
+      for _, schema in ipairs(self.schemas) do
+        local schema_tables = tables_by_schema[schema.name] or {}
+        schema:set_tables(schema_tables)
+      end
+
+      if opts.on_complete then
+        opts.on_complete(true, nil)
+      end
+    end,
+    on_error = opts.on_error,
+  })
+end
+
+---Load all views for all schemas using RPC async (non-blocking)
+---@param opts RPCAsyncOpts? Options
+---@return string callback_id Callback ID for cancellation
+function DbClass:load_all_views_bulk_rpc_async(opts)
+  opts = opts or {}
+
+  if not self.schemas then
+    if opts.on_complete then opts.on_complete(false, "Not a schema-based server") end
+    return "no-op"
+  end
+
+  local adapter = self:get_adapter()
+
+  if not adapter.features.views then
+    -- Set empty arrays for all schemas
+    for _, schema in ipairs(self.schemas) do
+      schema:set_views({})
+    end
+    if opts.on_complete then opts.on_complete(true, nil) end
+    return "no-op"
+  end
+
+  local query = adapter:get_views_query(self.db_name, nil)
+
+  return adapter:execute_rpc_async(self:_get_db_connection_config(), query, {
+    timeout_ms = opts.timeout_ms or 60000,
+    on_complete = function(results, err)
+      if err then
+        if opts.on_error then opts.on_error(err)
+        elseif opts.on_complete then opts.on_complete(nil, err) end
+        return
+      end
+
+      local view_data_list = adapter:parse_views(results)
+
+      -- Group views by schema
+      local views_by_schema = {}
+      for _, view_data in ipairs(view_data_list) do
+        local schema_name = view_data.schema
+        if not views_by_schema[schema_name] then
+          views_by_schema[schema_name] = {}
+        end
+        table.insert(views_by_schema[schema_name], view_data)
+      end
+
+      -- Distribute to schemas
+      for _, schema in ipairs(self.schemas) do
+        local schema_views = views_by_schema[schema.name] or {}
+        schema:set_views(schema_views)
+      end
+
+      if opts.on_complete then
+        opts.on_complete(true, nil)
+      end
+    end,
+    on_error = opts.on_error,
+  })
+end
+
+---Load all procedures for all schemas using RPC async (non-blocking)
+---@param opts RPCAsyncOpts? Options
+---@return string callback_id Callback ID for cancellation
+function DbClass:load_all_procedures_bulk_rpc_async(opts)
+  opts = opts or {}
+
+  if not self.schemas then
+    if opts.on_complete then opts.on_complete(false, "Not a schema-based server") end
+    return "no-op"
+  end
+
+  local adapter = self:get_adapter()
+
+  if not adapter.features.procedures then
+    for _, schema in ipairs(self.schemas) do
+      schema:set_procedures({})
+    end
+    if opts.on_complete then opts.on_complete(true, nil) end
+    return "no-op"
+  end
+
+  local query = adapter:get_procedures_query(self.db_name, nil)
+
+  return adapter:execute_rpc_async(self:_get_db_connection_config(), query, {
+    timeout_ms = opts.timeout_ms or 60000,
+    on_complete = function(results, err)
+      if err then
+        if opts.on_error then opts.on_error(err)
+        elseif opts.on_complete then opts.on_complete(nil, err) end
+        return
+      end
+
+      local proc_data_list = adapter:parse_procedures(results)
+
+      -- Group by schema
+      local procs_by_schema = {}
+      for _, proc_data in ipairs(proc_data_list) do
+        local schema_name = proc_data.schema
+        if not procs_by_schema[schema_name] then
+          procs_by_schema[schema_name] = {}
+        end
+        table.insert(procs_by_schema[schema_name], proc_data)
+      end
+
+      -- Distribute to schemas
+      for _, schema in ipairs(self.schemas) do
+        local schema_procs = procs_by_schema[schema.name] or {}
+        schema:set_procedures(schema_procs)
+      end
+
+      if opts.on_complete then
+        opts.on_complete(true, nil)
+      end
+    end,
+    on_error = opts.on_error,
+  })
+end
+
+---Load all functions for all schemas using RPC async (non-blocking)
+---@param opts RPCAsyncOpts? Options
+---@return string callback_id Callback ID for cancellation
+function DbClass:load_all_functions_bulk_rpc_async(opts)
+  opts = opts or {}
+
+  if not self.schemas then
+    if opts.on_complete then opts.on_complete(false, "Not a schema-based server") end
+    return "no-op"
+  end
+
+  local adapter = self:get_adapter()
+
+  if not adapter.features.functions then
+    for _, schema in ipairs(self.schemas) do
+      schema:set_functions({})
+    end
+    if opts.on_complete then opts.on_complete(true, nil) end
+    return "no-op"
+  end
+
+  local query = adapter:get_functions_query(self.db_name, nil)
+
+  return adapter:execute_rpc_async(self:_get_db_connection_config(), query, {
+    timeout_ms = opts.timeout_ms or 60000,
+    on_complete = function(results, err)
+      if err then
+        if opts.on_error then opts.on_error(err)
+        elseif opts.on_complete then opts.on_complete(nil, err) end
+        return
+      end
+
+      local func_data_list = adapter:parse_functions(results)
+
+      -- Group by schema
+      local funcs_by_schema = {}
+      for _, func_data in ipairs(func_data_list) do
+        local schema_name = func_data.schema
+        if not funcs_by_schema[schema_name] then
+          funcs_by_schema[schema_name] = {}
+        end
+        table.insert(funcs_by_schema[schema_name], func_data)
+      end
+
+      -- Distribute to schemas
+      for _, schema in ipairs(self.schemas) do
+        local schema_funcs = funcs_by_schema[schema.name] or {}
+        schema:set_functions(schema_funcs)
+      end
+
+      if opts.on_complete then
+        opts.on_complete(true, nil)
+      end
+    end,
+    on_error = opts.on_error,
+  })
+end
+
+---Load all synonyms for all schemas using RPC async (non-blocking)
+---@param opts RPCAsyncOpts? Options
+---@return string callback_id Callback ID for cancellation
+function DbClass:load_all_synonyms_bulk_rpc_async(opts)
+  opts = opts or {}
+
+  if not self.schemas then
+    if opts.on_complete then opts.on_complete(false, "Not a schema-based server") end
+    return "no-op"
+  end
+
+  local adapter = self:get_adapter()
+
+  if not adapter.features.synonyms then
+    for _, schema in ipairs(self.schemas) do
+      schema:set_synonyms({})
+    end
+    if opts.on_complete then opts.on_complete(true, nil) end
+    return "no-op"
+  end
+
+  local query = adapter:get_synonyms_query(self.db_name, nil)
+
+  return adapter:execute_rpc_async(self:_get_db_connection_config(), query, {
+    timeout_ms = opts.timeout_ms or 60000,
+    on_complete = function(results, err)
+      if err then
+        if opts.on_error then opts.on_error(err)
+        elseif opts.on_complete then opts.on_complete(nil, err) end
+        return
+      end
+
+      local syn_data_list = adapter:parse_synonyms(results)
+
+      -- Group by schema
+      local syns_by_schema = {}
+      for _, syn_data in ipairs(syn_data_list) do
+        local schema_name = syn_data.schema
+        if not syns_by_schema[schema_name] then
+          syns_by_schema[schema_name] = {}
+        end
+        table.insert(syns_by_schema[schema_name], syn_data)
+      end
+
+      -- Distribute to schemas
+      for _, schema in ipairs(self.schemas) do
+        local schema_syns = syns_by_schema[schema.name] or {}
+        schema:set_synonyms(schema_syns)
+      end
+
+      if opts.on_complete then
+        opts.on_complete(true, nil)
+      end
+    end,
+    on_error = opts.on_error,
+  })
+end
+
 return DbClass
