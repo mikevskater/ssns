@@ -110,6 +110,9 @@ function M.set_color(name, color)
   local ok, ssns_component = pcall(require, 'lualine.components.ssns')
   if ok and ssns_component.set_color then
     ssns_component.set_color(name, color)
+    -- Invalidate and reload cache after color change
+    M.invalidate_cache()
+    M.init_async()
   else
     vim.notify('SSNS: Could not access lualine component', vim.log.levels.ERROR)
   end
@@ -123,6 +126,10 @@ function M.remove_color(name)
     ssns_component.remove_color(name)
     vim.notify(string.format('SSNS: Color removed for %s', name), vim.log.levels.INFO)
 
+    -- Invalidate and reload cache after color removal
+    M.invalidate_cache()
+    M.init_async()
+
     -- Refresh lualine if available
     if vim.fn.exists(':LualineRefresh') == 2 then
       vim.cmd('LualineRefresh')
@@ -133,25 +140,14 @@ function M.remove_color(name)
 end
 
 ---Get color for a connection (from lualine component)
+---Uses cached data only - never blocks on file I/O
+---Call M.init_async() at startup to populate cache
 ---@param name string Server or database name
 ---@return table|nil color Color spec or nil
 function M.get_color(name)
-  -- Load colors from file
-  local save_location = vim.fn.stdpath('data') .. '/ssns'
-  local colors_file = save_location .. '/lualine_colors.json'
-
-  if vim.fn.filereadable(colors_file) == 0 then
-    return nil
-  end
-
-  local ok, content = pcall(vim.fn.readfile, colors_file)
-  if not ok then
-    return nil
-  end
-
-  local json_str = table.concat(content, '\n')
-  ok, colors = pcall(vim.json.decode, json_str)
-  if not ok then
+  -- Use cached data only (async loaded at startup)
+  local colors = colors_cache
+  if not colors then
     return nil
   end
 
@@ -172,29 +168,12 @@ function M.get_color(name)
 end
 
 ---List all saved colors
+---Uses cached data only - call M.init_async() at startup to populate cache
 function M.list_colors()
-  local save_location = vim.fn.stdpath('data') .. '/ssns'
-  local colors_file = save_location .. '/lualine_colors.json'
+  -- Use cached data only (async loaded at startup)
+  local colors = colors_cache
 
-  if vim.fn.filereadable(colors_file) == 0 then
-    vim.notify('SSNS: No saved connection colors', vim.log.levels.INFO)
-    return
-  end
-
-  local ok, content = pcall(vim.fn.readfile, colors_file)
-  if not ok then
-    vim.notify('SSNS: Failed to read colors file', vim.log.levels.ERROR)
-    return
-  end
-
-  local json_str = table.concat(content, '\n')
-  ok, colors = pcall(vim.json.decode, json_str)
-  if not ok then
-    vim.notify('SSNS: Failed to parse colors file', vim.log.levels.ERROR)
-    return
-  end
-
-  if vim.tbl_isempty(colors) then
+  if not colors or vim.tbl_isempty(colors) then
     vim.notify('SSNS: No saved connection colors', vim.log.levels.INFO)
     return
   end

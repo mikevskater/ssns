@@ -24,6 +24,10 @@ function Ssns.setup(user_config)
   -- Setup configuration
   Config.setup(user_config)
 
+  -- Initialize lualine colors cache asynchronously (for non-blocking statusline)
+  local LualineColors = require('ssns.lualine_colors')
+  LualineColors.init_async()
+
   -- Load servers from configuration
   local Cache = require('ssns.cache')
   local Connections = require('ssns.connections')
