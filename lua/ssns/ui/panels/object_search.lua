@@ -2239,7 +2239,8 @@ local function _show_server_picker_with_connections(saved_connections)
       if not server:is_connected() or not server.is_loaded then
         vim.notify("Connecting to " .. selected.name .. "...", vim.log.levels.INFO)
 
-        server:connect_and_load_async({
+        -- Use true non-blocking RPC async (UI stays responsive)
+        server:connect_and_load_rpc_async({
           on_complete = function(success, err)
             if not success then
               vim.notify("Failed to connect: " .. (err or "Unknown"), vim.log.levels.ERROR)
@@ -2787,8 +2788,8 @@ function UiObjectSearch.show(options)
           multi_panel:render_panel("settings")
           multi_panel:render_panel("results")
 
-          -- Use async connect and load
-          server:connect_and_load_async({
+          -- Use true non-blocking RPC async (UI stays responsive)
+          server:connect_and_load_rpc_async({
             on_complete = function(success, err)
               -- Stop loading state
               ui_state.server_loading = false
