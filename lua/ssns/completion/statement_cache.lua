@@ -394,8 +394,13 @@ function StatementCache._schedule_update(bufnr)
     vim.fn.timer_stop(pending_timers[bufnr])
   end
 
-  -- Schedule new update after 150ms of inactivity
-  pending_timers[bufnr] = vim.fn.timer_start(150, function()
+  -- Get debounce delay from config (default 150ms)
+  local Config = require('ssns.config')
+  local completion_config = Config.get_completion()
+  local debounce_ms = completion_config.statement_cache_debounce_ms or 150
+
+  -- Schedule new update after debounce period of inactivity
+  pending_timers[bufnr] = vim.fn.timer_start(debounce_ms, function()
     pending_timers[bufnr] = nil
     StatementCache._update_cache(bufnr)
   end)

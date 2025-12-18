@@ -817,6 +817,7 @@ local default_config = {
     usage_save_interval = 30,    -- Auto-save interval in seconds
     usage_max_items = 10000,     -- Maximum items to track per type (0 = unlimited)
     always_quote_identifiers = false, -- Always quote identifiers (true) or only when needed (false)
+    statement_cache_debounce_ms = 150, -- Debounce delay for statement cache updates (ms)
   },
 
   -- Semantic highlighting for SQL query buffers
