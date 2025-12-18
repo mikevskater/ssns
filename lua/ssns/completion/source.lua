@@ -307,6 +307,17 @@ function Source:get_completions(ctx, callback)
   Debug.log(string.format("[COMPLETION] get_completions() called (filetype: %s, line: %s)",
     vim.bo.filetype, ctx.line or "nil"))
 
+  -- Cancel any in-flight completion request
+  if self._current_cancel_token then
+    self._current_cancel_token:cancel("New completion request")
+    Debug.log("[COMPLETION] Cancelled previous in-flight request")
+  end
+
+  -- Create new cancellation token for this request
+  local Cancellation = require('ssns.async.cancellation')
+  local cancel_token = Cancellation.create_token()
+  self._current_cancel_token = cancel_token
+
   -- Start performance timer
   local start_time = vim.loop.hrtime()
 
@@ -358,21 +369,7 @@ function Source:get_completions(ctx, callback)
     end
   end
 
-  -- Pre-resolve all aliases and tables in scope to avoid repeated tree walks in providers
-  -- Skip for cross-db schema completion (doesn't need resolved tables)
-  local resolved_scope = nil
-  if context_result and connection_ctx and not is_cross_db_schema then
-    local Resolver = require('ssns.completion.metadata.resolver')
-    resolved_scope = Resolver.pre_resolve_scope(context_result, connection_ctx)
-    Debug.log(string.format("[COMPLETION] Pre-resolved scope: %d aliases, %d tables",
-      vim.tbl_count(resolved_scope.resolved_aliases or {}),
-      vim.tbl_count(resolved_scope.resolved_tables or {})))
-
-    -- Add resolved_scope to context_result so providers can access it
-    context_result.resolved_scope = resolved_scope
-  end
-
-  -- Prepare context for providers
+  -- Prepare context for providers (will add resolved_scope later if needed)
   local provider_ctx = {
     bufnr = ctx.bufnr,
     connection = connection_ctx,
@@ -380,12 +377,72 @@ function Source:get_completions(ctx, callback)
     cursor_pos = {context_result.line_num, context_result.col},
   }
 
-  -- NOTE: Temp table detection is now handled by StatementCache
-  -- StatementCache.get_context_at_position() returns temp_tables in context
-  -- No need for lazy buffer-level detection here
+  -- Pre-resolve all aliases and tables in scope to avoid repeated tree walks in providers
+  -- Skip for cross-db schema completion (doesn't need resolved tables)
+  -- Use async version for non-blocking completion
+  if context_result and connection_ctx and not is_cross_db_schema then
+    local Resolver = require('ssns.completion.metadata.resolver')
+
+    -- Use async pre-resolution for non-blocking completion
+    Resolver.pre_resolve_scope_async(context_result, connection_ctx, {
+      timeout_ms = self.opts.timeout or 5000,
+      cancel_token = cancel_token,
+      on_complete = function(resolved_scope, err)
+        -- Check if request was cancelled
+        if cancel_token.is_cancelled then
+          Debug.log("[COMPLETION] Request was cancelled, ignoring results")
+          return
+        end
+
+        if resolved_scope then
+          Debug.log(string.format("[COMPLETION] Pre-resolved scope (async): %d aliases, %d tables",
+            vim.tbl_count(resolved_scope.resolved_aliases or {}),
+            vim.tbl_count(resolved_scope.resolved_tables or {})))
+          -- Add resolved_scope to context_result so providers can access it
+          context_result.resolved_scope = resolved_scope
+        end
+
+        -- Continue with provider routing after pre-resolution
+        self:_route_to_provider(context_result, provider_ctx, callback, start_time,
+          is_cross_db_schema, cross_db_target, connection_ctx, cancel_token)
+      end,
+    })
+
+    -- Return cancel function for blink.cmp
+    return function()
+      cancel_token:cancel("Completion cancelled by blink.cmp")
+    end
+  end
+
+  -- For cross-db schema or no connection, route immediately (no pre-resolution needed)
+  self:_route_to_provider(context_result, provider_ctx, callback, start_time,
+    is_cross_db_schema, cross_db_target, connection_ctx, cancel_token)
+
+  -- Return cancel function for blink.cmp
+  return function()
+    cancel_token:cancel("Completion cancelled by blink.cmp")
+  end
+end
+
+---Route to appropriate provider based on context type (internal method)
+---@param context_result table SQL context from detect_context
+---@param provider_ctx table Provider context
+---@param callback function blink.cmp callback
+---@param start_time number Start time for performance tracking
+---@param is_cross_db_schema boolean Whether this is cross-db schema completion
+---@param cross_db_target table? Target database for cross-db completion
+---@param connection_ctx table? Connection context
+---@param cancel_token table? Cancellation token
+function Source:_route_to_provider(context_result, provider_ctx, callback, start_time,
+    is_cross_db_schema, cross_db_target, connection_ctx, cancel_token)
 
   -- Create callback wrapper to apply limits and track performance
   local wrapped_callback = function(items)
+    -- Check if request was cancelled before delivering results
+    if cancel_token and cancel_token.is_cancelled then
+      Debug.log("[COMPLETION] Request cancelled, not delivering results")
+      return
+    end
     Debug.log(string.format("[COMPLETION] Provider returned %d items", items and #items or 0))
     -- Log first 5 item details for debugging
     if items and #items > 0 then
@@ -403,7 +460,7 @@ function Source:get_completions(ctx, callback)
 
     -- Calculate elapsed time
     local end_time = vim.loop.hrtime()
-    local elapsed_ms = (end_time - start_time) / 1e6 -- Convert nanoseconds to milliseconds
+    local elapsed_ms = (end_time - start_time) / 1e6
 
     -- Apply max_items limit
     if self.opts.max_items > 0 and #items > self.opts.max_items then
@@ -417,16 +474,16 @@ function Source:get_completions(ctx, callback)
     end
 
     -- Setup selection tracking (deferred, non-blocking)
-    -- This will detect which item was selected after completion
-    local tracking_ctx = {
-      connection = connection_ctx,
-      provider_ctx = provider_ctx,
-      sql_context = context_result,
-    }
-    setup_selection_tracker(tracking_ctx, items)
+    if connection_ctx then
+      local tracking_ctx = {
+        connection = connection_ctx,
+        provider_ctx = provider_ctx,
+        sql_context = context_result,
+      }
+      setup_selection_tracker(tracking_ctx, items)
+    end
 
-    -- Return results via callback directly
-    -- Avoid vim.schedule() here as it can delay completion in headless/test mode
+    -- Return results via callback
     Debug.log(string.format("[COMPLETION] Calling blink callback with %d items", #items))
     callback({
       items = items,
@@ -439,16 +496,10 @@ function Source:get_completions(ctx, callback)
   local Context = require('ssns.completion.statement_context')
 
   Debug.log(string.format("[COMPLETION] Routing to provider for context type: %s (mode: %s)",
-    context_result.type,
-    context_result.mode or "nil"))
+    context_result.type, context_result.mode or "nil"))
 
   if context_result.type == Context.Type.TABLE then
-    -- NOTE: JoinsProvider (FK-based suggestions) is not used for basic TABLE completion
-    -- All TABLE contexts (including "join" mode) use TablesProvider for consistent behavior
-    -- FK suggestions can be added as an enhancement layer on top of TablesProvider results
-
     -- Cross-database schema completion ("TEST.█" pattern)
-    -- Already detected early and stored in is_cross_db_schema/cross_db_target
     if is_cross_db_schema and cross_db_target then
       Debug.log(string.format("[COMPLETION] Routing to SchemasProvider for cross-db: %s",
         context_result.potential_database))
@@ -457,77 +508,65 @@ function Source:get_completions(ctx, callback)
       return
     end
 
-    -- Table/view/synonym completion (Phase 10.2)
+    -- Table/view/synonym completion
     Debug.log("[COMPLETION] Calling TablesProvider")
     local TablesProvider = require('ssns.completion.providers.tables')
     TablesProvider.get_completions(provider_ctx, wrapped_callback)
-    return
+
   elseif context_result.type == Context.Type.COLUMN then
-    -- Column completion (Phase 10.3 Week 2)
     Debug.log("[COMPLETION] Calling ColumnsProvider")
     local ColumnsProvider = require('ssns.completion.providers.columns')
     ColumnsProvider.get_completions(provider_ctx, wrapped_callback)
-    return
+
   elseif context_result.type == Context.Type.PROCEDURE then
-    -- Procedure/function completion (Phase 10.6)
     Debug.log("[COMPLETION] Calling ProceduresProvider")
     local ProceduresProvider = require('ssns.completion.providers.procedures')
     ProceduresProvider.get_completions(provider_ctx, wrapped_callback)
-    return
+
   elseif context_result.type == Context.Type.PARAMETER then
-    -- Parameter completion (Phase 10.6)
     Debug.log("[COMPLETION] Calling ParametersProvider")
     local ParametersProvider = require('ssns.completion.providers.parameters')
     ParametersProvider.get_completions(provider_ctx, wrapped_callback)
-    return
+
   elseif context_result.type == Context.Type.DATABASE then
-    -- Database completion
     Debug.log("[COMPLETION] Calling DatabasesProvider")
     local DatabasesProvider = require('ssns.completion.providers.databases')
     DatabasesProvider.get_completions(provider_ctx, wrapped_callback)
-    return
+
   elseif context_result.type == Context.Type.SCHEMA then
-    -- Schema completion
     Debug.log("[COMPLETION] Calling SchemasProvider")
     local SchemasProvider = require('ssns.completion.providers.schemas')
     SchemasProvider.get_completions(provider_ctx, wrapped_callback)
-    return
+
   elseif context_result.type == Context.Type.KEYWORD then
-    -- Keyword completion (Phase 10.7)
     Debug.log("[COMPLETION] Calling KeywordsProvider + FunctionsProvider + SnippetsProvider")
     local KeywordsProvider = require('ssns.completion.providers.keywords')
     local FunctionsProvider = require('ssns.completion.providers.functions')
     local SnippetsProvider = require('ssns.completion.providers.snippets')
 
-    -- Get keywords, built-in functions, and snippets
     local items = {}
 
-    -- Get keywords
     local keyword_success, keyword_items = pcall(KeywordsProvider._get_completions_impl, provider_ctx)
     if keyword_success and keyword_items then
       vim.list_extend(items, keyword_items)
     end
 
-    -- Get built-in functions (SQL Server functions like GETDATE(), LEN(), etc.)
     local func_success, func_items = pcall(FunctionsProvider._get_completions_impl, provider_ctx)
     if func_success and func_items then
       vim.list_extend(items, func_items)
     end
 
-    -- Get snippets
     local snippet_success, snippet_items = pcall(SnippetsProvider._get_completions_impl, provider_ctx)
     if snippet_success and snippet_items then
       vim.list_extend(items, snippet_items)
     end
 
     wrapped_callback(items)
-    return
+
   else
-    -- Unknown context - no completions
     Debug.log(string.format("[COMPLETION] Unknown context type: %s, returning empty",
       tostring(context_result.type)))
     wrapped_callback({})
-    return
   end
 end
 
