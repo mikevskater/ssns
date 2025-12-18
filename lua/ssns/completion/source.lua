@@ -518,9 +518,14 @@ function Source:_route_to_provider(context_result, provider_ctx, callback, start
     })
 
   elseif context_result.type == Context.Type.COLUMN then
-    Debug.log("[COMPLETION] Calling ColumnsProvider")
+    -- Column completion (async to avoid blocking on database load)
+    Debug.log("[COMPLETION] Calling ColumnsProvider (async)")
     local ColumnsProvider = require('ssns.completion.providers.columns')
-    ColumnsProvider.get_completions(provider_ctx, wrapped_callback)
+    ColumnsProvider.get_completions_async(provider_ctx, {
+      on_complete = function(items, _)
+        wrapped_callback(items or {})
+      end
+    })
 
   elseif context_result.type == Context.Type.PROCEDURE then
     Debug.log("[COMPLETION] Calling ProceduresProvider")
