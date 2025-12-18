@@ -511,6 +511,35 @@ end
 -- Threshold for using chunked async write (1MB)
 local ASYNC_CHUNK_THRESHOLD = 1024 * 1024
 
+-- Threshold for showing progress indicator (100KB)
+local PROGRESS_THRESHOLD = 100 * 1024
+
+-- Last notification ID for progress updates (to replace previous notification)
+local last_progress_notification = nil
+
+---Show export progress notification
+---@param bytes_written number Bytes written so far
+---@param total_bytes number Total bytes to write
+---@param file_name string? File being written
+local function show_export_progress(bytes_written, total_bytes, file_name)
+  local pct = math.floor((bytes_written / total_bytes) * 100)
+  local kb_written = math.floor(bytes_written / 1024)
+  local kb_total = math.floor(total_bytes / 1024)
+
+  local msg
+  if file_name then
+    msg = string.format("Exporting %s: %d%% (%dKB/%dKB)", file_name, pct, kb_written, kb_total)
+  else
+    msg = string.format("Exporting: %d%% (%dKB/%dKB)", pct, kb_written, kb_total)
+  end
+
+  -- Use replace option if available (Neovim 0.9+)
+  vim.notify(msg, vim.log.levels.INFO, {
+    title = "SSNS Export",
+    replace = last_progress_notification,
+  })
+end
+
 ---Write content to file asynchronously with optional chunking for large files
 ---@param filepath string The file path to write to
 ---@param content string The content to write
@@ -787,6 +816,82 @@ function QueryExport.export_all_results_to_csv_async(opts)
   end
 
   export_next()
+end
+
+---Export results to CSV with progress indicator for large files
+---Shows progress notification for exports > 100KB
+---@param filepath string? Optional file path
+function QueryExport.export_with_progress(filepath)
+  local query_bufnr = get_current_query_bufnr()
+  local stored = query_bufnr and UiQuery.buffer_results[query_bufnr]
+
+  if not stored or not stored.resultSets then
+    vim.notify("SSNS: No results to export", vim.log.levels.WARN)
+    return
+  end
+
+  -- Determine result set and generate CSV content to check size
+  local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
+  local result_set_index = get_result_set_at_cursor(query_bufnr, cursor_line) or 1
+  local csv_content = QueryExport.results_to_csv(stored.resultSets, result_set_index)
+  local content_size = #csv_content
+
+  if content_size < PROGRESS_THRESHOLD then
+    -- Small export: use sync version (fast enough)
+    QueryExport.export_results_to_csv(filepath)
+  else
+    -- Large export: use async with progress
+    local Progress = require('ssns.async.progress')
+    local tracker = Progress.create(content_size, {
+      message = "Exporting CSV",
+      on_update = function(pct, t)
+        show_export_progress(t.current, t.total, nil)
+      end,
+    })
+
+    QueryExport.export_results_to_csv_async(filepath, {
+      on_progress = function(bytes, total)
+        tracker:set(bytes)
+      end,
+      on_complete = function(success, fpath, err)
+        if success then
+          -- Final notification handled by async function
+        end
+      end,
+    })
+  end
+end
+
+---Export all results with progress indicator
+---Shows progress for each result set being exported
+function QueryExport.export_all_with_progress()
+  local query_bufnr = get_current_query_bufnr()
+  local stored = query_bufnr and UiQuery.buffer_results[query_bufnr]
+
+  if not stored or not stored.resultSets or #stored.resultSets == 0 then
+    vim.notify("SSNS: No results to export", vim.log.levels.WARN)
+    return
+  end
+
+  local total_sets = #stored.resultSets
+  local current_set = 0
+
+  vim.notify(string.format("SSNS: Starting export of %d result sets...", total_sets), vim.log.levels.INFO)
+
+  QueryExport.export_all_results_to_csv_async({
+    on_progress = function(set_num, total, bytes, total_bytes)
+      if set_num ~= current_set then
+        current_set = set_num
+        vim.notify(string.format("SSNS: Exporting result set %d/%d...", set_num, total), vim.log.levels.INFO)
+      end
+      if total_bytes > PROGRESS_THRESHOLD then
+        show_export_progress(bytes, total_bytes, string.format("set %d", set_num))
+      end
+    end,
+    on_complete = function(success, filepaths, err)
+      -- Final notification handled by async function
+    end,
+  })
 end
 
 ---Initialize the export module with parent reference
