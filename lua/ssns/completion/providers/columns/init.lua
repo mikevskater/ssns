@@ -247,7 +247,7 @@ function ColumnsProvider.get_completions_async(ctx, opts)
   ColumnsProvider._async_with_resolved_scope(ctx, opts, on_complete)
 end
 
----Internal helper: pre-resolve scope then run sync impl
+---Internal helper: pre-resolve scope then run async impl for qualified modes
 ---@param ctx table Context
 ---@param opts table Options
 ---@param on_complete function Callback
@@ -259,15 +259,23 @@ function ColumnsProvider._async_with_resolved_scope(ctx, opts, on_complete)
   -- Check if we need to pre-resolve scope (for column completion)
   local has_tables_to_resolve = sql_context.tables_in_scope and #sql_context.tables_in_scope > 0
 
-  if has_tables_to_resolve and not sql_context.resolved_scope then
-    -- Pre-resolve scope async for better performance
-    Resolver.pre_resolve_scope_async(sql_context, connection, {
-      timeout_ms = opts.timeout_ms or 5000,
-      on_complete = function(resolved_scope, err)
-        -- Inject resolved scope into context
-        sql_context.resolved_scope = resolved_scope
-
-        -- Now run sync impl (fast since data is pre-cached)
+  -- Helper to run the completion after pre-resolution
+  local function run_completion()
+    -- For qualified modes, use true async methods to avoid blocking on Resolver.get_columns
+    local mode = sql_context.mode
+    if mode == "qualified" or mode == "select_qualified" or mode == "where_qualified" then
+      -- Use async qualified column resolution
+      get_qualified().get_qualified_columns_async(sql_context, connection, sql_context, {
+        on_complete = on_complete,
+      })
+    elseif mode == "qualified_bracket" then
+      -- Use async bracketed qualified column resolution
+      get_qualified().get_qualified_bracket_columns_async(sql_context, connection, sql_context, {
+        on_complete = on_complete,
+      })
+    else
+      -- Other modes: run sync impl (they don't call Resolver.get_columns or use in-memory data)
+      vim.schedule(function()
         local success, result = pcall(function()
           return ColumnsProvider._get_completions_impl(ctx)
         end)
@@ -276,20 +284,23 @@ function ColumnsProvider._async_with_resolved_scope(ctx, opts, on_complete)
         else
           on_complete({}, tostring(result))
         end
+      end)
+    end
+  end
+
+  if has_tables_to_resolve and not sql_context.resolved_scope then
+    -- Pre-resolve scope async for better performance
+    Resolver.pre_resolve_scope_async(sql_context, connection, {
+      timeout_ms = opts.timeout_ms or 5000,
+      on_complete = function(resolved_scope, err)
+        -- Inject resolved scope into context
+        sql_context.resolved_scope = resolved_scope
+        run_completion()
       end,
     })
   else
-    -- No tables to resolve or already resolved, run sync impl
-    vim.schedule(function()
-      local success, result = pcall(function()
-        return ColumnsProvider._get_completions_impl(ctx)
-      end)
-      if success then
-        on_complete(result or {}, nil)
-      else
-        on_complete({}, tostring(result))
-      end
-    end)
+    -- No tables to resolve or already resolved
+    run_completion()
   end
 end
 
