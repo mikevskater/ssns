@@ -504,6 +504,291 @@ function QueryExport.clear_buffer_results(query_bufnr)
   end
 end
 
+-- ============================================================================
+-- Async Export Functions
+-- ============================================================================
+
+-- Threshold for using chunked async write (1MB)
+local ASYNC_CHUNK_THRESHOLD = 1024 * 1024
+
+---Write content to file asynchronously with optional chunking for large files
+---@param filepath string The file path to write to
+---@param content string The content to write
+---@param opts table? Options: on_progress(bytes_written, total), on_complete(success, error)
+local function write_file_async(filepath, content, opts)
+  opts = opts or {}
+  local FileIO = require('ssns.async.file_io')
+  local content_size = #content
+
+  if content_size <= ASYNC_CHUNK_THRESHOLD then
+    -- Small file: single async write
+    FileIO.write_async(filepath, content, function(result)
+      if opts.on_progress then
+        opts.on_progress(content_size, content_size)
+      end
+      if opts.on_complete then
+        opts.on_complete(result.success, result.error)
+      end
+    end)
+  else
+    -- Large file: chunked async write
+    local uv = vim.loop or vim.uv
+    local CHUNK_SIZE = 64 * 1024  -- 64KB chunks
+    local offset = 0
+
+    uv.fs_open(filepath, "w", 438, function(err_open, fd)
+      if err_open then
+        vim.schedule(function()
+          if opts.on_complete then
+            opts.on_complete(false, "Failed to open file: " .. tostring(err_open))
+          end
+        end)
+        return
+      end
+
+      local function write_next_chunk()
+        if offset >= content_size then
+          -- Done writing
+          uv.fs_close(fd, function()
+            vim.schedule(function()
+              if opts.on_complete then
+                opts.on_complete(true, nil)
+              end
+            end)
+          end)
+          return
+        end
+
+        local chunk_end = math.min(offset + CHUNK_SIZE, content_size)
+        local chunk = content:sub(offset + 1, chunk_end)
+
+        uv.fs_write(fd, chunk, offset, function(err_write, bytes_written)
+          if err_write then
+            uv.fs_close(fd, function()
+              vim.schedule(function()
+                if opts.on_complete then
+                  opts.on_complete(false, "Failed to write: " .. tostring(err_write))
+                end
+              end)
+            end)
+            return
+          end
+
+          offset = offset + bytes_written
+
+          -- Report progress
+          if opts.on_progress then
+            vim.schedule(function()
+              opts.on_progress(offset, content_size)
+            end)
+          end
+
+          -- Schedule next chunk to avoid blocking
+          vim.schedule(write_next_chunk)
+        end)
+      end
+
+      write_next_chunk()
+    end)
+  end
+end
+
+---Export results to CSV asynchronously
+---@param filepath string? Optional file path (prompts if nil)
+---@param opts table? Options: on_progress(bytes, total), on_complete(success, filepath, error)
+function QueryExport.export_results_to_csv_async(filepath, opts)
+  opts = opts or {}
+  local query_bufnr = get_current_query_bufnr()
+  local stored = query_bufnr and UiQuery.buffer_results[query_bufnr]
+
+  if not stored or not stored.resultSets then
+    vim.notify("SSNS: No results to export", vim.log.levels.WARN)
+    if opts.on_complete then opts.on_complete(false, nil, "No results") end
+    return
+  end
+
+  -- Determine which result set to export based on cursor position
+  local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
+  local result_set_index = get_result_set_at_cursor(query_bufnr, cursor_line) or 1
+
+  local csv_content = QueryExport.results_to_csv(stored.resultSets, result_set_index)
+  if csv_content == "" then
+    vim.notify("SSNS: No data to export", vim.log.levels.WARN)
+    if opts.on_complete then opts.on_complete(false, nil, "No data") end
+    return
+  end
+
+  -- Generate filename with timestamp
+  local filename
+  if #stored.resultSets > 1 then
+    filename = os.date("ssns_result_set_" .. result_set_index .. "_%Y%m%d_%H%M%S.csv")
+  else
+    filename = os.date("ssns_results_%Y%m%d_%H%M%S.csv")
+  end
+
+  -- Determine filepath if not provided
+  if not filepath then
+    local Config = require('ssns.config')
+    local query_config = Config.get_query()
+    local export_dir = query_config.export_directory
+
+    if export_dir == "" then
+      -- Sync prompt (can't be async)
+      filepath = vim.fn.input({
+        prompt = "Export CSV to: ",
+        default = filename,
+        completion = "file",
+      })
+
+      if filepath == "" then
+        vim.notify("SSNS: Export cancelled", vim.log.levels.INFO)
+        if opts.on_complete then opts.on_complete(false, nil, "Cancelled") end
+        return
+      end
+      filepath = vim.fn.expand(filepath)
+    else
+      local dir = export_dir or get_temp_dir()
+      dir = vim.fn.expand(dir)
+      if vim.fn.isdirectory(dir) == 0 then
+        vim.fn.mkdir(dir, "p")
+      end
+      filepath = dir .. "/" .. filename
+      if vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1 then
+        filepath = filepath:gsub("/", "\\")
+      end
+    end
+  else
+    filepath = vim.fn.expand(filepath)
+  end
+
+  -- Count rows for notification
+  local row_count = 0
+  if stored.resultSets[result_set_index] and stored.resultSets[result_set_index].rows then
+    row_count = #stored.resultSets[result_set_index].rows
+  end
+
+  -- Write asynchronously
+  write_file_async(filepath, csv_content, {
+    on_progress = opts.on_progress,
+    on_complete = function(success, err)
+      if success then
+        if #stored.resultSets > 1 then
+          vim.notify(string.format("SSNS: Result set %d (%d rows) exported to %s", result_set_index, row_count, filepath), vim.log.levels.INFO)
+        else
+          vim.notify(string.format("SSNS: Results (%d rows) exported to %s", row_count, filepath), vim.log.levels.INFO)
+        end
+        open_with_default_app(filepath)
+      else
+        vim.notify(string.format("SSNS: Failed to export: %s", err or "unknown error"), vim.log.levels.ERROR)
+      end
+
+      if opts.on_complete then
+        opts.on_complete(success, filepath, err)
+      end
+    end,
+  })
+end
+
+---Export ALL result sets to CSV asynchronously
+---@param opts table? Options: on_progress(current_set, total_sets, bytes, total_bytes), on_complete(success, filepaths, error)
+function QueryExport.export_all_results_to_csv_async(opts)
+  opts = opts or {}
+  local query_bufnr = get_current_query_bufnr()
+  local stored = query_bufnr and UiQuery.buffer_results[query_bufnr]
+
+  if not stored or not stored.resultSets or #stored.resultSets == 0 then
+    vim.notify("SSNS: No results to export", vim.log.levels.WARN)
+    if opts.on_complete then opts.on_complete(false, {}, "No results") end
+    return
+  end
+
+  local Config = require('ssns.config')
+  local query_config = Config.get_query()
+  local export_dir = query_config.export_directory
+
+  local dir
+  if export_dir == "" then
+    dir = vim.fn.input({
+      prompt = "Export directory: ",
+      default = vim.fn.getcwd(),
+      completion = "dir",
+    })
+    if dir == "" then
+      vim.notify("SSNS: Export cancelled", vim.log.levels.INFO)
+      if opts.on_complete then opts.on_complete(false, {}, "Cancelled") end
+      return
+    end
+  else
+    dir = export_dir or get_temp_dir()
+  end
+
+  dir = vim.fn.expand(dir)
+  if vim.fn.isdirectory(dir) == 0 then
+    vim.fn.mkdir(dir, "p")
+  end
+
+  local timestamp = os.date("%Y%m%d_%H%M%S")
+  local exported_files = {}
+  local total_rows = 0
+  local total_sets = #stored.resultSets
+  local current_set = 0
+
+  -- Process result sets sequentially
+  local function export_next()
+    current_set = current_set + 1
+    if current_set > total_sets then
+      -- All done
+      if #exported_files == 0 then
+        vim.notify("SSNS: No data to export", vim.log.levels.WARN)
+        if opts.on_complete then opts.on_complete(false, {}, "No data") end
+      else
+        vim.notify(string.format("SSNS: Exported %d result sets (%d total rows) to %s", #exported_files, total_rows, dir), vim.log.levels.INFO)
+        for _, file_path in ipairs(exported_files) do
+          open_with_default_app(file_path)
+        end
+        if opts.on_complete then opts.on_complete(true, exported_files, nil) end
+      end
+      return
+    end
+
+    local resultSet = stored.resultSets[current_set]
+    local csv_content = QueryExport.results_to_csv(stored.resultSets, current_set)
+
+    if csv_content == "" then
+      export_next()  -- Skip empty result sets
+      return
+    end
+
+    local file_name = string.format("ssns_result_set_%d_%s.csv", current_set, timestamp)
+    local file_path = dir .. "/" .. file_name
+
+    if vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1 then
+      file_path = file_path:gsub("/", "\\")
+    end
+
+    write_file_async(file_path, csv_content, {
+      on_progress = function(bytes, total)
+        if opts.on_progress then
+          opts.on_progress(current_set, total_sets, bytes, total)
+        end
+      end,
+      on_complete = function(success, err)
+        if success then
+          table.insert(exported_files, file_path)
+          if resultSet.rows then
+            total_rows = total_rows + #resultSet.rows
+          end
+        else
+          vim.notify(string.format("SSNS: Failed to write %s: %s", file_name, err or "unknown"), vim.log.levels.WARN)
+        end
+        export_next()
+      end,
+    })
+  end
+
+  export_next()
+end
+
 ---Initialize the export module with parent reference
 ---@param parent UiQuery The parent UiQuery module
 function QueryExport._init(parent)
