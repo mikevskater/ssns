@@ -85,8 +85,17 @@ local loading_text_spinner = nil
 ---@type number? Timer handle for search input debounce
 local search_debounce_timer = nil
 
+---@type CancellationToken? Active cancellation token for search filtering
+local search_cancel_token = nil
+
+---@type boolean Whether a chunked search is in progress
+local search_in_progress = false
+
 -- Debounce delay in ms for live search filtering (prevents excessive updates on rapid typing)
 local SEARCH_DEBOUNCE_MS = 150
+
+-- Chunk size for async search processing (objects per chunk)
+local SEARCH_CHUNK_SIZE = 100
 
 -- Forward declaration for render_settings (used in spinner animation)
 local render_settings
@@ -1108,6 +1117,221 @@ function UiObjectSearch._apply_search(pattern)
   end
 end
 
+---Apply search filter asynchronously with chunked processing
+---Yields via vim.schedule() between chunks to keep UI responsive
+---@param pattern string Search pattern
+---@param callback fun()? Optional callback when search completes
+function UiObjectSearch._apply_search_async(pattern, callback)
+  -- Cancel any in-progress search
+  if search_cancel_token then
+    search_cancel_token:cancel("New search started")
+  end
+
+  -- Create new cancellation token
+  search_cancel_token = Cancellation.create_token()
+  local cancel_token = search_cancel_token
+
+  -- If no pattern or small dataset, use sync version for simplicity
+  local total_objects = #ui_state.loaded_objects
+  if not pattern or pattern == "" or total_objects < SEARCH_CHUNK_SIZE then
+    UiObjectSearch._apply_search(pattern)
+    search_cancel_token = nil
+    if callback then callback() end
+    return
+  end
+
+  search_in_progress = true
+
+  -- Pre-compute search state
+  local filtered = {}
+  local regex = nil
+  local pattern_lower = not ui_state.case_sensitive and pattern:lower() or nil
+  local max_results = 500
+
+  -- Compile regex if in regex mode
+  if ui_state.use_regex then
+    local regex_pattern = pattern
+    if ui_state.whole_word then
+      regex_pattern = "\\<" .. regex_pattern .. "\\>"
+    end
+    if not ui_state.case_sensitive then
+      regex_pattern = "\\c" .. regex_pattern
+    end
+    local ok, compiled = pcall(vim.regex, regex_pattern)
+    if ok then
+      regex = compiled
+    end
+  end
+
+  -- Chunk processing state
+  local idx = 1
+  local chunk_size = SEARCH_CHUNK_SIZE
+
+  ---Process one chunk of objects
+  local function process_chunk()
+    -- Check cancellation
+    if cancel_token.is_cancelled then
+      search_in_progress = false
+      return
+    end
+
+    -- Process this chunk
+    local end_idx = math.min(idx + chunk_size - 1, total_objects)
+
+    for i = idx, end_idx do
+      if #filtered >= max_results then break end
+
+      local searchable = ui_state.loaded_objects[i]
+
+      -- Filter system objects unless show_system is enabled
+      if not ui_state.show_system and is_system_object(searchable) then
+        goto continue_chunk
+      end
+
+      -- Filter by object type
+      if not should_show_object_type(searchable) then
+        goto continue_chunk
+      end
+
+      local match_details = {}
+      local matched_name = false
+      local matched_def = false
+      local matched_meta = false
+
+      -- Search in name
+      if ui_state.search_names then
+        local matched, matched_text = text_matches_pattern(searchable.name, pattern, regex, pattern_lower)
+        if matched then
+          matched_name = true
+          table.insert(match_details, { field = "name", matched_text = matched_text or "" })
+        end
+      end
+
+      -- Search in definition (lazy load)
+      if ui_state.search_definitions and not matched_name then
+        local definition = load_definition(searchable)
+        if definition then
+          local matched, matched_text = text_matches_pattern(definition, pattern, regex, pattern_lower)
+          if matched then
+            matched_def = true
+            table.insert(match_details, { field = "definition", matched_text = matched_text or "" })
+          end
+        end
+      end
+
+      -- Search in metadata (lazy load)
+      if ui_state.search_metadata and not matched_name and not matched_def then
+        local metadata = load_metadata_text(searchable)
+        if metadata then
+          local matched, matched_text = text_matches_pattern(metadata, pattern, regex, pattern_lower)
+          if matched then
+            matched_meta = true
+            table.insert(match_details, { field = "metadata", matched_text = matched_text or "" })
+          end
+        end
+      end
+
+      -- Add to results if any match
+      if #match_details > 0 then
+        local match_type = "name"
+        local sort_priority = 3
+
+        if matched_name then
+          match_type = "name"
+          sort_priority = 1
+        elseif matched_def then
+          match_type = "def"
+          sort_priority = 2
+        elseif matched_meta then
+          match_type = "meta"
+          sort_priority = 3
+        end
+
+        if #match_details > 1 then
+          match_type = "multi"
+        end
+
+        table.insert(filtered, {
+          searchable = searchable,
+          match_type = match_type,
+          match_details = match_details,
+          display_name = build_display_name(searchable),
+          sort_priority = sort_priority,
+        })
+      end
+
+      ::continue_chunk::
+    end
+
+    idx = end_idx + 1
+
+    -- Check if more chunks to process
+    if idx <= total_objects and #filtered < max_results then
+      -- Update intermediate results for progressive display
+      ui_state.filtered_results = filtered
+
+      -- Re-render results panel to show progress
+      if multi_panel then
+        multi_panel:render_panel("results")
+      end
+
+      -- Schedule next chunk
+      vim.schedule(process_chunk)
+    else
+      -- Done processing - finalize
+      if cancel_token.is_cancelled then
+        search_in_progress = false
+        return
+      end
+
+      -- Sort by priority (name matches first)
+      table.sort(filtered, function(a, b)
+        if a.sort_priority ~= b.sort_priority then
+          return a.sort_priority < b.sort_priority
+        end
+        return a.display_name < b.display_name
+      end)
+
+      ui_state.filtered_results = filtered
+
+      -- Reset selection if invalid
+      if ui_state.selected_result_idx > #ui_state.filtered_results then
+        ui_state.selected_result_idx = math.max(1, #ui_state.filtered_results)
+      end
+
+      search_in_progress = false
+      search_cancel_token = nil
+
+      -- Final render
+      if multi_panel then
+        multi_panel:render_panel("results")
+        multi_panel:render_panel("metadata")
+        multi_panel:render_panel("definition")
+      end
+
+      if callback then callback() end
+    end
+  end
+
+  -- Start processing first chunk immediately
+  process_chunk()
+end
+
+---Cancel any in-progress async search
+function UiObjectSearch.cancel_search()
+  if search_cancel_token then
+    search_cancel_token:cancel("Search cancelled")
+    search_cancel_token = nil
+  end
+  search_in_progress = false
+end
+
+---Check if an async search is in progress
+---@return boolean
+function UiObjectSearch.is_search_in_progress()
+  return search_in_progress
+end
+
 
 -- ============================================================================
 -- Render Functions
@@ -1940,6 +2164,11 @@ local function setup_search_autocmds()
         search_debounce_timer = nil
       end
 
+      -- Cancel any in-progress async search
+      if search_cancel_token then
+        search_cancel_token:cancel("New input received")
+      end
+
       -- Start new debounce timer
       search_debounce_timer = vim.fn.timer_start(SEARCH_DEBOUNCE_MS, function()
         search_debounce_timer = nil
@@ -1950,12 +2179,9 @@ local function setup_search_autocmds()
           end
           local lines = vim.api.nvim_buf_get_lines(search_buf, 0, 1, false)
           local text = (lines[1] or ""):gsub("^%s+", "")
-          UiObjectSearch._apply_search(text)
-          if multi_panel then
-            multi_panel:render_panel("results")
-            multi_panel:render_panel("metadata")
-            multi_panel:render_panel("definition")
-          end
+          -- Use async search for responsive UI with large datasets
+          -- Async version handles rendering internally
+          UiObjectSearch._apply_search_async(text)
         end)
       end)
     end,
