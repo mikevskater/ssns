@@ -45,54 +45,20 @@
 
 local M = {}
 
--- Load saved colors from JSON file (uses cached lualine_colors module)
+-- Load saved colors from cache (uses lualine_colors module's async-populated cache)
+-- This function NEVER blocks on file I/O - it only reads from memory cache
+-- The cache is populated asynchronously at startup via LualineColors.init_async()
 local function load_colors_from_file()
-  -- Use the lualine_colors module which has caching
+  -- Use the lualine_colors module which has async-populated cache
   local ok, lualine_colors = pcall(require, 'ssns.lualine_colors')
-  if ok then
-    -- Try to get from cache first (sync call, but uses cached data)
-    -- The cache is populated asynchronously at startup
-    local colors_ok, colors = pcall(function()
-      -- Check if cache is populated
-      if lualine_colors._get_cache then
-        return lualine_colors._get_cache() or {}
-      end
-      -- Fallback to sync load if no cache method
-      return load_colors_from_file_sync()
-    end)
-    if colors_ok then
-      return colors
-    end
+  if ok and lualine_colors._get_cache then
+    -- Get from cache only (never block on file I/O)
+    -- Returns empty table if cache not yet populated
+    return lualine_colors._get_cache() or {}
   end
 
-  -- Fallback to direct file read if module not available
-  return load_colors_from_file_sync()
-end
-
--- Direct sync file read (fallback)
-local function load_colors_from_file_sync()
-  local save_location = vim.fn.stdpath('data') .. '/ssns'
-  local colors_file = save_location .. '/lualine_colors.json'
-
-  -- Check if file exists
-  if vim.fn.filereadable(colors_file) == 0 then
-    return {}
-  end
-
-  -- Read and decode JSON
-  local ok, content = pcall(vim.fn.readfile, colors_file)
-  if not ok then
-    return {}
-  end
-
-  local json_str = table.concat(content, '\n')
-  local saved_colors
-  ok, saved_colors = pcall(vim.json.decode, json_str)
-  if not ok then
-    return {}
-  end
-
-  return saved_colors
+  -- Module not available - return empty (colors will be available after SSNS setup)
+  return {}
 end
 
 -- Save colors to JSON file
