@@ -919,6 +919,125 @@ function DbClass:load_async(opts)
   })
 end
 
+---@class DbRPCAsyncOpts
+---@field timeout_ms number? Timeout in milliseconds (default: 30000)
+---@field on_complete fun(success: boolean, error: string?)? Completion callback
+
+---Load database structure using true non-blocking RPC async
+---For schema-based servers (SQL Server, PostgreSQL): loads schema names only
+---For non-schema servers (MySQL, SQLite): loads objects directly
+---This method does NOT block the UI - the query runs in Node.js
+---@param opts DbRPCAsyncOpts? Options
+---@return string callback_id Callback ID for tracking/cancellation
+function DbClass:load_rpc_async(opts)
+  opts = opts or {}
+  local Connection = require('ssns.connection')
+
+  -- Already loaded - return immediately via callback
+  if self.is_loaded then
+    if opts.on_complete then
+      vim.schedule(function()
+        opts.on_complete(true, nil)
+      end)
+    end
+    return "already_loaded"
+  end
+
+  local adapter = self:get_adapter()
+  local db_self = self  -- Capture self for callback
+
+  -- Check if this is a schema-based server
+  if adapter.features.schemas then
+    -- SQL Server/PostgreSQL: Load schema names only (lazy loading of objects)
+    local query = adapter:get_schemas_query(self.db_name)
+
+    return Connection.execute_rpc_async(self:_get_db_connection_config(), query, {
+      timeout_ms = opts.timeout_ms or 30000,
+      on_complete = function(result, err)
+        if err then
+          if opts.on_complete then
+            opts.on_complete(false, err)
+          end
+          return
+        end
+
+        if not result or not result.success then
+          local error_msg = (result and result.error and result.error.message) or "Failed to load schemas"
+          if opts.on_complete then
+            opts.on_complete(false, error_msg)
+          end
+          return
+        end
+
+        -- Parse schemas from result
+        local schema_data_list = adapter:parse_schemas(result)
+        local SchemaClass = require('ssns.classes.schema')
+
+        db_self.schemas = {}
+        for _, schema_data in ipairs(schema_data_list) do
+          local schema = SchemaClass.new({
+            name = schema_data.name,
+            parent = db_self,
+          })
+          table.insert(db_self.schemas, schema)
+        end
+
+        db_self.is_loaded = true
+
+        if opts.on_complete then
+          opts.on_complete(true, nil)
+        end
+      end,
+    })
+  else
+    -- MySQL/SQLite: Load objects directly on database
+    -- For non-schema servers, we need to load tables (primary use case)
+    -- Other objects (views, procedures, functions) can be loaded lazily
+    local query = adapter:get_tables_query(self.db_name, nil)
+
+    return Connection.execute_rpc_async(self:_get_db_connection_config(), query, {
+      timeout_ms = opts.timeout_ms or 30000,
+      on_complete = function(result, err)
+        if err then
+          if opts.on_complete then
+            opts.on_complete(false, err)
+          end
+          return
+        end
+
+        if not result or not result.success then
+          local error_msg = (result and result.error and result.error.message) or "Failed to load tables"
+          if opts.on_complete then
+            opts.on_complete(false, error_msg)
+          end
+          return
+        end
+
+        -- Parse tables from result
+        local table_data_list = adapter:parse_tables(result)
+
+        db_self.tables = {}
+        for _, table_data in ipairs(table_data_list) do
+          local table_obj = adapter:create_table(nil, table_data)
+          table_obj.parent = db_self
+          table.insert(db_self.tables, table_obj)
+        end
+
+        -- Initialize other arrays as empty (will be loaded lazily)
+        db_self.views = db_self.views or {}
+        db_self.procedures = db_self.procedures or {}
+        db_self.functions = db_self.functions or {}
+
+        db_self.is_loaded = true
+
+        if opts.on_complete then
+          opts.on_complete(true, nil)
+        end
+      end,
+    })
+  end
+end
+
 ---@class BulkLoadAsyncOpts : ExecutorOpts
 ---@field on_complete fun(success: boolean, error: string?)? Completion callback
 
