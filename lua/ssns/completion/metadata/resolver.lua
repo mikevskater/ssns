@@ -869,6 +869,106 @@ function Resolver.resolve_table_async(reference, connection, context, opts)
   load_and_search(database)
 end
 
+---@class GetColumnsAsyncOpts
+---@field on_complete fun(columns: table[], error: string?)? Completion callback
+---@field timeout_ms number? Timeout in milliseconds (default: 5000)
+
+---Get columns from a resolved table/view asynchronously
+---Uses RPC async for non-blocking column retrieval
+---@param table_obj table TableClass or ViewClass object
+---@param connection table Connection context
+---@param opts GetColumnsAsyncOpts? Options with on_complete callback
+function Resolver.get_columns_async(table_obj, connection, opts)
+  opts = opts or {}
+  local on_complete = opts.on_complete or function() end
+
+  if not table_obj then
+    debug_log("[RESOLVER ASYNC] get_columns_async: table_obj is nil")
+    vim.schedule(function()
+      on_complete({}, nil)
+    end)
+    return
+  end
+
+  local table_name = table_obj.name or table_obj.table_name or table_obj.view_name or "unknown"
+  debug_log(string.format("[RESOLVER ASYNC] get_columns_async: Getting columns for table '%s'", table_name))
+
+  -- First try: check if columns are already loaded (no async needed)
+  local success, columns = pcall(function()
+    if table_obj.get_columns then
+      return table_obj:get_columns()
+    end
+    return nil
+  end)
+
+  if success and columns and #columns > 0 then
+    debug_log(string.format("[RESOLVER ASYNC] get_columns_async: Got %d columns from cache", #columns))
+    vim.schedule(function()
+      on_complete(columns, nil)
+    end)
+    return
+  end
+
+  -- Second try: use RPC async with adapter query
+  if connection and connection.connection_config and connection.server then
+    debug_log("[RESOLVER ASYNC] get_columns_async: Using RPC async")
+
+    local adapter = connection.server:get_adapter()
+    local database = connection.database
+    local obj_name = table_obj.name or table_obj.table_name or table_obj.view_name
+    local obj_schema = table_obj.schema or table_obj.schema_name
+
+    if adapter and adapter.get_columns_query and database then
+      local query = adapter:get_columns_query(database.db_name, obj_schema, obj_name)
+
+      local AsyncRPC = require('ssns.async.rpc')
+
+      -- Check if async RPC is available
+      if AsyncRPC.is_available() then
+        AsyncRPC.execute_async(connection.connection_config, query, {
+          timeout_ms = opts.timeout_ms or 5000,
+          on_complete = function(results, err)
+            if err then
+              debug_log(string.format("[RESOLVER ASYNC] get_columns_async: RPC async failed: %s", err))
+              on_complete({}, err)
+              return
+            end
+
+            -- Parse results using adapter
+            local parsed_columns = {}
+            if results and adapter.parse_columns then
+              local col_data_list = adapter:parse_columns(results)
+              for _, col_data in ipairs(col_data_list) do
+                table.insert(parsed_columns, {
+                  name = col_data.name or col_data.column_name,
+                  column_name = col_data.name or col_data.column_name,
+                  data_type = col_data.data_type or col_data.type,
+                  nullable = col_data.nullable or col_data.is_nullable,
+                  is_primary_key = col_data.is_primary_key or col_data.is_pk,
+                  is_foreign_key = col_data.is_foreign_key or col_data.is_fk,
+                  ordinal_position = col_data.ordinal_position,
+                  default_value = col_data.default_value,
+                })
+              end
+            end
+
+            debug_log(string.format("[RESOLVER ASYNC] get_columns_async: Got %d columns from RPC async", #parsed_columns))
+            on_complete(parsed_columns, nil)
+          end,
+        })
+        return
+      end
+    end
+  end
+
+  -- Fallback: use sync RPC wrapped in vim.schedule (still better than blocking main loop)
+  debug_log("[RESOLVER ASYNC] get_columns_async: Falling back to scheduled sync call")
+  vim.schedule(function()
+    local cols = Resolver.get_columns(table_obj, connection)
+    on_complete(cols, nil)
+  end)
+end
+
 ---@class PreResolveScopeAsyncOpts
 ---@field on_complete fun(resolved_scope: table, error: string?)? Completion callback
 ---@field timeout_ms number? Timeout in milliseconds per resolution (default: 5000)
