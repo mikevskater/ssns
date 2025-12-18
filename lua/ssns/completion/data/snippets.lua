@@ -125,35 +125,13 @@ end
 
 ---Load user-defined snippets from file
 ---Returns cached version if available (async-loaded at init)
----@return table[] snippets User snippet list
+---Call Snippets.init_async() at plugin startup to populate cache
+---@return table[] snippets User snippet list (empty if not yet loaded)
 function Snippets.load_user_snippets()
-  -- Return cached snippets if available
-  if Snippets._user_snippets_cache then
-    return Snippets._user_snippets_cache
-  end
-
-  -- Fallback to sync load if cache not populated yet
-  local data_path = vim.fn.stdpath('data')
-  local snippets_file = data_path .. '/ssns/snippets.json'
-
-  -- Check if file exists
-  if vim.fn.filereadable(snippets_file) == 0 then
-    return {}
-  end
-
-  -- Read and parse JSON
-  local content = vim.fn.readfile(snippets_file)
-  local json_str = table.concat(content, '\n')
-
-  local success, snippets = pcall(vim.json.decode, json_str)
-  if not success then
-    return {}
-  end
-
-  -- Cache the result for future calls
-  Snippets._user_snippets_cache = snippets or {}
-
-  return Snippets._user_snippets_cache
+  -- Return cached snippets if available (async-loaded at startup)
+  -- If cache is not populated, return empty array
+  -- The async init should be called at plugin startup
+  return Snippets._user_snippets_cache or {}
 end
 
 ---Initialize user snippets cache asynchronously
