@@ -180,4 +180,117 @@ function ColumnsProvider._get_completions_impl(ctx)
   end
 end
 
+-- ============================================================================
+-- Async Methods
+-- ============================================================================
+
+---@class ColumnsProviderAsyncOpts
+---@field on_complete fun(items: table[], error: string?)? Completion callback
+---@field timeout_ms number? Timeout in milliseconds (default: 5000)
+
+---Get column completions asynchronously
+---Pre-resolves scope async, then runs sync implementation
+---@param ctx table Context { bufnr, connection, sql_context }
+---@param opts ColumnsProviderAsyncOpts? Options with on_complete callback
+function ColumnsProvider.get_completions_async(ctx, opts)
+  opts = opts or {}
+  local on_complete = opts.on_complete or function() end
+
+  local connection = ctx.connection
+  local sql_context = ctx.sql_context or {}
+
+  -- For modes that don't need database (CTE columns, etc.), run sync immediately
+  if not connection or not connection.database then
+    -- Some modes can work without database (qualified CTE/subquery columns)
+    if sql_context.mode == "qualified" or
+       sql_context.mode == "select_qualified" or
+       sql_context.mode == "where_qualified" or
+       sql_context.mode == "qualified_bracket" then
+      vim.schedule(function()
+        local success, result = pcall(function()
+          return ColumnsProvider._get_completions_impl(ctx)
+        end)
+        if success then
+          on_complete(result or {}, nil)
+        else
+          on_complete({}, tostring(result))
+        end
+      end)
+      return
+    end
+    -- Other modes need database
+    vim.schedule(function()
+      on_complete({}, nil)
+    end)
+    return
+  end
+
+  local database = connection.database
+
+  -- Load database async if needed
+  if not database.is_loaded then
+    database:load_async({
+      timeout_ms = opts.timeout_ms or 5000,
+      on_complete = function(success, err)
+        if not success then
+          on_complete({}, err)
+          return
+        end
+        -- Now pre-resolve scope and run impl
+        ColumnsProvider._async_with_resolved_scope(ctx, opts, on_complete)
+      end,
+    })
+    return
+  end
+
+  -- Database already loaded, pre-resolve scope
+  ColumnsProvider._async_with_resolved_scope(ctx, opts, on_complete)
+end
+
+---Internal helper: pre-resolve scope then run sync impl
+---@param ctx table Context
+---@param opts table Options
+---@param on_complete function Callback
+function ColumnsProvider._async_with_resolved_scope(ctx, opts, on_complete)
+  local connection = ctx.connection
+  local sql_context = ctx.sql_context or {}
+  local Resolver = require('ssns.completion.metadata.resolver')
+
+  -- Check if we need to pre-resolve scope (for column completion)
+  local has_tables_to_resolve = sql_context.tables_in_scope and #sql_context.tables_in_scope > 0
+
+  if has_tables_to_resolve and not sql_context.resolved_scope then
+    -- Pre-resolve scope async for better performance
+    Resolver.pre_resolve_scope_async(sql_context, connection, {
+      timeout_ms = opts.timeout_ms or 5000,
+      on_complete = function(resolved_scope, err)
+        -- Inject resolved scope into context
+        sql_context.resolved_scope = resolved_scope
+
+        -- Now run sync impl (fast since data is pre-cached)
+        local success, result = pcall(function()
+          return ColumnsProvider._get_completions_impl(ctx)
+        end)
+        if success then
+          on_complete(result or {}, nil)
+        else
+          on_complete({}, tostring(result))
+        end
+      end,
+    })
+  else
+    -- No tables to resolve or already resolved, run sync impl
+    vim.schedule(function()
+      local success, result = pcall(function()
+        return ColumnsProvider._get_completions_impl(ctx)
+      end)
+      if success then
+        on_complete(result or {}, nil)
+      else
+        on_complete({}, tostring(result))
+      end
+    end)
+  end
+end
+
 return ColumnsProvider
