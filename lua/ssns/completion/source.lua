@@ -528,9 +528,13 @@ function Source:_route_to_provider(context_result, provider_ctx, callback, start
     })
 
   elseif context_result.type == Context.Type.PROCEDURE then
-    Debug.log("[COMPLETION] Calling ProceduresProvider")
+    Debug.log("[COMPLETION] Calling ProceduresProvider (async)")
     local ProceduresProvider = require('ssns.completion.providers.procedures')
-    ProceduresProvider.get_completions(provider_ctx, wrapped_callback)
+    ProceduresProvider.get_completions_async(provider_ctx, {
+      on_complete = function(items, _)
+        wrapped_callback(items or {})
+      end
+    })
 
   elseif context_result.type == Context.Type.PARAMETER then
     Debug.log("[COMPLETION] Calling ParametersProvider")
