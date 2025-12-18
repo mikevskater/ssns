@@ -172,4 +172,68 @@ function ProceduresProvider._get_table_functions(connection)
   return items
 end
 
+-- ============================================================================
+-- Async Methods
+-- ============================================================================
+
+---@class ProceduresProviderAsyncOpts
+---@field on_complete fun(items: table[], error: string?)? Completion callback
+---@field timeout_ms number? Timeout in milliseconds (default: 5000)
+
+---Get procedure/function completions asynchronously
+---Loads database async before collecting items
+---@param ctx table Context { bufnr, connection, sql_context }
+---@param opts ProceduresProviderAsyncOpts? Options with on_complete callback
+function ProceduresProvider.get_completions_async(ctx, opts)
+  opts = opts or {}
+  local on_complete = opts.on_complete or function() end
+
+  local connection = ctx.connection
+  if not connection or not connection.database then
+    vim.schedule(function()
+      on_complete({}, nil)
+    end)
+    return
+  end
+
+  local database = connection.database
+
+  -- Load database async if needed
+  if not database.is_loaded then
+    database:load_async({
+      timeout_ms = opts.timeout_ms or 5000,
+      on_complete = function(success, err)
+        if not success then
+          on_complete({}, err)
+          return
+        end
+        -- Run sync impl after load
+        vim.schedule(function()
+          local ok, result = pcall(function()
+            return ProceduresProvider._get_completions_impl(ctx)
+          end)
+          if ok then
+            on_complete(result or {}, nil)
+          else
+            on_complete({}, tostring(result))
+          end
+        end)
+      end,
+    })
+    return
+  end
+
+  -- Database loaded, run sync impl
+  vim.schedule(function()
+    local success, result = pcall(function()
+      return ProceduresProvider._get_completions_impl(ctx)
+    end)
+    if success then
+      on_complete(result or {}, nil)
+    else
+      on_complete({}, tostring(result))
+    end
+  end)
+end
+
 return ProceduresProvider
