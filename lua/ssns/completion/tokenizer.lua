@@ -978,4 +978,532 @@ function Tokenizer.tokenize(text)
   return tokens
 end
 
+---@class ChunkedTokenizeOpts
+---@field chunk_size number? Characters to process per chunk (default 5000)
+---@field on_progress fun(processed: number, total: number)? Progress callback
+---@field on_complete fun(tokens: Token[])? Completion callback (required for async)
+
+---Active chunked tokenize state
+---@type { timer: number?, cancelled: boolean }?
+Tokenizer._chunked_state = nil
+
+---Tokenize SQL text in chunks to avoid blocking UI for large files
+---For small texts, uses synchronous tokenize(). For large texts, processes in chunks.
+---@param text string The SQL text to tokenize
+---@param opts ChunkedTokenizeOpts Options for chunked tokenization
+function Tokenizer.tokenize_chunked(text, opts)
+  opts = opts or {}
+  local chunk_size = opts.chunk_size or 5000
+  local on_progress = opts.on_progress
+  local on_complete = opts.on_complete
+
+  if not text or text == "" then
+    if on_progress then on_progress(0, 0) end
+    if on_complete then on_complete({}) end
+    return
+  end
+
+  local total_chars = #text
+
+  -- Cancel any existing chunked tokenize
+  Tokenizer.cancel_chunked_tokenize()
+
+  -- For small texts, use sync tokenize
+  if total_chars <= chunk_size then
+    local tokens = Tokenizer.tokenize(text)
+    if on_progress then on_progress(total_chars, total_chars) end
+    if on_complete then on_complete(tokens) end
+    return
+  end
+
+  -- Initialize chunked state
+  Tokenizer._chunked_state = {
+    timer = nil,
+    cancelled = false,
+  }
+
+  local chunked_state = Tokenizer._chunked_state
+
+  -- Preprocess: replace tabs with spaces (same as sync version)
+  text = text:gsub("\t", " ")
+
+  -- Tokenizer state that persists between chunks
+  local tokens = {}
+  local state = STATE.NORMAL
+  local current_token = ""
+  local token_start_line = 1
+  local token_start_col = 1
+  local line = 1
+  local col = 1
+  local comment_depth = 0
+  local i = 1
+  local last_token_type = nil
+
+  ---Emit the current accumulated token (same logic as sync version)
+  local function emit_token(force_type)
+    if current_token == "" then
+      return
+    end
+
+    local token_type = force_type
+    local keyword_category = nil
+
+    if not token_type then
+      if is_keyword(current_token) then
+        local upper = current_token:upper()
+        if upper == "GO" then
+          token_type = TOKEN_TYPE.GO
+          keyword_category = "statement"
+        else
+          token_type = TOKEN_TYPE.KEYWORD
+          keyword_category = KEYWORD_TO_CATEGORY[upper]
+        end
+      elseif current_token:match("^%-?%d+%.?%d*$") or current_token:match("^%-?%d*%.%d+$") or current_token:match("^%-?0[xX][0-9a-fA-F]+$") then
+        token_type = TOKEN_TYPE.NUMBER
+      elseif SYSTEM_PROCEDURE_KEYWORDS[current_token] or SYSTEM_PROCEDURE_KEYWORDS[current_token:lower()] then
+        token_type = TOKEN_TYPE.SYSTEM_PROCEDURE
+        keyword_category = "system_procedure"
+      else
+        token_type = TOKEN_TYPE.IDENTIFIER
+      end
+    elseif token_type == TOKEN_TYPE.GLOBAL_VARIABLE then
+      keyword_category = "global_variable"
+    elseif token_type == TOKEN_TYPE.SYSTEM_PROCEDURE then
+      keyword_category = "system_procedure"
+    end
+
+    table.insert(tokens, {
+      type = token_type,
+      text = current_token,
+      line = token_start_line,
+      col = token_start_col,
+      keyword_category = keyword_category,
+    })
+
+    last_token_type = token_type
+    current_token = ""
+  end
+
+  local function start_token()
+    token_start_line = line
+    token_start_col = col
+  end
+
+  local function emit_single_char_token(char, type)
+    emit_token()
+    start_token()
+    current_token = char
+    emit_token(type)
+  end
+
+  ---Process one chunk of characters
+  ---@return boolean done True if tokenization is complete
+  local function process_chunk()
+    local chunk_end = math.min(i + chunk_size - 1, total_chars)
+
+    while i <= chunk_end do
+      if chunked_state.cancelled then
+        return true
+      end
+
+      local char = text:sub(i, i)
+      local next_char = (i < total_chars) and text:sub(i + 1, i + 1) or nil
+
+      if state == STATE.NORMAL then
+        if is_whitespace(char) then
+          emit_token()
+          if char == '\n' then
+            line = line + 1
+            col = 1
+          elseif char == '\r' then
+            if next_char == '\n' then
+              i = i + 1
+            end
+            line = line + 1
+            col = 1
+          else
+            col = col + 1
+          end
+          i = i + 1
+
+        elseif char == "'" then
+          if current_token:upper() == "N" then
+            current_token = current_token .. "'"
+            state = STATE.IN_STRING
+            col = col + 1
+            i = i + 1
+          else
+            emit_token()
+            start_token()
+            current_token = "'"
+            state = STATE.IN_STRING
+            col = col + 1
+            i = i + 1
+          end
+
+        elseif char == '[' then
+          emit_token()
+          start_token()
+          current_token = "["
+          state = STATE.IN_BRACKET_ID
+          col = col + 1
+          i = i + 1
+
+        elseif char == '/' and next_char == '*' then
+          emit_token()
+          start_token()
+          current_token = "/*"
+          state = STATE.IN_BLOCK_COMMENT
+          comment_depth = 1
+          col = col + 2
+          i = i + 2
+
+        elseif char == '-' and next_char == '-' then
+          emit_token()
+          start_token()
+          current_token = "--"
+          state = STATE.IN_LINE_COMMENT
+          col = col + 2
+          i = i + 2
+
+        elseif char == '*' then
+          emit_single_char_token(char, TOKEN_TYPE.STAR)
+          col = col + 1
+          i = i + 1
+
+        elseif char == '-' and next_char and (next_char:match("%d") or (next_char == '.' and i + 2 <= total_chars and text:sub(i + 2, i + 2):match("%d"))) then
+          local is_negative_number_context = (
+            last_token_type == nil or
+            last_token_type == TOKEN_TYPE.OPERATOR or
+            last_token_type == TOKEN_TYPE.COMMA or
+            last_token_type == TOKEN_TYPE.PAREN_OPEN or
+            last_token_type == TOKEN_TYPE.KEYWORD or
+            last_token_type == TOKEN_TYPE.GO or
+            last_token_type == TOKEN_TYPE.SEMICOLON
+          )
+
+          if is_negative_number_context and current_token == "" then
+            start_token()
+            current_token = "-"
+            col = col + 1
+            i = i + 1
+          else
+            emit_single_char_token(char, TOKEN_TYPE.OPERATOR)
+            col = col + 1
+            i = i + 1
+          end
+
+        elseif SINGLE_CHAR_OPERATORS[char] then
+          if char == '<' and next_char then
+            if next_char == '>' then
+              emit_single_char_token('<>', TOKEN_TYPE.OPERATOR)
+              col = col + 2
+              i = i + 2
+            elseif next_char == '=' then
+              emit_single_char_token('<=', TOKEN_TYPE.OPERATOR)
+              col = col + 2
+              i = i + 2
+            else
+              emit_single_char_token(char, TOKEN_TYPE.OPERATOR)
+              col = col + 1
+              i = i + 1
+            end
+          elseif char == '>' and next_char and next_char == '=' then
+            emit_single_char_token('>=', TOKEN_TYPE.OPERATOR)
+            col = col + 2
+            i = i + 2
+          elseif char == '!' and next_char and next_char == '=' then
+            emit_single_char_token('!=', TOKEN_TYPE.OPERATOR)
+            col = col + 2
+            i = i + 2
+          elseif char == ':' and next_char and next_char == ':' then
+            emit_single_char_token('::', TOKEN_TYPE.OPERATOR)
+            col = col + 2
+            i = i + 2
+          else
+            emit_single_char_token(char, TOKEN_TYPE.OPERATOR)
+            col = col + 1
+            i = i + 1
+          end
+
+        elseif char == '(' then
+          emit_single_char_token(char, TOKEN_TYPE.PAREN_OPEN)
+          col = col + 1
+          i = i + 1
+
+        elseif char == ')' then
+          emit_single_char_token(char, TOKEN_TYPE.PAREN_CLOSE)
+          col = col + 1
+          i = i + 1
+
+        elseif char == ',' then
+          emit_single_char_token(char, TOKEN_TYPE.COMMA)
+          col = col + 1
+          i = i + 1
+
+        elseif char == '.' then
+          local is_decimal_number = false
+          if next_char and next_char:match("%d") then
+            if current_token == "" or current_token:match("^%-?%d+$") then
+              is_decimal_number = true
+            end
+          end
+
+          if is_decimal_number then
+            if current_token == "" then
+              start_token()
+            end
+            current_token = current_token .. char
+            col = col + 1
+            i = i + 1
+          else
+            emit_single_char_token(char, TOKEN_TYPE.DOT)
+            col = col + 1
+            i = i + 1
+          end
+
+        elseif char == ';' then
+          emit_single_char_token(char, TOKEN_TYPE.SEMICOLON)
+          col = col + 1
+          i = i + 1
+
+        elseif char == '@' then
+          emit_token()
+          start_token()
+          if next_char == '@' then
+            local global_var = "@@"
+            local j = i + 2
+            while j <= total_chars do
+              local c = text:sub(j, j)
+              if is_alnum(c) then
+                global_var = global_var .. c
+                j = j + 1
+              else
+                break
+              end
+            end
+            current_token = global_var
+            emit_token(TOKEN_TYPE.GLOBAL_VARIABLE)
+            col = col + #global_var
+            i = j
+          elseif next_char and is_alnum(next_char) then
+            local user_var = "@"
+            local j = i + 1
+            while j <= total_chars do
+              local c = text:sub(j, j)
+              if is_alnum(c) then
+                user_var = user_var .. c
+                j = j + 1
+              else
+                break
+              end
+            end
+            current_token = user_var
+            emit_token(TOKEN_TYPE.VARIABLE)
+            col = col + #user_var
+            i = j
+          else
+            emit_single_char_token(char, TOKEN_TYPE.AT)
+            col = col + 1
+            i = i + 1
+          end
+
+        elseif char == '#' then
+          emit_token()
+          start_token()
+          local temp_table = "#"
+          local j = i + 1
+          if j <= total_chars and text:sub(j, j) == '#' then
+            temp_table = "##"
+            j = j + 1
+          end
+          while j <= total_chars do
+            local c = text:sub(j, j)
+            if is_alnum(c) then
+              temp_table = temp_table .. c
+              j = j + 1
+            else
+              break
+            end
+          end
+          if #temp_table > 1 and (temp_table:sub(2, 2) ~= '#' or #temp_table > 2) then
+            current_token = temp_table
+            emit_token(TOKEN_TYPE.TEMP_TABLE)
+          else
+            current_token = temp_table
+            emit_token(TOKEN_TYPE.HASH)
+          end
+          col = col + #temp_table
+          i = j
+
+        else
+          if current_token == "" then
+            start_token()
+          end
+          current_token = current_token .. char
+          col = col + 1
+          i = i + 1
+        end
+
+      elseif state == STATE.IN_STRING then
+        if char == "'" and next_char == "'" then
+          current_token = current_token .. "''"
+          col = col + 2
+          i = i + 2
+        elseif char == "'" then
+          current_token = current_token .. char
+          emit_token(TOKEN_TYPE.STRING)
+          state = STATE.NORMAL
+          col = col + 1
+          i = i + 1
+        else
+          current_token = current_token .. char
+          if char == '\n' then
+            line = line + 1
+            col = 1
+            i = i + 1
+          elseif char == '\r' then
+            if next_char == '\n' then
+              current_token = current_token .. '\n'
+              i = i + 2
+            else
+              i = i + 1
+            end
+            line = line + 1
+            col = 1
+          else
+            col = col + 1
+            i = i + 1
+          end
+        end
+
+      elseif state == STATE.IN_BRACKET_ID then
+        current_token = current_token .. char
+        col = col + 1
+        if char == ']' then
+          emit_token(TOKEN_TYPE.BRACKET_ID)
+          state = STATE.NORMAL
+        end
+        i = i + 1
+
+      elseif state == STATE.IN_BLOCK_COMMENT then
+        if char == '/' and next_char == '*' then
+          comment_depth = comment_depth + 1
+          current_token = current_token .. "/*"
+          col = col + 2
+          i = i + 2
+        elseif char == '*' and next_char == '/' then
+          comment_depth = comment_depth - 1
+          current_token = current_token .. "*/"
+          col = col + 2
+          i = i + 2
+          if comment_depth == 0 then
+            emit_token(TOKEN_TYPE.COMMENT)
+            state = STATE.NORMAL
+          end
+        else
+          current_token = current_token .. char
+          if char == '\n' then
+            line = line + 1
+            col = 1
+            i = i + 1
+          elseif char == '\r' then
+            if next_char == '\n' then
+              current_token = current_token .. '\n'
+              i = i + 2
+            else
+              i = i + 1
+            end
+            line = line + 1
+            col = 1
+          else
+            col = col + 1
+            i = i + 1
+          end
+        end
+
+      elseif state == STATE.IN_LINE_COMMENT then
+        if char == '\n' or char == '\r' then
+          emit_token(TOKEN_TYPE.LINE_COMMENT)
+          state = STATE.NORMAL
+          if char == '\r' and next_char == '\n' then
+            i = i + 2
+          else
+            i = i + 1
+          end
+          line = line + 1
+          col = 1
+        else
+          current_token = current_token .. char
+          col = col + 1
+          i = i + 1
+        end
+      end
+    end
+
+    -- Check if done
+    return i > total_chars
+  end
+
+  ---Finalize tokenization (handle EOF states)
+  local function finalize()
+    if state == STATE.IN_LINE_COMMENT and current_token ~= "" then
+      emit_token(TOKEN_TYPE.LINE_COMMENT)
+    elseif state == STATE.IN_BLOCK_COMMENT and current_token ~= "" then
+      emit_token(TOKEN_TYPE.COMMENT)
+    else
+      emit_token()
+    end
+  end
+
+  ---Process next chunk with yield
+  local function process_next()
+    if chunked_state.cancelled then
+      Tokenizer._chunked_state = nil
+      return
+    end
+
+    local done = process_chunk()
+
+    if on_progress then
+      on_progress(math.min(i - 1, total_chars), total_chars)
+    end
+
+    if done then
+      finalize()
+      Tokenizer._chunked_state = nil
+      if on_complete then
+        on_complete(tokens)
+      end
+    else
+      -- Schedule next chunk
+      chunked_state.timer = vim.fn.timer_start(0, function()
+        chunked_state.timer = nil
+        vim.schedule(process_next)
+      end)
+    end
+  end
+
+  -- Start processing
+  process_next()
+end
+
+---Cancel any in-progress chunked tokenization
+function Tokenizer.cancel_chunked_tokenize()
+  if Tokenizer._chunked_state then
+    Tokenizer._chunked_state.cancelled = true
+    if Tokenizer._chunked_state.timer then
+      vim.fn.timer_stop(Tokenizer._chunked_state.timer)
+      Tokenizer._chunked_state.timer = nil
+    end
+    Tokenizer._chunked_state = nil
+  end
+end
+
+---Check if chunked tokenization is currently in progress
+---@return boolean
+function Tokenizer.is_chunked_tokenize_active()
+  return Tokenizer._chunked_state ~= nil and not Tokenizer._chunked_state.cancelled
+end
+
 return Tokenizer
