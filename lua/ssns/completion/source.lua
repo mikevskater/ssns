@@ -512,6 +512,7 @@ function Source:_route_to_provider(context_result, provider_ctx, callback, start
     Debug.log("[COMPLETION] Calling TablesProvider (async)")
     local TablesProvider = require('ssns.completion.providers.tables')
     TablesProvider.get_completions_async(provider_ctx, {
+      cancel_token = cancel_token,
       on_complete = function(items, _)
         wrapped_callback(items or {})
       end
@@ -522,6 +523,7 @@ function Source:_route_to_provider(context_result, provider_ctx, callback, start
     Debug.log("[COMPLETION] Calling ColumnsProvider (async)")
     local ColumnsProvider = require('ssns.completion.providers.columns')
     ColumnsProvider.get_completions_async(provider_ctx, {
+      cancel_token = cancel_token,
       on_complete = function(items, _)
         wrapped_callback(items or {})
       end
@@ -531,6 +533,7 @@ function Source:_route_to_provider(context_result, provider_ctx, callback, start
     Debug.log("[COMPLETION] Calling ProceduresProvider (async)")
     local ProceduresProvider = require('ssns.completion.providers.procedures')
     ProceduresProvider.get_completions_async(provider_ctx, {
+      cancel_token = cancel_token,
       on_complete = function(items, _)
         wrapped_callback(items or {})
       end
@@ -545,6 +548,7 @@ function Source:_route_to_provider(context_result, provider_ctx, callback, start
     Debug.log("[COMPLETION] Calling DatabasesProvider (async)")
     local DatabasesProvider = require('ssns.completion.providers.databases')
     DatabasesProvider.get_completions_async(provider_ctx, {
+      cancel_token = cancel_token,
       on_complete = function(items, _)
         wrapped_callback(items or {})
       end
@@ -554,6 +558,7 @@ function Source:_route_to_provider(context_result, provider_ctx, callback, start
     Debug.log("[COMPLETION] Calling SchemasProvider (async)")
     local SchemasProvider = require('ssns.completion.providers.schemas')
     SchemasProvider.get_completions_async(provider_ctx, {
+      cancel_token = cancel_token,
       on_complete = function(items, _)
         wrapped_callback(items or {})
       end
