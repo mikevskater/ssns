@@ -199,13 +199,23 @@ end
 function AddServerUI.open()
   AddServerUI.close()
 
-  connections_list = Connections.load()
+  -- Load connections asynchronously
+  Connections.load_async(function(connections, err)
+    if err then
+      vim.notify("Failed to load connections: " .. err, vim.log.levels.ERROR)
+      connections_list = {}
+    else
+      connections_list = connections
+    end
 
-  if #connections_list == 0 then
-    AddServerUI.show_new_connection_form()
-  else
-    AddServerUI.show_connection_list()
-  end
+    vim.schedule(function()
+      if #connections_list == 0 then
+        AddServerUI.show_new_connection_form()
+      else
+        AddServerUI._show_connection_list_internal()
+      end
+    end)
+  end)
 end
 
 ---Check if a connection is already in the tree
@@ -275,8 +285,25 @@ function AddServerUI.show_form_controls()
   UiFloat._show_controls_popup(controls)
 end
 
----Show the list of saved connections
+---Show the list of saved connections (loads async then renders)
 function AddServerUI.show_connection_list()
+  -- Load connections asynchronously then render
+  Connections.load_async(function(connections, err)
+    if err then
+      vim.notify("Failed to load connections: " .. err, vim.log.levels.ERROR)
+      connections_list = {}
+    else
+      connections_list = connections
+    end
+
+    vim.schedule(function()
+      AddServerUI._show_connection_list_internal()
+    end)
+  end)
+end
+
+---Internal: Render the connection list (assumes connections_list is already loaded)
+function AddServerUI._show_connection_list_internal()
   -- Close any existing float first to prevent window stacking
   if current_float then
     pcall(function() current_float:close() end)
@@ -284,7 +311,6 @@ function AddServerUI.show_connection_list()
   end
 
   current_screen = "list"
-  connections_list = Connections.load()
 
   -- Build styled content
   local cb = ContentBuilder.new()
@@ -425,8 +451,8 @@ function AddServerUI.navigate(direction)
     selected_index = 1
   end
 
-  -- Refresh the list display
-  AddServerUI.show_connection_list()
+  -- Refresh the list display (use internal since connections_list is already loaded)
+  AddServerUI._show_connection_list_internal()
 
   -- Position cursor on selected item
   if current_float and current_float:is_valid() then
@@ -890,8 +916,7 @@ function AddServerUI.save_connection(form_state, edit_connection)
       end
     end
 
-    -- Reload list and show it
-    connections_list = Connections.load()
+    -- Reload list and show it (async load + render)
     AddServerUI.show_connection_list()
   end
 end
