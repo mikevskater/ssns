@@ -927,4 +927,128 @@ function UiBuffer.clear()
   UiBuffer.set_lines({})
 end
 
+---@class ChunkedWriteOpts
+---@field chunk_size number? Lines per chunk (default 100)
+---@field on_progress fun(written: number, total: number)? Progress callback
+---@field on_complete fun()? Completion callback
+
+---Active chunked write state (only one can be active at a time)
+---@type { timer: number?, cancelled: boolean }?
+UiBuffer._chunked_write_state = nil
+
+---Write lines to buffer in chunks to avoid blocking UI
+---For large line counts (>200), this writes in chunks with vim.schedule() between each
+---@param lines string[] Array of lines to write
+---@param opts ChunkedWriteOpts? Options for chunked writing
+function UiBuffer.set_lines_chunked(lines, opts)
+  if not UiBuffer.exists() then
+    if opts and opts.on_complete then opts.on_complete() end
+    return
+  end
+
+  opts = opts or {}
+  local chunk_size = opts.chunk_size or 100
+  local on_progress = opts.on_progress
+  local on_complete = opts.on_complete
+  local total_lines = #lines
+
+  -- Cancel any existing chunked write
+  UiBuffer.cancel_chunked_write()
+
+  -- For small line counts, use sync write
+  if total_lines <= chunk_size then
+    UiBuffer.set_lines(lines)
+    if on_progress then on_progress(total_lines, total_lines) end
+    if on_complete then on_complete() end
+    return
+  end
+
+  -- Initialize chunked write state
+  UiBuffer._chunked_write_state = {
+    timer = nil,
+    cancelled = false,
+  }
+
+  local state = UiBuffer._chunked_write_state
+  local current_idx = 1
+
+  -- Make buffer modifiable for the duration of chunked write
+  vim.api.nvim_buf_set_option(UiBuffer.bufnr, "modifiable", true)
+
+  -- Clear buffer first
+  vim.api.nvim_buf_set_lines(UiBuffer.bufnr, 0, -1, false, {})
+
+  local function write_next_chunk()
+    -- Check if cancelled or buffer no longer valid
+    if state.cancelled or not UiBuffer.exists() then
+      UiBuffer._chunked_write_state = nil
+      return
+    end
+
+    local end_idx = math.min(current_idx + chunk_size - 1, total_lines)
+
+    -- Extract chunk of lines
+    local chunk = {}
+    for i = current_idx, end_idx do
+      table.insert(chunk, lines[i])
+    end
+
+    -- Append chunk to buffer (use -1 to append at end)
+    local append_start = current_idx - 1  -- 0-indexed
+    vim.api.nvim_buf_set_lines(UiBuffer.bufnr, append_start, append_start, false, chunk)
+
+    -- Report progress
+    if on_progress then
+      on_progress(end_idx, total_lines)
+    end
+
+    current_idx = end_idx + 1
+
+    if current_idx <= total_lines then
+      -- Schedule next chunk
+      state.timer = vim.fn.timer_start(0, function()
+        state.timer = nil
+        vim.schedule(write_next_chunk)
+      end)
+    else
+      -- All chunks written - finalize
+      vim.api.nvim_buf_set_option(UiBuffer.bufnr, "modifiable", false)
+
+      -- Auto-expand width if enabled
+      UiBuffer.auto_expand_width(lines)
+
+      UiBuffer._chunked_write_state = nil
+
+      if on_complete then
+        on_complete()
+      end
+    end
+  end
+
+  -- Start writing first chunk
+  write_next_chunk()
+end
+
+---Cancel any in-progress chunked write operation
+function UiBuffer.cancel_chunked_write()
+  if UiBuffer._chunked_write_state then
+    UiBuffer._chunked_write_state.cancelled = true
+    if UiBuffer._chunked_write_state.timer then
+      vim.fn.timer_stop(UiBuffer._chunked_write_state.timer)
+      UiBuffer._chunked_write_state.timer = nil
+    end
+    -- Restore buffer to non-modifiable state if it exists
+    if UiBuffer.exists() then
+      pcall(vim.api.nvim_buf_set_option, UiBuffer.bufnr, "modifiable", false)
+    end
+    UiBuffer._chunked_write_state = nil
+  end
+end
+
+---Check if a chunked write is currently in progress
+---@return boolean
+function UiBuffer.is_chunked_write_active()
+  return UiBuffer._chunked_write_state ~= nil and not UiBuffer._chunked_write_state.cancelled
+end
+
 return UiBuffer
