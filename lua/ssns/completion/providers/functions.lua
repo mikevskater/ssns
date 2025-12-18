@@ -138,4 +138,32 @@ function FunctionsProvider.get_by_category(category, callback)
   end)
 end
 
+-- ============================================================================
+-- Async Methods
+-- ============================================================================
+
+---@class FunctionsProviderAsyncOpts
+---@field on_complete fun(items: table[], error: string?)? Completion callback
+
+---Get built-in function completions asynchronously
+---Functions are static data, so just schedules sync impl
+---@param ctx table Context { bufnr, connection, sql_context }
+---@param opts FunctionsProviderAsyncOpts? Options with on_complete callback
+function FunctionsProvider.get_completions_async(ctx, opts)
+  opts = opts or {}
+  local on_complete = opts.on_complete or function() end
+
+  -- Functions are static data - just schedule sync impl
+  vim.schedule(function()
+    local success, result = pcall(function()
+      return FunctionsProvider._get_completions_impl(ctx)
+    end)
+    if success then
+      on_complete(result or {}, nil)
+    else
+      on_complete({}, tostring(result))
+    end
+  end)
+end
+
 return FunctionsProvider
