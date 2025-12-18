@@ -17,6 +17,26 @@ function Formatter.format(sql, config_override, opts)
   return Engine.format(sql, config, opts)
 end
 
+---@class FormatAsyncCallbackOpts
+---@field on_progress fun(stage: string, progress: number, total: number)? Progress callback
+---@field on_complete fun(formatted: string)? Completion callback (required)
+---@field on_error fun(err: string)? Error callback
+
+---Format SQL text asynchronously
+---@param sql string The SQL text to format
+---@param config_override? FormatterConfig Optional config override
+---@param opts? FormatAsyncCallbackOpts Async options with callbacks
+function Formatter.format_async(sql, config_override, opts)
+  local Engine = require('ssns.formatter.engine')
+  local config = config_override or require('ssns.config').get_formatter()
+  opts = opts or {}
+
+  Engine.format_async(sql, config, {
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
 ---Format a range of text in the current buffer
 ---@param start_line number Start line (1-indexed)
 ---@param end_line number End line (1-indexed)
@@ -75,6 +95,103 @@ end
 function Formatter.format_buffer()
   local line_count = vim.api.nvim_buf_line_count(0)
   return Formatter.format_range(1, line_count)
+end
+
+---@class FormatBufferAsyncOpts
+---@field on_progress fun(stage: string, progress: number, total: number)? Progress callback
+---@field on_complete fun(success: boolean, err?: string)? Completion callback
+---@field bufnr number? Buffer number (default: current buffer)
+
+---Format the entire buffer asynchronously
+---@param opts? FormatBufferAsyncOpts Async options
+function Formatter.format_buffer_async(opts)
+  opts = opts or {}
+  local bufnr = opts.bufnr or vim.api.nvim_get_current_buf()
+  local line_count = vim.api.nvim_buf_line_count(bufnr)
+
+  Formatter.format_range_async(1, line_count, {
+    bufnr = bufnr,
+    on_progress = opts.on_progress,
+    on_complete = opts.on_complete,
+  })
+end
+
+---@class FormatRangeAsyncOpts
+---@field on_progress fun(stage: string, progress: number, total: number)? Progress callback
+---@field on_complete fun(success: boolean, err?: string)? Completion callback
+---@field bufnr number? Buffer number (default: current buffer)
+
+---Format a range of text in a buffer asynchronously
+---@param start_line number Start line (1-indexed)
+---@param end_line number End line (1-indexed)
+---@param opts? FormatRangeAsyncOpts Async options
+function Formatter.format_range_async(start_line, end_line, opts)
+  opts = opts or {}
+  local bufnr = opts.bufnr or vim.api.nvim_get_current_buf()
+  local on_progress = opts.on_progress
+  local on_complete = opts.on_complete
+
+  local config = require('ssns.config').get_formatter()
+  local Engine = require('ssns.formatter.engine')
+
+  -- Capture original end_line before any modifications
+  local original_end_line = end_line
+
+  -- Pre-processing: Expand asterisks if enabled (sync, usually fast)
+  if config.select_star_expand then
+    local ok, ExpandAsterisk = pcall(require, 'ssns.features.expand_asterisk')
+    if ok then
+      local expand_result = ExpandAsterisk.expand_all_asterisks_in_range(bufnr, start_line, end_line)
+      if expand_result.expanded_count > 0 then
+        local line_count = vim.api.nvim_buf_line_count(bufnr)
+        end_line = math.min(end_line, line_count)
+      end
+    end
+  end
+
+  -- Pre-processing: Add schema prefixes if from_schema_qualify = "always" (sync, usually fast)
+  if config.from_schema_qualify == "always" then
+    local ok, SchemaQualify = pcall(require, 'ssns.features.schema_qualify')
+    if ok then
+      local qualify_result = SchemaQualify.qualify_tables_in_range(bufnr, start_line, end_line)
+      if qualify_result.qualified_count > 0 then
+        local line_count = vim.api.nvim_buf_line_count(bufnr)
+        end_line = math.min(end_line, line_count)
+      end
+    end
+  end
+
+  -- Get buffer lines
+  local lines = vim.api.nvim_buf_get_lines(bufnr, start_line - 1, end_line, false)
+  local sql = table.concat(lines, "\n")
+
+  -- Format asynchronously
+  Engine.format_async(sql, config, {
+    on_progress = on_progress,
+    on_complete = function(formatted)
+      -- Apply the formatted result to the buffer
+      vim.schedule(function()
+        -- Check if buffer is still valid
+        if not vim.api.nvim_buf_is_valid(bufnr) then
+          if on_complete then on_complete(false, "Buffer is no longer valid") end
+          return
+        end
+
+        local ok, err = pcall(function()
+          local new_lines = vim.split(formatted, "\n", { plain = true })
+          vim.api.nvim_buf_set_lines(bufnr, start_line - 1, end_line, false, new_lines)
+        end)
+
+        if on_complete then
+          if ok then
+            on_complete(true, nil)
+          else
+            on_complete(false, tostring(err))
+          end
+        end
+      end)
+    end,
+  })
 end
 
 ---Format the SQL statement under the cursor
@@ -156,6 +273,19 @@ end
 function Formatter.clear_cache()
   local Engine = require('ssns.formatter.engine')
   Engine.cache.clear()
+end
+
+---Cancel any in-progress async formatting
+function Formatter.cancel_async_formatting()
+  local Engine = require('ssns.formatter.engine')
+  Engine.cancel_async_formatting()
+end
+
+---Check if async formatting is currently in progress
+---@return boolean
+function Formatter.is_async_formatting_active()
+  local Engine = require('ssns.formatter.engine')
+  return Engine.is_async_formatting_active()
 end
 
 return Formatter
