@@ -551,9 +551,13 @@ function Source:_route_to_provider(context_result, provider_ctx, callback, start
     })
 
   elseif context_result.type == Context.Type.SCHEMA then
-    Debug.log("[COMPLETION] Calling SchemasProvider")
+    Debug.log("[COMPLETION] Calling SchemasProvider (async)")
     local SchemasProvider = require('ssns.completion.providers.schemas')
-    SchemasProvider.get_completions(provider_ctx, wrapped_callback)
+    SchemasProvider.get_completions_async(provider_ctx, {
+      on_complete = function(items, _)
+        wrapped_callback(items or {})
+      end
+    })
 
   elseif context_result.type == Context.Type.KEYWORD then
     Debug.log("[COMPLETION] Calling KeywordsProvider + FunctionsProvider + SnippetsProvider")
