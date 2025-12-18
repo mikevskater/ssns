@@ -248,4 +248,240 @@ function M._get_scalar_functions(connection, context)
   return items
 end
 
+-- ============================================================================
+-- Async Methods
+-- ============================================================================
+
+---Get columns from all tables in query asynchronously
+---Uses callback aggregation to fetch columns from all tables in parallel
+---@param connection table Connection context
+---@param context table Pre-built context with tables_in_scope
+---@param opts table? Options with on_complete callback
+function M.get_all_columns_from_query_async(connection, context, opts)
+  opts = opts or {}
+  local on_complete = opts.on_complete or function() end
+
+  local Resolver = require('ssns.completion.metadata.resolver')
+  local Utils = require('ssns.completion.utils')
+
+  -- Get all tables from query using pre-built context
+  local tables = Resolver.resolve_all_tables_in_query(connection, context)
+  if not tables or #tables == 0 then
+    vim.schedule(function()
+      on_complete({}, nil)
+    end)
+    return
+  end
+
+  -- Callback aggregation: fetch columns from all tables in parallel
+  local pending = #tables
+  local all_columns = {}  -- table_index -> columns array
+  local has_error = false
+
+  local function check_complete()
+    pending = pending - 1
+    if pending == 0 and not has_error then
+      -- All columns fetched, now format and deduplicate
+      local items = {}
+      local seen_columns = {}
+      local column_weights = {}
+
+      for table_idx, table_obj in ipairs(tables) do
+        local columns = all_columns[table_idx] or {}
+
+        -- Build table path for weight lookup
+        local schema = table_obj.schema or table_obj.schema_name
+        local name = table_obj.name or table_obj.table_name or table_obj.view_name
+        local table_path = nil
+        if schema and name then
+          table_path = string.format("%s.%s", schema, name)
+        elseif name then
+          table_path = name
+        end
+
+        for _, col in ipairs(columns) do
+          local col_name = col.name or col.column_name
+
+          if col_name and not seen_columns[col_name:lower()] then
+            seen_columns[col_name:lower()] = true
+
+            local item = Utils.format_column(col, {
+              show_type = true,
+              show_nullable = true,
+            })
+
+            local table_name = table_obj.name or table_obj.table_name or table_obj.view_name
+            if table_name then
+              local original_detail = item.detail or ""
+              item.detail = string.format("%s (%s)", original_detail, table_name)
+            end
+
+            local weight = 0
+            if table_path then
+              local column_path = string.format("%s.%s", table_path, col_name)
+              weight = BaseProvider.get_usage_weight(connection, "column", column_path)
+            end
+
+            column_weights[col_name:lower()] = math.max(column_weights[col_name:lower()] or 0, weight)
+
+            item.data.weight = weight
+            item.data.table_ref = table_path
+
+            table.insert(items, item)
+          end
+        end
+      end
+
+      -- Apply weight-based sorting
+      for _, item in ipairs(items) do
+        local col_name = item.label
+        local weight = column_weights[col_name:lower()] or 0
+        local is_pk = item.data.is_primary_key
+        local ordinal = 999
+
+        local priority
+        if is_pk then
+          priority = 100 - math.min(weight, 99)
+        elseif weight > 0 then
+          priority = 1000 + math.max(0, 3999 - weight)
+        else
+          priority = 5000 + ordinal
+        end
+
+        item.sortText = string.format("%05d_%04d_%s", priority, ordinal, col_name)
+      end
+
+      -- Add scalar functions (sync - in memory)
+      local function_items = M._get_scalar_functions(connection, context)
+      for _, item in ipairs(function_items) do
+        table.insert(items, item)
+      end
+
+      on_complete(items, nil)
+    end
+  end
+
+  -- Fetch columns from all tables in parallel
+  for table_idx, table_obj in ipairs(tables) do
+    Resolver.get_columns_async(table_obj, connection, {
+      on_complete = function(columns, err)
+        if err and not has_error then
+          -- Log error but don't fail - continue with other tables
+          local Debug = require('ssns.debug')
+          Debug.log(string.format("[COLUMNS] Async column fetch error for table %d: %s", table_idx, err))
+        end
+        all_columns[table_idx] = columns or {}
+        check_complete()
+      end,
+    })
+  end
+end
+
+---Get columns for WHERE clause with type compatibility checking (async)
+---@param connection table Connection context
+---@param context table SQL context with left_side info
+---@param opts table? Options with on_complete callback
+function M.get_where_clause_columns_async(connection, context, opts)
+  opts = opts or {}
+  local on_complete = opts.on_complete or function() end
+
+  local Resolver = require('ssns.completion.metadata.resolver')
+
+  -- Get base columns async first
+  M.get_all_columns_from_query_async(connection, context, {
+    on_complete = function(base_items, err)
+      if err then
+        on_complete({}, err)
+        return
+      end
+
+      -- If no left-side column info, return base items
+      if not context.left_side then
+        on_complete(base_items, nil)
+        return
+      end
+
+      local left_col_name = context.left_side.column_name
+      local left_table_ref = context.left_side.table_ref
+
+      -- Try to resolve left-side column type
+      local left_col_type = nil
+      if left_table_ref and context.resolved_scope then
+        local left_table = Resolver.get_resolved(context.resolved_scope, left_table_ref)
+        if left_table then
+          -- Use async to get left table columns
+          Resolver.get_columns_async(left_table, connection, {
+            on_complete = function(left_cols, _)
+              for _, col in ipairs(left_cols or {}) do
+                local col_name = col.name or col.column_name
+                if col_name and col_name:lower() == left_col_name:lower() then
+                  left_col_type = col.data_type
+                  break
+                end
+              end
+
+              -- Continue with type compatibility checking
+              M._apply_type_compatibility(base_items, left_col_type, on_complete)
+            end,
+          })
+          return
+        end
+      end
+
+      -- No left-side type found, return base items
+      on_complete(base_items, nil)
+    end,
+  })
+end
+
+---Internal helper: apply type compatibility info to items
+---@param base_items table[] Items to enhance
+---@param left_col_type string? Left-side column type
+---@param on_complete function Callback
+function M._apply_type_compatibility(base_items, left_col_type, on_complete)
+  -- If we couldn't determine left-side type, return base items
+  if not left_col_type then
+    on_complete(base_items, nil)
+    return
+  end
+
+  -- Enhance items with type compatibility info
+  for _, item in ipairs(base_items) do
+    local item_type = item.data and item.data.data_type
+
+    if item_type then
+      local type_info = TypeCompatibility.get_info(left_col_type, item_type)
+
+      if not type_info.compatible then
+        -- Incompatible type - add warning icon and demote priority
+        item.detail = (item.detail or "") .. " " .. type_info.icon
+
+        local current_priority = tonumber(item.sortText:match("^(%d+)")) or 5000
+        item.sortText = string.format("%05d_%s", current_priority + 2000, item.label)
+
+        local doc = item.documentation
+        if type(doc) == "table" and doc.value then
+          doc.value = doc.value .. "\n\n" .. type_info.icon .. " " .. type_info.warning
+        elseif type(doc) == "string" then
+          item.documentation = doc .. "\n\n" .. type_info.icon .. " " .. type_info.warning
+        else
+          item.documentation = {
+            kind = "markdown",
+            value = type_info.icon .. " " .. type_info.warning,
+          }
+        end
+      elseif type_info.warning then
+        item.detail = (item.detail or "") .. " " .. type_info.icon
+      end
+    end
+  end
+
+  -- Re-sort by updated priorities
+  table.sort(base_items, function(a, b)
+    return (a.sortText or "") < (b.sortText or "")
+  end)
+
+  on_complete(base_items, nil)
+end
+
 return M

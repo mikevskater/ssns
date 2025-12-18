@@ -261,7 +261,7 @@ function ColumnsProvider._async_with_resolved_scope(ctx, opts, on_complete)
 
   -- Helper to run the completion after pre-resolution
   local function run_completion()
-    -- For qualified modes, use true async methods to avoid blocking on Resolver.get_columns
+    -- Route to async methods based on mode to avoid blocking on Resolver.get_columns
     local mode = sql_context.mode
     if mode == "qualified" or mode == "select_qualified" or mode == "where_qualified" then
       -- Use async qualified column resolution
@@ -273,8 +273,19 @@ function ColumnsProvider._async_with_resolved_scope(ctx, opts, on_complete)
       get_qualified().get_qualified_bracket_columns_async(sql_context, connection, sql_context, {
         on_complete = on_complete,
       })
+    elseif mode == "select" or mode == "order_by" or mode == "group_by" or
+           mode == "having" or mode == "set" then
+      -- Use async unqualified column resolution (fetches columns from all tables in parallel)
+      get_unqualified().get_all_columns_from_query_async(connection, sql_context, {
+        on_complete = on_complete,
+      })
+    elseif mode == "where" then
+      -- Use async WHERE clause column resolution (with type compatibility)
+      get_unqualified().get_where_clause_columns_async(connection, sql_context, {
+        on_complete = on_complete,
+      })
     else
-      -- Other modes: run sync impl (they don't call Resolver.get_columns or use in-memory data)
+      -- Other modes: run sync impl (special cases like ON, INSERT, VALUES, OUTPUT)
       vim.schedule(function()
         local success, result = pcall(function()
           return ColumnsProvider._get_completions_impl(ctx)
