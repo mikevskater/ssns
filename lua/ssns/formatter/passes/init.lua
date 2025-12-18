@@ -152,4 +152,127 @@ function Passes.info()
   return result
 end
 
+---@class RunAllAsyncOpts
+---@field on_progress fun(pass_name: string, pass_index: number, total_passes: number)? Progress callback
+---@field on_complete fun(tokens: table[])? Completion callback (required)
+
+---Active async state
+---@type { timer: number?, cancelled: boolean }?
+Passes._async_state = nil
+
+---Pass order for run_all_async
+local PASS_ORDER = {
+  { name = "clauses", config_arg = true },
+  { name = "subqueries", config_arg = true },
+  { name = "expressions", config_arg = false },
+  { name = "structure", config_arg = true },
+  { name = "spacing", config_arg = true },
+  { name = "casing", config_arg = true },
+  { name = "transform", config_arg = true },
+  { name = "align", config_arg = true },
+  { name = "comments", config_arg = true },
+}
+
+---Run all passes asynchronously with yields between each pass
+---@param tokens table[] Array of tokens
+---@param config table Formatter configuration
+---@param opts RunAllAsyncOpts Options for async execution
+function Passes.run_all_async(tokens, config, opts)
+  opts = opts or {}
+  local on_progress = opts.on_progress
+  local on_complete = opts.on_complete
+
+  local total_passes = #PASS_ORDER
+
+  -- Cancel any existing async execution
+  Passes.cancel_async()
+
+  -- For very small token counts, just run synchronously
+  if #tokens <= 100 then
+    local result = Passes.run_all(tokens, config)
+    if on_progress then
+      for i, pass_info in ipairs(PASS_ORDER) do
+        on_progress(pass_info.name, i, total_passes)
+      end
+    end
+    if on_complete then on_complete(result) end
+    return
+  end
+
+  -- Initialize async state
+  Passes._async_state = {
+    timer = nil,
+    cancelled = false,
+  }
+
+  local async_state = Passes._async_state
+  local current_tokens = tokens
+  local current_pass_idx = 1
+
+  ---Run the next pass
+  local function run_next_pass()
+    if async_state.cancelled then
+      Passes._async_state = nil
+      return
+    end
+
+    if current_pass_idx > total_passes then
+      -- All passes complete
+      Passes._async_state = nil
+      if on_complete then
+        on_complete(current_tokens)
+      end
+      return
+    end
+
+    local pass_info = PASS_ORDER[current_pass_idx]
+    local pass_arg = pass_info.config_arg and config or nil
+
+    -- Run the current pass
+    current_tokens = run_pass(pass_info.name, current_tokens, pass_arg)
+
+    -- Report progress
+    if on_progress then
+      on_progress(pass_info.name, current_pass_idx, total_passes)
+    end
+
+    current_pass_idx = current_pass_idx + 1
+
+    if current_pass_idx <= total_passes then
+      -- Schedule next pass
+      async_state.timer = vim.fn.timer_start(0, function()
+        async_state.timer = nil
+        vim.schedule(run_next_pass)
+      end)
+    else
+      -- All passes complete
+      Passes._async_state = nil
+      if on_complete then
+        on_complete(current_tokens)
+      end
+    end
+  end
+
+  -- Start running passes
+  run_next_pass()
+end
+
+---Cancel any in-progress async pass execution
+function Passes.cancel_async()
+  if Passes._async_state then
+    Passes._async_state.cancelled = true
+    if Passes._async_state.timer then
+      vim.fn.timer_stop(Passes._async_state.timer)
+      Passes._async_state.timer = nil
+    end
+    Passes._async_state = nil
+  end
+end
+
+---Check if async pass execution is currently in progress
+---@return boolean
+function Passes.is_async_active()
+  return Passes._async_state ~= nil and not Passes._async_state.cancelled
+end
+
 return Passes
