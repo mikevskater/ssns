@@ -57,6 +57,170 @@ function FormatterCommands.format_buffer(opts)
   return success
 end
 
+---Active spinner ID for formatting progress
+---@type string?
+local _format_spinner_id = nil
+
+---Stage display names for progress
+local STAGE_NAMES = {
+  tokenizing = "Tokenizing",
+  processing = "Processing tokens",
+  passes = "Running passes",
+  output = "Generating output",
+  cache = "Loading from cache",
+}
+
+---Format the entire buffer asynchronously with progress indicator
+---@param opts? {silent?: boolean, show_spinner?: boolean} Options
+function FormatterCommands.format_buffer_async(opts)
+  opts = opts or {}
+  local show_spinner = opts.show_spinner ~= false -- Default true
+
+  if not Formatter.is_enabled() then
+    if not opts.silent then
+      vim.notify("SSNS: Formatter is disabled", vim.log.levels.WARN)
+    end
+    return
+  end
+
+  local bufnr = vim.api.nvim_get_current_buf()
+  local cursor = vim.api.nvim_win_get_cursor(0)
+
+  -- Start spinner if enabled
+  if show_spinner then
+    local Spinner = require('ssns.async.spinner')
+
+    -- Stop any existing spinner
+    if _format_spinner_id then
+      Spinner.stop(_format_spinner_id)
+    end
+
+    _format_spinner_id = Spinner.start_in_buffer(bufnr, {
+      text = "Formatting...",
+      line = cursor[1] - 1, -- 0-indexed
+      style = "braille",
+      show_runtime = true,
+    })
+  end
+
+  -- Start async formatting
+  Formatter.format_buffer_async({
+    bufnr = bufnr,
+    on_progress = function(stage, progress, total)
+      if show_spinner and _format_spinner_id then
+        local Spinner = require('ssns.async.spinner')
+        local stage_name = STAGE_NAMES[stage] or stage
+        local pct = total > 0 and math.floor((progress / total) * 100) or 0
+        Spinner.update(_format_spinner_id, string.format("Formatting: %s %d%%", stage_name, pct))
+      end
+    end,
+    on_complete = function(success, err)
+      -- Stop spinner
+      if show_spinner and _format_spinner_id then
+        local Spinner = require('ssns.async.spinner')
+        Spinner.stop(_format_spinner_id)
+        _format_spinner_id = nil
+      end
+
+      -- Restore cursor position
+      vim.schedule(function()
+        if not vim.api.nvim_buf_is_valid(bufnr) then return end
+
+        local line_count_after = vim.api.nvim_buf_line_count(bufnr)
+        local new_line = math.min(cursor[1], line_count_after)
+        local new_col = cursor[2]
+
+        local line_text = vim.api.nvim_buf_get_lines(bufnr, new_line - 1, new_line, false)[1] or ""
+        new_col = math.min(new_col, #line_text)
+
+        pcall(vim.api.nvim_win_set_cursor, 0, { new_line, new_col })
+
+        if not opts.silent then
+          notify_result(success, err, "buffer")
+        end
+      end)
+    end,
+  })
+end
+
+---Format a range asynchronously with progress indicator
+---@param start_line number Start line (1-indexed)
+---@param end_line number End line (1-indexed)
+---@param opts? {silent?: boolean, show_spinner?: boolean} Options
+function FormatterCommands.format_range_async(start_line, end_line, opts)
+  opts = opts or {}
+  local show_spinner = opts.show_spinner ~= false
+
+  if not Formatter.is_enabled() then
+    if not opts.silent then
+      vim.notify("SSNS: Formatter is disabled", vim.log.levels.WARN)
+    end
+    return
+  end
+
+  -- Ensure start <= end
+  if start_line > end_line then
+    start_line, end_line = end_line, start_line
+  end
+
+  local bufnr = vim.api.nvim_get_current_buf()
+
+  -- Start spinner if enabled
+  if show_spinner then
+    local Spinner = require('ssns.async.spinner')
+
+    if _format_spinner_id then
+      Spinner.stop(_format_spinner_id)
+    end
+
+    _format_spinner_id = Spinner.start_in_buffer(bufnr, {
+      text = "Formatting...",
+      line = start_line - 1,
+      style = "braille",
+      show_runtime = true,
+    })
+  end
+
+  Formatter.format_range_async(start_line, end_line, {
+    bufnr = bufnr,
+    on_progress = function(stage, progress, total)
+      if show_spinner and _format_spinner_id then
+        local Spinner = require('ssns.async.spinner')
+        local stage_name = STAGE_NAMES[stage] or stage
+        local pct = total > 0 and math.floor((progress / total) * 100) or 0
+        Spinner.update(_format_spinner_id, string.format("Formatting: %s %d%%", stage_name, pct))
+      end
+    end,
+    on_complete = function(success, err)
+      if show_spinner and _format_spinner_id then
+        local Spinner = require('ssns.async.spinner')
+        Spinner.stop(_format_spinner_id)
+        _format_spinner_id = nil
+      end
+
+      if not opts.silent then
+        vim.schedule(function()
+          notify_result(success, err, string.format("lines %d-%d", start_line, end_line))
+        end)
+      end
+    end,
+  })
+end
+
+---Cancel any in-progress async formatting
+function FormatterCommands.cancel_async_format()
+  -- Stop spinner
+  if _format_spinner_id then
+    local Spinner = require('ssns.async.spinner')
+    Spinner.stop(_format_spinner_id)
+    _format_spinner_id = nil
+  end
+
+  -- Cancel async formatting
+  Formatter.cancel_async_formatting()
+  vim.notify("SSNS: Formatting cancelled", vim.log.levels.INFO)
+end
+
 ---Format a visual selection (range)
 ---@param start_line number Start line (1-indexed)
 ---@param end_line number End line (1-indexed)
@@ -195,6 +359,20 @@ function FormatterCommands.register_commands()
     desc = "Format entire SQL buffer",
   })
 
+  -- :SSNSFormatAsync - Format entire buffer asynchronously with progress
+  vim.api.nvim_create_user_command("SSNSFormatAsync", function()
+    FormatterCommands.format_buffer_async()
+  end, {
+    desc = "Format entire SQL buffer asynchronously",
+  })
+
+  -- :SSNSFormatCancel - Cancel in-progress async formatting
+  vim.api.nvim_create_user_command("SSNSFormatCancel", function()
+    FormatterCommands.cancel_async_format()
+  end, {
+    desc = "Cancel in-progress async formatting",
+  })
+
   -- :SSNSFormatterConfig - Open formatter configuration UI
   vim.api.nvim_create_user_command("SSNSFormatterConfig", function()
     FormatterCommands.open_config()
@@ -209,6 +387,14 @@ function FormatterCommands.register_commands()
   end, {
     range = true,
     desc = "Format selected SQL range",
+  })
+
+  -- :SSNSFormatRangeAsync - Format visual selection asynchronously
+  vim.api.nvim_create_user_command("SSNSFormatRangeAsync", function(opts)
+    FormatterCommands.format_range_async(opts.line1, opts.line2)
+  end, {
+    range = true,
+    desc = "Format selected SQL range asynchronously",
   })
 
   -- :SSNSFormatStatement - Format statement under cursor
@@ -247,7 +433,13 @@ function FormatterCommands.register_commands()
   })
 end
 
+---Buffers with pending async format-on-save
+---@type table<number, boolean>
+local _pending_format_save = {}
+
 ---Setup format-on-save autocmd for SQL buffers
+---For small files, uses sync formatting in BufWritePre.
+---For large files (above async_threshold_bytes), uses async formatting after save.
 ---@param bufnr number? Buffer number (nil for current buffer)
 function FormatterCommands.setup_format_on_save(bufnr)
   local config = Config.get_formatter()
@@ -259,14 +451,67 @@ function FormatterCommands.setup_format_on_save(bufnr)
   -- Create autocmd group if not exists
   local group = vim.api.nvim_create_augroup("SSNSFormatterAutoSave", { clear = false })
 
-  -- Setup BufWritePre autocmd for the buffer
+  -- Setup BufWritePre autocmd for the buffer (sync formatting for small files)
   vim.api.nvim_create_autocmd("BufWritePre", {
     group = group,
     buffer = bufnr,
-    callback = function()
+    callback = function(ev)
       -- Only format if formatter is enabled
-      if Formatter.is_enabled() then
+      if not Formatter.is_enabled() then
+        return
+      end
+
+      -- Skip if this is a save after async format
+      if _pending_format_save[ev.buf] then
+        _pending_format_save[ev.buf] = nil
+        return
+      end
+
+      -- Check file size
+      local lines = vim.api.nvim_buf_get_lines(ev.buf, 0, -1, false)
+      local size = 0
+      for _, line in ipairs(lines) do
+        size = size + #line + 1 -- +1 for newline
+      end
+
+      local async_threshold = config.async_threshold_bytes or 50000
+
+      if size <= async_threshold then
+        -- Small file: use sync formatting
         FormatterCommands.format_buffer({ silent = true })
+      else
+        -- Large file: schedule async format after save, then re-save
+        -- Note: We don't block the write, format will happen after
+        vim.schedule(function()
+          if not vim.api.nvim_buf_is_valid(ev.buf) then return end
+
+          vim.notify("SSNS: Formatting large file asynchronously...", vim.log.levels.INFO)
+
+          Formatter.format_buffer_async({
+            bufnr = ev.buf,
+            on_progress = function(stage, progress, total)
+              -- Progress is shown via spinner
+            end,
+            on_complete = function(success, err)
+              if success then
+                -- Mark that we're about to save after async format
+                _pending_format_save[ev.buf] = true
+
+                vim.schedule(function()
+                  if vim.api.nvim_buf_is_valid(ev.buf) and vim.bo[ev.buf].modified then
+                    -- Silent save after formatting
+                    vim.api.nvim_buf_call(ev.buf, function()
+                      vim.cmd("silent write")
+                    end)
+                    vim.notify("SSNS: Formatted and saved", vim.log.levels.INFO)
+                  end
+                end)
+              else
+                vim.notify(string.format("SSNS: Async format failed: %s", err or "Unknown error"), vim.log.levels.WARN)
+              end
+            end,
+          })
+        end)
       end
     end,
     desc = "SSNS: Format SQL on save",
