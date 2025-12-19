@@ -110,7 +110,7 @@ local function run_async_completion_test(test_data, opts)
 
   -- Clear cache if requested
   if test_data.clear_cache then
-    Cache.clear()
+    Cache.clear_all()
     -- Re-setup connection after cache clear
     connection_info, conn_err = setup_test_connection(test_data)
     if not connection_info then
@@ -194,7 +194,7 @@ local function run_async_completion_test(test_data, opts)
     local cancel_token = nil
     if test_data.pre_cancel then
       local Cancellation = require("ssns.async.cancellation")
-      cancel_token = Cancellation.create()
+      cancel_token = Cancellation.create_token()
       cancel_token:cancel("Pre-cancelled for test")
     end
 
@@ -613,10 +613,12 @@ local function run_async_rpc_test(test_data, opts)
         timer_fired = true
       end)
 
-      server:connect_rpc_async(function(success, connect_err)
-        callback_called = true
-        signal({ success = success, error = connect_err })
-      end)
+      server:connect_rpc_async({
+        on_complete = function(success, connect_err)
+          callback_called = true
+          signal({ success = success, error = connect_err })
+        end,
+      })
 
       local connect_result = waiter()
       vim.fn.timer_stop(timer)
@@ -664,22 +666,28 @@ local function run_async_rpc_test(test_data, opts)
         timer_fired = true
       end)
 
-      server:load_rpc_async(function(success, databases)
-        callback_called = true
-        signal({ success = success, databases = databases })
-      end)
+      server:load_rpc_async({
+        on_complete = function(success, err)
+          callback_called = true
+          signal({ success = success, error = err })
+        end,
+      })
 
       local load_result = waiter()
       vim.fn.timer_stop(timer)
 
-      result.passed = callback_called
+      result.passed = callback_called and load_result and load_result.success
       if test_data.expected.has_databases then
-        result.passed = result.passed and load_result and load_result.databases and #load_result.databases > 0
+        -- After successful load, check server's databases
+        local databases = server:get_databases() or {}
+        result.passed = result.passed and #databases > 0
       end
       if test_data.expected.includes_database then
         local found = false
-        for _, db in ipairs(load_result and load_result.databases or {}) do
-          if db.name == test_data.expected.includes_database then
+        local databases = server:get_databases() or {}
+        for _, db in ipairs(databases) do
+          local db_name = type(db) == "table" and db.name or db
+          if db_name == test_data.expected.includes_database then
             found = true
             break
           end
@@ -715,10 +723,12 @@ local function run_async_rpc_test(test_data, opts)
     local callback_called = false
 
     if database.load_rpc_async then
-      database:load_rpc_async(function(success)
-        callback_called = true
-        signal({ success = success })
-      end)
+      database:load_rpc_async({
+        on_complete = function(success)
+          callback_called = true
+          signal({ success = success })
+        end,
+      })
 
       waiter()
       result.passed = callback_called
@@ -750,10 +760,12 @@ local function run_async_rpc_test(test_data, opts)
     local callback_called = false
 
     if server.connect_and_load_rpc_async then
-      server:connect_and_load_rpc_async(function(success)
-        callback_called = true
-        signal({ success = success })
-      end)
+      server:connect_and_load_rpc_async({
+        on_complete = function(success)
+          callback_called = true
+          signal({ success = success })
+        end,
+      })
 
       waiter()
       result.passed = callback_called
@@ -888,7 +900,7 @@ end
 
 --- Run all async integration tests
 --- @param opts table? Options
---- @return table results Array of test results
+--- @return table results {total, passed, failed, results: table[]}
 function M.run_all_tests(opts)
   opts = opts or {}
 
@@ -897,6 +909,9 @@ function M.run_all_tests(opts)
 
   local files = vim.fn.glob(test_dir .. "/*.lua", false, true)
   local all_results = {}
+  local total = 0
+  local passed = 0
+  local failed = 0
 
   for _, file in ipairs(files) do
     local ok, tests = pcall(dofile, file)
@@ -904,17 +919,29 @@ function M.run_all_tests(opts)
       for _, test in ipairs(tests) do
         local result = M.run_single_test(test, opts)
         table.insert(all_results, result)
+        total = total + 1
+
+        if result.passed then
+          passed = passed + 1
+        else
+          failed = failed + 1
+        end
 
         -- Log progress
         local status = result.passed and "PASS" or "FAIL"
-        vim.notify(string.format("[%s] %s: %s", status, test.id, test.name), vim.log.levels.INFO)
+        print(string.format("[%s] %s: %s", status, test.id, test.name))
       end
     else
       vim.notify(string.format("Failed to load test file: %s", file), vim.log.levels.ERROR)
     end
   end
 
-  return all_results
+  return {
+    total = total,
+    passed = passed,
+    failed = failed,
+    results = all_results,
+  }
 end
 
 --- Run tests from a specific async integration test file
