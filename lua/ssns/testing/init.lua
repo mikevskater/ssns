@@ -580,10 +580,84 @@ function M.run_formatter_tests(opts)
   return results
 end
 
+--- Run async integration tests
+--- @param opts table|nil Optional configuration
+--- @return table results {total, passed, failed, results: table[]}
+function M.run_async_integration_tests(opts)
+  opts = opts or {}
+
+  vim.notify("Running async integration tests...", vim.log.levels.INFO)
+
+  local async_runner = require("ssns.testing.async_integration_runner")
+  local results = async_runner.run_all_tests(opts)
+
+  if not results or results.total == 0 then
+    vim.notify("No async integration tests found or results returned", vim.log.levels.WARN)
+    return results or { total = 0, passed = 0, failed = 0, results = {} }
+  end
+
+  -- Display results
+  local pass_rate = results.total > 0 and (results.passed / results.total * 100) or 0
+  vim.notify(string.format("Async Integration Tests: %d/%d passed (%.1f%%)",
+    results.passed, results.total, pass_rate),
+    results.failed > 0 and vim.log.levels.WARN or vim.log.levels.INFO)
+
+  -- Write markdown report
+  local output_path = vim.fn.stdpath("data") .. "/ssns/async_integration_test_results.md"
+  local success = reporter.write_unit_markdown(results, output_path)
+
+  if success then
+    vim.notify(string.format("Async integration test results written to: %s", output_path), vim.log.levels.INFO)
+  end
+
+  return results
+end
+
+--- Run a specific async integration test by ID
+--- @param test_id number The test ID (10001-10999)
+--- @param opts table|nil Optional configuration
+--- @return table|nil result Test result or nil if not found
+function M.run_async_integration_test(test_id, opts)
+  opts = opts or {}
+
+  vim.notify(string.format("Running async integration test #%d...", test_id), vim.log.levels.INFO)
+
+  local async_runner = require("ssns.testing.async_integration_runner")
+  local all_tests = async_runner.scan_tests()
+
+  -- Find the test by ID
+  local test_data = nil
+  for _, test in ipairs(all_tests) do
+    if test.id == test_id then
+      test_data = test
+      break
+    end
+  end
+
+  if not test_data then
+    vim.notify(string.format("Async integration test #%d not found", test_id), vim.log.levels.ERROR)
+    return nil
+  end
+
+  local result = async_runner.run_single_test(test_data, opts)
+
+  -- Display result
+  local status = result.passed and "PASS" or "FAIL"
+  vim.notify(string.format("[%s] #%d: %s (%.2fms)", status, result.id, result.name, result.duration_ms),
+    result.passed and vim.log.levels.INFO or vim.log.levels.WARN)
+
+  if not result.passed and result.error then
+    vim.notify(string.format("  Error: %s", result.error), vim.log.levels.ERROR)
+  end
+
+  return result
+end
+
 --- Expose submodules for direct access
 M.runner = runner
 M.reporter = reporter
 M.utils = utils
 M.unit_runner = unit_runner
+M.async_integration_runner = require("ssns.testing.async_integration_runner")
 
 return M
