@@ -2235,8 +2235,11 @@ function UnitRunner._run_async_completion_providers_test(test)
         database = mock_database,
       },
       sql_context = {
-        mode = "column_qualified",
+        mode = "qualified",  -- Must match the async routing in ColumnsProvider
         table_ref = setup.table_ref or "Employees",
+        tables_in_scope = {
+          { name = setup.table_ref or "Employees", schema = "dbo" },
+        },
       },
     }
 
@@ -2284,8 +2287,11 @@ function UnitRunner._run_async_completion_providers_test(test)
         database = mock_database,
       },
       sql_context = {
-        mode = "column_qualified",
+        mode = "qualified",  -- Must match the async routing in ColumnsProvider
         table_ref = setup.table_ref or "NonExistentTable",
+        tables_in_scope = {
+          { name = setup.table_ref or "NonExistentTable", schema = "dbo" },
+        },
       },
     }
 
@@ -2320,8 +2326,11 @@ function UnitRunner._run_async_completion_providers_test(test)
         database = mock_database,
       },
       sql_context = {
-        mode = "column_qualified",
+        mode = "qualified",  -- Must match the async routing in ColumnsProvider
         table_ref = "Employees",
+        tables_in_scope = {
+          { name = "Employees", schema = "dbo" },
+        },
       },
     }
 

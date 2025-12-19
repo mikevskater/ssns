@@ -364,7 +364,12 @@ function M.format_unit_result(result)
   table.insert(lines, "")
   table.insert(lines, "**Input:**")
   table.insert(lines, "```sql")
-  table.insert(lines, result.input or "")
+  -- Handle input that might be a table (for async tests with complex inputs)
+  local input_str = result.input
+  if type(input_str) == "table" then
+    input_str = vim.inspect(input_str)
+  end
+  table.insert(lines, input_str or "")
   table.insert(lines, "```")
 
   -- Show error if failed
