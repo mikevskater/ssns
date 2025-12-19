@@ -1214,7 +1214,8 @@ function UnitRunner._run_async_file_io_test(test)
 
   -- Setup phase: create temp files if needed
   if setup.create_file then
-    local f = io.open(temp_path, "w")
+    -- Use binary mode to preserve exact line endings
+    local f = io.open(temp_path, "wb")
     if f then
       f:write(setup.content or "")
       f:close()

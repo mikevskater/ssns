@@ -365,7 +365,6 @@ return {
       name = "FindMe",
     },
     expected = {
-      success = true,
       found = true,
       connection_name = "FindMe",
     },
@@ -384,7 +383,6 @@ return {
       name = "Missing",
     },
     expected = {
-      success = true,
       found = false,
     },
   },
