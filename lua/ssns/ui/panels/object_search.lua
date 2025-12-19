@@ -148,6 +148,10 @@ local ui_state = {
   _cached_saved_connections = nil,
 }
 
+-- Saved state that persists between open/close cycles
+-- Allows user to resume where they left off
+local saved_state = nil
+
 ---Start the text spinner animation
 local function start_spinner_animation()
   if loading_text_spinner and loading_text_spinner:is_running() then
@@ -285,7 +289,8 @@ local function is_system_object(searchable)
 end
 
 ---Reset UI state to defaults
-local function reset_state()
+---@param clear_saved boolean? If true, also clears saved_state (full reset)
+local function reset_state(clear_saved)
   ui_state = {
     selected_server = nil,
     selected_databases = {},
@@ -321,6 +326,92 @@ local function reset_state()
     -- Cached saved connections (loaded async)
     _cached_saved_connections = nil,
   }
+
+  if clear_saved then
+    saved_state = nil
+  end
+end
+
+---Save current state for later restoration
+---Called when closing the panel to preserve user's work
+local function save_current_state()
+  -- Only save if we have meaningful state (server selected or objects loaded)
+  if not ui_state.selected_server and #ui_state.loaded_objects == 0 then
+    saved_state = nil
+    return
+  end
+
+  saved_state = {
+    -- Server/database selection
+    selected_server = ui_state.selected_server,
+    selected_databases = vim.deepcopy(ui_state.selected_databases),
+    all_databases_selected = ui_state.all_databases_selected,
+    -- Loaded data
+    loaded_objects = ui_state.loaded_objects,  -- Keep reference (don't deep copy - too expensive)
+    filtered_results = ui_state.filtered_results,
+    definitions_cache = ui_state.definitions_cache,
+    -- Search state
+    search_term = ui_state.search_term,
+    selected_result_idx = ui_state.selected_result_idx,
+    -- Search filters
+    search_names = ui_state.search_names,
+    search_definitions = ui_state.search_definitions,
+    search_metadata = ui_state.search_metadata,
+    -- Object type filters
+    show_tables = ui_state.show_tables,
+    show_views = ui_state.show_views,
+    show_procedures = ui_state.show_procedures,
+    show_functions = ui_state.show_functions,
+    show_synonyms = ui_state.show_synonyms,
+    show_schemas = ui_state.show_schemas,
+    -- Search options
+    show_system = ui_state.show_system,
+    case_sensitive = ui_state.case_sensitive,
+    use_regex = ui_state.use_regex,
+    whole_word = ui_state.whole_word,
+    -- Cached connections
+    _cached_saved_connections = ui_state._cached_saved_connections,
+  }
+end
+
+---Restore previously saved state
+---@return boolean restored True if state was restored
+local function restore_saved_state()
+  if not saved_state then
+    return false
+  end
+
+  -- Restore all saved fields
+  ui_state.selected_server = saved_state.selected_server
+  ui_state.selected_databases = saved_state.selected_databases
+  ui_state.all_databases_selected = saved_state.all_databases_selected
+  ui_state.loaded_objects = saved_state.loaded_objects
+  ui_state.filtered_results = saved_state.filtered_results
+  ui_state.definitions_cache = saved_state.definitions_cache
+  ui_state.search_term = saved_state.search_term
+  ui_state.selected_result_idx = saved_state.selected_result_idx
+  ui_state.search_names = saved_state.search_names
+  ui_state.search_definitions = saved_state.search_definitions
+  ui_state.search_metadata = saved_state.search_metadata
+  ui_state.show_tables = saved_state.show_tables
+  ui_state.show_views = saved_state.show_views
+  ui_state.show_procedures = saved_state.show_procedures
+  ui_state.show_functions = saved_state.show_functions
+  ui_state.show_synonyms = saved_state.show_synonyms
+  ui_state.show_schemas = saved_state.show_schemas
+  ui_state.show_system = saved_state.show_system
+  ui_state.case_sensitive = saved_state.case_sensitive
+  ui_state.use_regex = saved_state.use_regex
+  ui_state.whole_word = saved_state.whole_word
+  ui_state._cached_saved_connections = saved_state._cached_saved_connections
+
+  -- Update loading status based on loaded objects
+  if #ui_state.loaded_objects > 0 then
+    ui_state.loading_status = "complete"
+    ui_state.loading_message = string.format("Loaded %d objects", #ui_state.loaded_objects)
+  end
+
+  return true
 end
 
 ---Get object type icon
@@ -2790,19 +2881,31 @@ function UiObjectSearch.close()
     multi_panel = nil
   end
 
-  reset_state()
+  -- Save state for next open (don't reset - preserve user's work)
+  save_current_state()
 end
 
 ---Show the object search UI
----@param options table? Options {server?: ServerClass, database?: DbClass}
+---@param options table? Options {server?: ServerClass, database?: DbClass, reset?: boolean}
 function UiObjectSearch.show(options)
   options = options or {}
 
-  -- Close existing
-  UiObjectSearch.close()
+  -- Close existing panel (saves state)
+  if multi_panel then
+    multi_panel:close()
+    multi_panel = nil
+  end
 
-  -- Initialize state
-  reset_state()
+  -- Check if we should restore saved state or start fresh
+  local restored = false
+  if not options.reset and saved_state then
+    -- Restore previous state
+    reset_state()  -- Clear current state first
+    restored = restore_saved_state()
+  else
+    -- Fresh start
+    reset_state(true)  -- Clear saved state too
+  end
 
   -- Load saved connections asynchronously (for server dropdown)
   local Connections = require('ssns.connections')
@@ -3057,6 +3160,7 @@ function UiObjectSearch.show(options)
           { key = "Enter/o", desc = "Open definition in new buffer" },
           { key = "y", desc = "Yank object name" },
           { key = "r", desc = "Refresh objects from database" },
+          { key = "R", desc = "Clear saved state (full reset)" },
           { key = "q/Esc", desc = "Close" },
         },
       },
@@ -3066,8 +3170,9 @@ function UiObjectSearch.show(options)
         pcall(vim.api.nvim_del_augroup_by_id, search_augroup)
         search_augroup = nil
       end
+      -- Save state before closing (preserve user's work)
+      save_current_state()
       multi_panel = nil
-      reset_state()
     end,
   })
 
@@ -3315,6 +3420,7 @@ function UiObjectSearch.show(options)
       ["2"] = toggle_search_defs,
       ["3"] = toggle_search_meta,
       ["r"] = refresh_objects,
+      ["R"] = function() UiObjectSearch.reset(false) end,  -- Clear state without reopen
       -- Object type toggles (Shift+number keys)
       ["!"] = toggle_tables,
       ["@"] = toggle_views,
@@ -3413,6 +3519,37 @@ function UiObjectSearch.show(options)
       multi_panel:focus_panel("settings")
     end)
   end
+end
+
+---Reset saved state and optionally reopen with fresh state
+---@param reopen boolean? If true, close and reopen with fresh state (default: true)
+function UiObjectSearch.reset(reopen)
+  if reopen == nil then reopen = true end
+
+  -- Clear saved state
+  saved_state = nil
+
+  if reopen and multi_panel then
+    -- Close and reopen with fresh state
+    UiObjectSearch.close()
+    vim.schedule(function()
+      UiObjectSearch.show({ reset = true })
+    end)
+  elseif multi_panel then
+    -- Just reset current state without reopening
+    reset_state(true)
+    -- Re-render all panels
+    multi_panel:render_all()
+    vim.notify("SSNS: Search state cleared", vim.log.levels.INFO)
+  else
+    vim.notify("SSNS: Saved search state cleared", vim.log.levels.INFO)
+  end
+end
+
+---Check if object search is open
+---@return boolean
+function UiObjectSearch.is_open()
+  return multi_panel ~= nil
 end
 
 return UiObjectSearch
