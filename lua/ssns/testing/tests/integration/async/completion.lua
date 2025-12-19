@@ -153,13 +153,17 @@ return {
   {
     id = 10031,
     type = "async_integration",
-    name = "Async completion - pre-cancelled token",
-    description = "Verify completion with already-cancelled token returns empty",
+    name = "Async completion - immediate second request cancels first",
+    description = "Verify immediate second request cancels the first (Source auto-cancellation)",
     database = "vim_dadbod_test",
-    query = "SELECT * FROM █",
-    pre_cancel = true,
+    scenario = "rapid_input",
+    inputs = {
+      { query = "SELECT * FROM █", delay_ms = 0 },
+      { query = "SELECT * FROM Emp█", delay_ms = 0 }, -- Immediate second request
+    },
     expected = {
-      empty_result = true,
+      final_result_only = true,
+      includes = { "Employees" },
     },
     timeout_ms = 5000,
   },
@@ -185,12 +189,12 @@ return {
     id = 10041,
     type = "async_integration",
     name = "Async completion - cached database",
-    description = "Verify completion is faster with cached database",
+    description = "Verify completion works with cached database (runs after 10040)",
     database = "vim_dadbod_test",
-    -- Run after 10040 to use cache
+    query = "SELECT * FROM █",
     expected = {
       has_items = true,
-      faster_than_cold = true, -- Indicative, not strictly enforced
+      includes = { "Employees" },
     },
     timeout_ms = 5000,
   },

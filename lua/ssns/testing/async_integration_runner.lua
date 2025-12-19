@@ -143,6 +143,7 @@ local function run_async_completion_test(test_data, opts)
     local Source = require("ssns.completion.source")
     local final_items = nil
     local callback_count = 0
+    local num_inputs = #test_data.inputs
 
     for i, input in ipairs(test_data.inputs) do
       -- Update buffer with new query
@@ -153,6 +154,11 @@ local function run_async_completion_test(test_data, opts)
       local cursor_pos = input.query:find("█") or #query + 1
       ctx.cursor = { 1, cursor_pos - 1 }
 
+      -- Rebuild statement cache for new buffer content
+      local StatementCache = require('ssns.completion.statement_cache')
+      StatementCache.invalidate(bufnr)
+      StatementCache.get_or_build_cache(bufnr)
+
       -- Request completion
       Source:get_completions(ctx, function(response)
         callback_count = callback_count + 1
@@ -161,14 +167,18 @@ local function run_async_completion_test(test_data, opts)
 
       -- Wait between inputs
       if input.delay_ms and input.delay_ms > 0 then
-        vim.wait(input.delay_ms)
+        vim.wait(input.delay_ms, function() return false end, 10)
       end
     end
 
-    -- Wait for final result
+    -- Wait for at least one callback (the last one should have our results)
+    -- Give extra time for async operations to complete
     vim.wait(timeout_ms, function()
-      return callback_count > 0
+      return callback_count >= 1
     end, 50)
+
+    -- Small additional wait to ensure final callback has completed
+    vim.wait(200, function() return false end, 20)
 
     -- Verify expectations
     if test_data.expected.final_result_only then
@@ -183,7 +193,7 @@ local function run_async_completion_test(test_data, opts)
         end
         if not found then
           result.passed = false
-          result.error = string.format("Missing expected item: %s", expected_item)
+          result.error = string.format("Missing expected item: %s (got %d items)", expected_item, #(final_items or {}))
           break
         end
       end
@@ -438,6 +448,96 @@ local function generate_test_results(spec)
   }
 end
 
+--- Run async multi-result export test
+--- @param test_data table Test definition
+--- @param opts table? Options
+--- @param start_time number Start time from caller
+--- @param result table Result table from caller
+--- @return table result Test result
+local function run_async_multi_export_test(test_data, opts, start_time, result)
+  local timeout_ms = test_data.timeout_ms or opts.timeout_ms or 5000
+  local FileIO = require("ssns.async.file_io")
+
+  -- Create temp directory for multi-file export
+  local temp_dir = vim.fn.tempname()
+  vim.fn.mkdir(temp_dir, "p")
+
+  local multi_results = test_data.mock_multi_results
+  local files_created = 0
+  local all_have_headers = true
+  local pending_writes = #multi_results
+  local write_complete = false
+
+  -- Write each result set to a separate file
+  for i, result_set in ipairs(multi_results) do
+    local export_path = temp_dir .. "/result_" .. i .. ".csv"
+
+    -- Generate CSV content
+    local csv_lines = {}
+    table.insert(csv_lines, table.concat(result_set.columns, ","))
+    for _, row in ipairs(result_set.rows) do
+      local escaped_row = {}
+      for _, val in ipairs(row) do
+        if val == nil then
+          table.insert(escaped_row, "")
+        elseif type(val) == "string" and (val:find(",") or val:find('"') or val:find("\n")) then
+          table.insert(escaped_row, '"' .. val:gsub('"', '""') .. '"')
+        else
+          table.insert(escaped_row, tostring(val))
+        end
+      end
+      table.insert(csv_lines, table.concat(escaped_row, ","))
+    end
+    local csv_content = table.concat(csv_lines, "\n")
+
+    FileIO.write_async(export_path, csv_content, function(write_result)
+      if write_result.success then
+        files_created = files_created + 1
+        -- Verify header
+        local content = vim.fn.readfile(export_path)
+        if content[1] ~= table.concat(result_set.columns, ",") then
+          all_have_headers = false
+        end
+      end
+      pending_writes = pending_writes - 1
+      if pending_writes == 0 then
+        write_complete = true
+      end
+    end)
+  end
+
+  -- Wait for all writes to complete
+  vim.wait(timeout_ms, function()
+    return write_complete
+  end, 50)
+
+  -- Check expectations
+  if test_data.expected.files_created then
+    result.passed = files_created == test_data.expected.files_created
+    if not result.passed then
+      result.error = string.format("Expected %d files, got %d", test_data.expected.files_created, files_created)
+    end
+  end
+  if result.passed and test_data.expected.all_have_headers then
+    result.passed = all_have_headers
+    if not result.passed then
+      result.error = "Not all files have correct headers"
+    end
+  end
+  if test_data.expected.sequential_writes then
+    -- For sequential writes, just verify all files were created
+    result.passed = files_created == #multi_results
+  end
+
+  -- Cleanup
+  pcall(function()
+    vim.fn.delete(temp_dir, "rf")
+  end)
+
+  result.duration_ms = (vim.loop.hrtime() - start_time) / 1e6
+  return result
+end
+
 --- Run async export integration test
 --- @param test_data table Test definition
 --- @param opts table? Options
@@ -455,6 +555,11 @@ local function run_async_export_test(test_data, opts)
   }
 
   local start_time = vim.loop.hrtime()
+
+  -- Handle multi-result set tests separately
+  if test_data.mock_multi_results then
+    return run_async_multi_export_test(test_data, opts, start_time, result)
+  end
 
   -- Get mock results
   local mock_results
