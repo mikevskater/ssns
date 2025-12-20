@@ -12,7 +12,7 @@
 --   search_names: boolean - Search in object names (default true)
 --   search_definitions: boolean - Search in definitions
 --   search_metadata: boolean - Search in metadata
---   batch_size: number - Results per batch (default 50)
+--   batch_interval_ms: number - Time between batch sends in milliseconds (default 100)
 --
 -- This code runs inside _WORKER_MAIN(send_message)
 -- _INPUT is the decoded input table
@@ -21,13 +21,16 @@
 local objects = _INPUT.objects or {}
 local pattern = _INPUT.pattern or ""
 local options = _INPUT.options or {}
-local batch_size = options.batch_size or 50
+local batch_interval_ms = options.batch_interval_ms or 100
 local case_sensitive = options.case_sensitive or false
 local use_regex = options.use_regex or false
 local whole_word = options.whole_word or false
 local search_names = options.search_names ~= false  -- default true
 local search_definitions = options.search_definitions or false
 local search_metadata = options.search_metadata or false
+
+-- Convert interval to seconds for os.clock()
+local batch_interval_sec = batch_interval_ms / 1000
 
 -- Prepare pattern for matching
 local match_pattern = pattern
@@ -138,10 +141,11 @@ local function matches(obj)
   return false, nil, nil
 end
 
--- Process objects
+-- Process objects with time-based batching
 local batch = {}
 local total = #objects
 local last_progress = 0
+local last_batch_time = os.clock()
 
 for i, obj in ipairs(objects) do
   local matched, match_type, matched_text = matches(obj)
@@ -161,8 +165,9 @@ for i, obj in ipairs(objects) do
     })
   end
 
-  -- Send batch when full
-  if #batch >= batch_size then
+  -- Send batch when time interval has elapsed (and we have results)
+  local current_time = os.clock()
+  if #batch > 0 and (current_time - last_batch_time) >= batch_interval_sec then
     local progress = math.floor((i / total) * 100)
     send({
       type = "batch",
@@ -170,6 +175,7 @@ for i, obj in ipairs(objects) do
       progress = progress,
     })
     batch = {}
+    last_batch_time = current_time
   end
 
   -- Send progress updates every 10%

@@ -35,6 +35,11 @@ function DbClass.new(opts)
 
   self.is_connected = false
 
+  -- Bulk loading flags - prevent redundant queries across all schemas
+  self._bulk_columns_loaded = false     -- Columns loaded via bulk query for all schemas
+  self._bulk_parameters_loaded = false  -- Parameters loaded via bulk query for all schemas
+  self._bulk_definitions_loaded = false -- Definitions loaded via bulk query for all schemas
+
   return self
 end
 
@@ -1319,6 +1324,220 @@ function DbClass:load_synonyms_async(opts)
     end,
     on_error = opts.on_error,
   })
+end
+
+---Load all metadata (columns/parameters) for all objects in bulk asynchronously
+---Returns a map of "schema.object" -> "metadata text" (column names, types, etc.)
+---Queries run sequentially to avoid overloading the server
+---Results are cached - subsequent calls return cached data without querying
+---@param opts { on_complete: fun(metadata: table<string,string>?, err: string?)?, on_error: fun(err: string)?, timeout_ms: number?, force_reload: boolean? }?
+---@return string task_id
+function DbClass:load_all_metadata_bulk_async(opts)
+  opts = opts or {}
+
+  -- Return cached data if already loaded (unless force_reload requested)
+  if self._bulk_metadata_loaded and self._bulk_metadata_cache and not opts.force_reload then
+    if opts.on_complete then
+      vim.schedule(function()
+        opts.on_complete(self._bulk_metadata_cache, nil)
+      end)
+    end
+    return "cached"
+  end
+
+  local adapter = self:get_adapter()
+  local metadata = {}
+  local db_self = self  -- Capture for callback
+
+  -- Step 1: Load columns for all tables/views
+  local function load_columns(next_step)
+    if not adapter.get_all_columns_bulk_query then
+      next_step()
+      return
+    end
+
+    local query = adapter:get_all_columns_bulk_query(self.db_name)
+
+    adapter:execute_rpc_async(self:_get_db_connection_config(), query, {
+      timeout_ms = opts.timeout_ms or 60000,
+      on_complete = function(results, err)
+        if err then
+          if opts.on_error then opts.on_error(err)
+          elseif opts.on_complete then opts.on_complete(nil, err) end
+          return
+        end
+
+        if adapter.parse_all_columns_bulk then
+          local columns_meta = adapter:parse_all_columns_bulk(results)
+          for k, v in pairs(columns_meta) do
+            metadata[k] = v
+          end
+        end
+
+        next_step()
+      end,
+      on_error = function(err)
+        if opts.on_error then opts.on_error(err)
+        elseif opts.on_complete then opts.on_complete(nil, err) end
+      end,
+    })
+  end
+
+  -- Step 2: Load parameters for all procedures/functions
+  local function load_parameters(next_step)
+    if not adapter.get_all_parameters_bulk_query then
+      next_step()
+      return
+    end
+
+    local query = adapter:get_all_parameters_bulk_query(self.db_name)
+
+    adapter:execute_rpc_async(self:_get_db_connection_config(), query, {
+      timeout_ms = opts.timeout_ms or 60000,
+      on_complete = function(results, err)
+        if err then
+          if opts.on_error then opts.on_error(err)
+          elseif opts.on_complete then opts.on_complete(nil, err) end
+          return
+        end
+
+        if adapter.parse_all_parameters_bulk then
+          local params_meta = adapter:parse_all_parameters_bulk(results)
+          for k, v in pairs(params_meta) do
+            if metadata[k] then
+              metadata[k] = metadata[k] .. " " .. v
+            else
+              metadata[k] = v
+            end
+          end
+        end
+
+        next_step()
+      end,
+      on_error = function(err)
+        if opts.on_error then opts.on_error(err)
+        elseif opts.on_complete then opts.on_complete(nil, err) end
+      end,
+    })
+  end
+
+  -- Run sequentially: columns -> parameters -> complete
+  load_columns(function()
+    load_parameters(function()
+      -- Cache the results for future calls
+      db_self._bulk_metadata_loaded = true
+      db_self._bulk_metadata_cache = metadata
+
+      if opts.on_complete then opts.on_complete(metadata, nil) end
+    end)
+  end)
+
+  return "bulk_metadata"
+end
+
+---Load all definitions for all objects in bulk asynchronously
+---Returns a map of "schema.object" -> "definition text"
+---Queries run sequentially to avoid overloading the server
+---Results are cached - subsequent calls return cached data without querying
+---@param opts { on_complete: fun(definitions: table<string,string>?, err: string?)?, on_error: fun(err: string)?, timeout_ms: number?, force_reload: boolean? }?
+---@return string task_id
+function DbClass:load_all_definitions_bulk_async(opts)
+  opts = opts or {}
+
+  -- Return cached data if already loaded (unless force_reload requested)
+  if self._bulk_definitions_loaded and self._bulk_definitions_cache and not opts.force_reload then
+    if opts.on_complete then
+      vim.schedule(function()
+        opts.on_complete(self._bulk_definitions_cache, nil)
+      end)
+    end
+    return "cached"
+  end
+
+  local adapter = self:get_adapter()
+  local definitions = {}
+  local db_self = self  -- Capture for callback
+
+  -- Step 1: Load views, procedures, functions definitions (from sys.sql_modules)
+  local function load_module_definitions(next_step)
+    if not adapter.get_all_definitions_bulk_query then
+      next_step()
+      return
+    end
+
+    local query = adapter:get_all_definitions_bulk_query(self.db_name, nil)
+
+    adapter:execute_rpc_async(self:_get_db_connection_config(), query, {
+      timeout_ms = opts.timeout_ms or 60000,
+      on_complete = function(results, err)
+        if err then
+          if opts.on_error then opts.on_error(err)
+          elseif opts.on_complete then opts.on_complete(nil, err) end
+          return
+        end
+
+        if adapter.parse_definitions_bulk then
+          local module_defs = adapter:parse_definitions_bulk(results)
+          for k, v in pairs(module_defs) do
+            definitions[k] = v
+          end
+        end
+
+        next_step()
+      end,
+      on_error = function(err)
+        if opts.on_error then opts.on_error(err)
+        elseif opts.on_complete then opts.on_complete(nil, err) end
+      end,
+    })
+  end
+
+  -- Step 2: Load table definitions (generated CREATE TABLE scripts)
+  local function load_table_definitions(next_step)
+    if not adapter.get_all_table_definitions_bulk_query then
+      next_step()
+      return
+    end
+
+    local query = adapter:get_all_table_definitions_bulk_query(self.db_name, nil)
+
+    adapter:execute_rpc_async(self:_get_db_connection_config(), query, {
+      timeout_ms = opts.timeout_ms or 60000,
+      on_complete = function(results, err)
+        if err then
+          if opts.on_error then opts.on_error(err)
+          elseif opts.on_complete then opts.on_complete(nil, err) end
+          return
+        end
+
+        if adapter.parse_table_definitions_bulk then
+          local table_defs = adapter:parse_table_definitions_bulk(results)
+          for k, v in pairs(table_defs) do
+            definitions[k] = v
+          end
+        end
+
+        next_step()
+      end,
+      on_error = function(err)
+        if opts.on_error then opts.on_error(err)
+        elseif opts.on_complete then opts.on_complete(nil, err) end
+      end,
+    })
+  end
+
+  -- Run sequentially: module defs -> table defs -> complete
+  load_module_definitions(function()
+    load_table_definitions(function()
+      -- Cache the results for future calls
+      db_self._bulk_definitions_loaded = true
+      db_self._bulk_definitions_cache = definitions
+
+      if opts.on_complete then opts.on_complete(definitions, nil) end
+    end)
+  end)
+
+  return "bulk_definitions"
 end
 
 return DbClass

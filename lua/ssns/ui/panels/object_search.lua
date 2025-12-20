@@ -45,11 +45,12 @@ local Thread = require('ssns.async.thread')
 ---@field selected_databases table<string, DbClass> Map of db_name -> DbClass
 ---@field all_databases_selected boolean Whether SELECT ALL is active
 ---@field loaded_objects SearchableObject[] Flattened list of searchable objects
----@field loading_status string "idle"|"loading"|"loaded"|"error"|"cancelled"
+---@field loading_status string "idle"|"loading"|"loading_metadata"|"ready"|"error"|"cancelled"
 ---@field loading_progress number 0-100 progress percentage
 ---@field loading_message string Current loading status message
 ---@field loading_detail string? Current operation detail (e.g., "tables", "views")
 ---@field server_loading boolean Whether server is connecting/loading databases
+---@field search_ready boolean Whether search is ready (metadata preloaded)
 ---@field search_term string Committed search term
 ---@field search_term_before_edit string For ESC revert
 ---@field search_editing boolean Currently editing search
@@ -121,6 +122,7 @@ local ui_state = {
   loading_message = "",
   loading_detail = nil,
   server_loading = false,
+  search_ready = false,  -- Whether metadata is preloaded and search is enabled
   search_term = "",
   search_term_before_edit = "",
   search_editing = false,
@@ -302,6 +304,7 @@ local function reset_state(clear_saved)
     loading_message = "",
     loading_detail = nil,
     server_loading = false,
+    search_ready = false,
     search_term = "",
     search_term_before_edit = "",
     search_editing = false,
@@ -643,6 +646,349 @@ local function cancel_object_loading()
   end
 end
 
+---Discover and load databases referenced by cross-database synonyms
+---This enables synonym resolution to work for objects in other databases
+---@param callback fun()? Called when loading is complete
+local function load_synonym_referenced_databases_async(callback)
+  local objects = ui_state.loaded_objects
+  local server = ui_state.selected_server
+
+  if not server then
+    if callback then callback() end
+    return
+  end
+
+  -- Collect unique cross-database references from synonyms
+  local referenced_dbs = {}  -- db_name -> true
+  local already_loaded = {}  -- db_name -> true (already in selected_databases)
+
+  for db_name, _ in pairs(ui_state.selected_databases) do
+    already_loaded[db_name] = true
+  end
+
+  for _, searchable in ipairs(objects) do
+    if searchable.object_type == "synonym" and searchable.object then
+      local syn = searchable.object
+      if syn.parse_base_object_name and syn.base_object_name then
+        local parts = syn:parse_base_object_name()
+        -- Check if this is a cross-database reference (not linked server)
+        if parts.database and not parts.server then
+          local db_name = parts.database
+          if not already_loaded[db_name] and not referenced_dbs[db_name] then
+            referenced_dbs[db_name] = true
+          end
+        end
+      end
+    end
+  end
+
+  -- Count references
+  local ref_count = 0
+  for _ in pairs(referenced_dbs) do
+    ref_count = ref_count + 1
+  end
+
+  if ref_count == 0 then
+    -- No cross-database references, continue
+    if callback then callback() end
+    return
+  end
+
+  -- Update loading status
+  ui_state.loading_message = string.format("Loading %d referenced databases...", ref_count)
+  if multi_panel then
+    multi_panel:render_panel("results")
+  end
+
+  -- Find and load referenced databases
+  local databases = server:get_databases() or {}
+  local dbs_to_load = {}
+
+  for _, db in ipairs(databases) do
+    if referenced_dbs[db.db_name] then
+      table.insert(dbs_to_load, db)
+    end
+  end
+
+  if #dbs_to_load == 0 then
+    -- Referenced databases not found on server
+    if callback then callback() end
+    return
+  end
+
+  -- Load databases sequentially
+  local db_idx = 1
+  local cancel_token = loading_cancel_token
+
+  local function load_next_ref_db()
+    if cancel_token and cancel_token.is_cancelled then
+      if callback then callback() end
+      return
+    end
+
+    if db_idx > #dbs_to_load then
+      if callback then callback() end
+      return
+    end
+
+    local db = dbs_to_load[db_idx]
+    ui_state.loading_message = string.format("Loading referenced: %s (%d/%d)",
+      db.db_name, db_idx, #dbs_to_load)
+
+    if multi_panel then
+      multi_panel:render_panel("results")
+    end
+
+    -- Load the database's full structure (schemas, tables, views, procedures, functions)
+    -- This enables synonym resolution to find target objects
+    db:load_async({
+      on_complete = function()
+        -- Add this database to selected_databases for metadata loading
+        ui_state.selected_databases[db.db_name] = db
+
+        -- Flatten objects from this database and add to loaded_objects
+        local db_objects = flatten_database_objects(db, server)
+        for _, obj in ipairs(db_objects) do
+          table.insert(ui_state.loaded_objects, obj)
+        end
+
+        db_idx = db_idx + 1
+        vim.schedule(load_next_ref_db)
+      end,
+      on_error = function(err)
+        -- Continue even on error
+        db_idx = db_idx + 1
+        vim.schedule(load_next_ref_db)
+      end,
+    })
+  end
+
+  load_next_ref_db()
+end
+
+---Preload metadata (columns/parameters) and definitions for all objects asynchronously
+---Uses bulk loading per database for efficiency (single query per database)
+---@param callback fun()? Called when preloading is complete
+local function preload_metadata_async(callback)
+  local objects = ui_state.loaded_objects
+  local total = #objects
+
+  if total == 0 then
+    ui_state.search_ready = true
+    ui_state.loading_status = "ready"
+    ui_state.loading_message = "Ready to search"
+    if callback then callback() end
+    return
+  end
+
+  -- Update loading state
+  ui_state.loading_status = "loading_metadata"
+  ui_state.loading_progress = 0
+  ui_state.loading_message = "Preloading metadata for search..."
+  ui_state.search_ready = false
+
+  -- Keep spinner running
+  start_spinner_animation()
+
+  if multi_panel then
+    multi_panel:render_panel("results")
+  end
+
+  -- Get list of databases to load metadata for
+  local databases = {}
+  for _, db in pairs(ui_state.selected_databases) do
+    table.insert(databases, db)
+  end
+
+  local total_dbs = #databases
+  local completed_dbs = 0
+  local all_metadata = {}  -- "db:schema.object" -> metadata text
+  local all_definitions = {}  -- "db:schema.object" -> definition text
+  local cancel_token = loading_cancel_token
+
+  ---Apply loaded metadata/definitions to searchable objects
+  local function apply_to_objects()
+    -- Helper to try multiple key formats (for different adapters)
+    local function find_in_map(map, db_name, schema_name, obj_type, obj_name)
+      -- Try with actual schema name first
+      local key = string.format("%s:%s.%s.%s", db_name, schema_name or "", obj_type, obj_name):lower()
+      if map[key] then return map[key] end
+
+      -- For non-schema databases, adapters use placeholder schemas
+      -- Try SQLite placeholder: "main"
+      if not schema_name or schema_name == "" then
+        key = string.format("%s:main.%s.%s", db_name, obj_type, obj_name):lower()
+        if map[key] then return map[key] end
+
+        -- Try MySQL placeholder: "dbo"
+        key = string.format("%s:dbo.%s.%s", db_name, obj_type, obj_name):lower()
+        if map[key] then return map[key] end
+      end
+
+      return nil
+    end
+
+    for _, searchable in ipairs(objects) do
+      local db_name = searchable.database_name or ""
+      local schema_name = searchable.schema_name
+      local obj_type = searchable.object_type or ""
+      local obj_name = searchable.name or ""
+
+      -- Apply metadata
+      local metadata = find_in_map(all_metadata, db_name, schema_name, obj_type, obj_name)
+      if metadata then
+        searchable.metadata_text = metadata
+        searchable.metadata_loaded = true
+      else
+        searchable.metadata_loaded = true  -- Mark as loaded even if empty
+      end
+
+      -- Apply definition
+      local definition = find_in_map(all_definitions, db_name, schema_name, obj_type, obj_name)
+      if definition then
+        searchable.definition = definition
+        searchable.definition_loaded = true
+        ui_state.definitions_cache[searchable.unique_id] = searchable.definition
+      else
+        searchable.definition_loaded = true  -- Mark as loaded even if empty
+      end
+    end
+
+    -- Done
+    stop_spinner_animation()
+    ui_state.loading_status = "ready"
+    ui_state.loading_message = string.format("Ready - %d objects loaded", total)
+    ui_state.search_ready = true
+
+    if multi_panel then
+      multi_panel:render_all()
+    end
+
+    if callback then callback() end
+  end
+
+  ---Called when a database's metadata/definitions are loaded
+  local function on_db_complete()
+    completed_dbs = completed_dbs + 1
+    ui_state.loading_progress = math.floor((completed_dbs / total_dbs) * 100)
+    ui_state.loading_message = string.format("Loading metadata... %d/%d databases", completed_dbs, total_dbs)
+
+    if multi_panel then
+      multi_panel:render_panel("results")
+    end
+
+    if completed_dbs >= total_dbs then
+      -- All databases loaded, apply to objects
+      apply_to_objects()
+    end
+  end
+
+  ---Load metadata and definitions for a single database (sequentially)
+  local function load_database(db, db_callback)
+    if cancel_token and cancel_token.is_cancelled then
+      db_callback()
+      return
+    end
+
+    -- Step 1: Load all metadata (columns/parameters) in bulk
+    local function load_metadata(next_step)
+      if not db.load_all_metadata_bulk_async then
+        next_step()
+        return
+      end
+
+      db:load_all_metadata_bulk_async({
+        on_complete = function(metadata, err)
+          if metadata then
+            -- Store with database prefix for lookup
+            for key, value in pairs(metadata) do
+              local full_key = string.format("%s:%s", db.db_name, key):lower()
+              all_metadata[full_key] = value
+            end
+          end
+          next_step()
+        end,
+        on_error = function(err)
+          -- Continue even on error
+          next_step()
+        end,
+      })
+    end
+
+    -- Step 2: Load all definitions in bulk
+    local function load_definitions(next_step)
+      if not db.load_all_definitions_bulk_async then
+        next_step()
+        return
+      end
+
+      db:load_all_definitions_bulk_async({
+        on_complete = function(definitions, err)
+          if definitions then
+            -- Store with database prefix for lookup
+            for key, value in pairs(definitions) do
+              local full_key = string.format("%s:%s", db.db_name, key):lower()
+              all_definitions[full_key] = value
+            end
+          end
+          next_step()
+        end,
+        on_error = function(err)
+          -- Continue even on error
+          next_step()
+        end,
+      })
+    end
+
+    -- Run sequentially: metadata -> definitions -> callback
+    load_metadata(function()
+      load_definitions(function()
+        db_callback()
+      end)
+    end)
+  end
+
+  -- Load databases sequentially to avoid overloading the server
+  if total_dbs == 0 then
+    apply_to_objects()
+    return
+  end
+
+  local db_idx = 1
+
+  local function load_next_database()
+    if cancel_token and cancel_token.is_cancelled then
+      stop_spinner_animation()
+      ui_state.loading_status = "cancelled"
+      ui_state.loading_message = "Metadata loading cancelled"
+      if callback then callback() end
+      return
+    end
+
+    if db_idx > total_dbs then
+      -- All databases loaded, apply to objects
+      apply_to_objects()
+      return
+    end
+
+    local db = databases[db_idx]
+    ui_state.loading_message = string.format("Loading metadata for %s (%d/%d)", db.db_name, db_idx, total_dbs)
+
+    if multi_panel then
+      multi_panel:render_panel("results")
+    end
+
+    load_database(db, function()
+      completed_dbs = completed_dbs + 1
+      ui_state.loading_progress = math.floor((completed_dbs / total_dbs) * 100)
+      db_idx = db_idx + 1
+      vim.schedule(load_next_database)
+    end)
+  end
+
+  load_next_database()
+end
+
 ---Load all objects for selected databases with async support and cancellation
 ---@param callback function? Callback when complete
 local function load_objects_for_databases(callback)
@@ -690,29 +1036,45 @@ local function load_objects_for_databases(callback)
 
   ---Finalize loading (success or cancel)
   local function finalize_loading(status, message)
-    stop_spinner_animation()
-    loading_cancel_token = nil
-
-    ui_state.loading_status = status
     ui_state.loading_detail = nil
 
     if status == "loaded" then
       ui_state.loading_progress = 100
-      ui_state.loading_message = message or string.format("Loaded %d objects", #ui_state.loaded_objects)
+      ui_state.loading_message = message or string.format("Loaded %d objects - loading references...", #ui_state.loaded_objects)
 
-      -- Apply search filter (async handles its own rendering)
-      UiObjectSearch._apply_search_async(ui_state.search_term, function()
+      -- Don't stop spinner yet - we're starting multi-pass loading:
+      -- 1. Load databases referenced by cross-database synonyms
+      -- 2. Preload metadata/definitions for all objects
+      -- 3. Enable search
+      load_synonym_referenced_databases_async(function()
+        -- Now preload metadata for all databases (including newly loaded ones)
+        ui_state.loading_message = string.format("Loaded %d objects - preloading metadata...", #ui_state.loaded_objects)
         if multi_panel then
-          multi_panel:render_all()
+          multi_panel:render_panel("results")
         end
-        if callback then callback(status) end
+
+        preload_metadata_async(function()
+          -- Now search is ready - apply initial search filter
+          UiObjectSearch._apply_search_async(ui_state.search_term, function()
+            if multi_panel then
+              multi_panel:render_all()
+            end
+            if callback then callback(status) end
+          end)
+        end)
       end)
       return
     elseif status == "cancelled" then
+      stop_spinner_animation()
+      loading_cancel_token = nil
+      ui_state.loading_status = status
       ui_state.loading_message = "Loading cancelled"
+      ui_state.search_ready = false
 
       -- Apply search to partial results if any (async handles its own rendering)
       if #ui_state.loaded_objects > 0 then
+        -- Mark search as ready for partial results
+        ui_state.search_ready = true
         UiObjectSearch._apply_search_async(ui_state.search_term, function()
           if multi_panel then
             multi_panel:render_all()
@@ -721,6 +1083,10 @@ local function load_objects_for_databases(callback)
         end)
         return
       end
+    else
+      stop_spinner_animation()
+      loading_cancel_token = nil
+      ui_state.loading_status = status
     end
 
     if multi_panel then
@@ -1342,8 +1708,16 @@ function UiObjectSearch._apply_search_threaded(pattern, callback)
     return true
   end
 
+  -- Clear existing results immediately when starting new search
+  ui_state.filtered_results = {}
+  if multi_panel then
+    multi_panel:render_panel("results")
+  end
+
   -- Prepare serializable objects for thread
   -- Extract only the data needed for searching (no class instances)
+  -- Note: Metadata/definitions are preloaded asynchronously before search is enabled,
+  -- so definition_loaded and metadata_loaded should be true for all objects
   local serializable_objects = {}
   for i, obj in ipairs(ui_state.loaded_objects) do
     -- Pre-filter system objects and object types to reduce thread work
@@ -1358,9 +1732,9 @@ function UiObjectSearch._apply_search_threaded(pattern, callback)
           object_type = obj.object_type,
           display_name = build_display_name(obj),
           unique_id = obj.unique_id,
-          -- Include definition/metadata if searching those fields
-          definition = ui_state.search_definitions and obj.definition_loaded and obj.definition or nil,
-          metadata_text = ui_state.search_metadata and obj.metadata_loaded and obj.metadata_text or nil,
+          -- Include preloaded data (loaded asynchronously before search was enabled)
+          definition = ui_state.search_definitions and obj.definition or nil,
+          metadata_text = ui_state.search_metadata and obj.metadata_text or nil,
         })
       end
     end
@@ -1388,7 +1762,7 @@ function UiObjectSearch._apply_search_threaded(pattern, callback)
         search_names = ui_state.search_names,
         search_definitions = ui_state.search_definitions,
         search_metadata = ui_state.search_metadata,
-        batch_size = 50,
+        batch_interval_ms = 100,  -- Time-based batching: send results every 100ms
       },
     },
     on_batch = function(batch)
@@ -1427,7 +1801,11 @@ function UiObjectSearch._apply_search_threaded(pattern, callback)
       search_thread_task_id = nil
 
       if error_msg then
-        -- Error occurred - keep any results we have
+        -- Error occurred - log it and keep any results we have
+        vim.notify(
+          string.format("[SSNS] Search thread error: %s", tostring(error_msg)),
+          vim.log.levels.WARN
+        )
         search_in_progress = false
         search_progress = 0
         stop_search_spinner()
@@ -2389,6 +2767,12 @@ end
 ---Activate search mode
 local function activate_search()
   if not multi_panel then return end
+
+  -- Don't allow search activation while loading/preloading
+  if not ui_state.search_ready then
+    vim.notify("Please wait - loading metadata for search...", vim.log.levels.INFO)
+    return
+  end
 
   ui_state.search_term_before_edit = ui_state.search_term
   ui_state.search_editing = true
