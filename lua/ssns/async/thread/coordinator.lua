@@ -1,5 +1,6 @@
 ---Thread lifecycle coordinator
 ---Manages worker thread creation, execution, cancellation, and cleanup
+---Uses pipe-based IPC for streaming communication
 ---@class ThreadCoordinatorModule
 local Coordinator = {}
 
@@ -25,7 +26,7 @@ local Serializer = require('ssns.async.thread.serializer')
 ---@field on_progress fun(pct: number, message: string?)? Called for progress updates
 ---@field on_complete fun(result: table?, error: string?)? Called on completion/error
 ---@field cancel_token table? Cancellation token
----@field timeout_ms number? Timeout in milliseconds (default: 30000)
+---@field timeout_ms number? Timeout in milliseconds (default: 120000)
 
 ---Active thread handles indexed by task ID
 ---@type table<string, ThreadHandle>
@@ -38,8 +39,8 @@ local worker_registry = {}
 ---Maximum concurrent threads
 local MAX_THREADS = 4
 
----Default timeout
-local DEFAULT_TIMEOUT_MS = 30000
+---Default timeout (2 minutes for large datasets)
+local DEFAULT_TIMEOUT_MS = 120000
 
 ---Generate unique task ID
 ---@return string
@@ -47,22 +48,121 @@ local function generate_task_id()
   return string.format("task_%s_%d", os.time(), math.random(10000, 99999))
 end
 
----Get base worker code template
----Includes JSON encoder/decoder for pure Lua environment
----@return string
-local function get_worker_base()
-  local json_encoder = Serializer.get_worker_json_encoder()
-  local json_decoder = Serializer.get_worker_json_decoder()
+---Build complete worker code with pipe server and mpack
+---@param worker_code string The worker's main logic
+---@param socket_path string Path to Unix socket
+---@param input_mpack string Mpack-encoded input data
+---@return string complete_code
+local function build_worker_code(worker_code, socket_path, input_mpack)
+  -- Build the complete worker script
+  local mpack_encoder = Serializer.get_worker_mpack_encoder()
+  local mpack_decoder = Serializer.get_worker_mpack_decoder()
 
-  return json_encoder .. "\n" .. json_decoder .. "\n"
+  -- Escape the socket path and input for embedding in Lua string
+  local escaped_socket = socket_path:gsub("\\", "\\\\"):gsub('"', '\\"')
+
+  -- Convert input_mpack to escaped string literal
+  local input_bytes = {}
+  for i = 1, #input_mpack do
+    input_bytes[i] = string.format("\\%03d", input_mpack:byte(i))
+  end
+  local escaped_input = table.concat(input_bytes)
+
+  return string.format([[
+-- Worker thread bootstrap
+local _SOCKET_PATH = "%s"
+local _INPUT_MPACK = "%s"
+
+%s
+%s
+
+-- Decode input
+local _INPUT = mpack_decode(_INPUT_MPACK)
+
+-- Worker main function
+local function _WORKER_MAIN(send_message)
+  -- The actual worker code runs here with send_message function
+  local function send(msg)
+    send_message(msg)
+  end
+
+  -- Execute worker logic
+  %s
+end
+
+-- Pipe server setup
+local uv = require('luv')
+
+local HEADER_SIZE = 4
+
+local function encode_length(len)
+  return string.char(
+    bit.band(bit.rshift(len, 24), 0xFF),
+    bit.band(bit.rshift(len, 16), 0xFF),
+    bit.band(bit.rshift(len, 8), 0xFF),
+    bit.band(len, 0xFF)
+  )
+end
+
+-- Create pipe server
+local server = uv.new_pipe(false)
+local client_pipe = nil
+local server_running = true
+
+local function send_message(msg)
+  if not client_pipe or not server_running then return end
+  local ok, encoded = pcall(mpack_encode, msg)
+  if not ok then return end
+  local header = encode_length(#encoded)
+  pcall(function() client_pipe:write(header .. encoded) end)
+end
+
+-- Bind and listen
+local bind_ok, bind_err = pcall(function()
+  server:bind(_SOCKET_PATH)
+end)
+
+if not bind_ok then
+  return
+end
+
+server:listen(1, function(err)
+  if err then
+    server_running = false
+    return
+  end
+
+  client_pipe = uv.new_pipe(false)
+  server:accept(client_pipe)
+
+  -- Run worker in protected call
+  local ok, worker_err = pcall(_WORKER_MAIN, send_message)
+
+  if not ok then
+    send_message({ type = "error", error = tostring(worker_err) })
+  end
+
+  -- Clean shutdown
+  server_running = false
+  if client_pipe and not client_pipe:is_closing() then
+    client_pipe:shutdown()
+    client_pipe:close()
+  end
+  if server and not server:is_closing() then
+    server:close()
+  end
+end)
+
+-- Run event loop
+uv.run('default')
+]], escaped_socket, escaped_input, mpack_encoder, mpack_decoder, worker_code)
 end
 
 ---Register a worker with its code
 ---@param name string Worker name
----@param code string Pure Lua code to execute
+---@param code string Pure Lua code to execute (worker logic only)
 function Coordinator.register_worker(name, code)
-  -- Prepend base code (JSON utilities)
-  worker_registry[name] = get_worker_base() .. code
+  worker_registry[name] = code
 end
 
 ---Check if threading is available
@@ -70,9 +170,9 @@ end
 function Coordinator.is_available()
   -- Check if vim.uv.new_thread exists and works
   local ok = pcall(function()
-    local test_thread = vim.uv.new_thread(function() end)
-    if test_thread then
-      test_thread:join()
+    -- Just check if the function exists
+    if not vim.uv.new_thread then
+      error("new_thread not available")
     end
   end)
   return ok
@@ -160,7 +260,14 @@ function Coordinator.start(task)
   }))
 
   -- Serialize input data
-  local input_json = Serializer.encode(task.input)
+  local input_mpack = Serializer.encode(task.input)
+
+  -- Build complete worker code
+  local complete_code = build_worker_code(
+    worker_code,
+    channel:get_socket_path(),
+    input_mpack
+  )
 
   -- Create thread handle
   ---@type ThreadHandle
@@ -169,7 +276,7 @@ function Coordinator.start(task)
     thread = nil,
     channel = channel,
     status = "pending",
-    start_time = vim.loop.hrtime(),
+    start_time = vim.uv.hrtime(),
     timeout_timer = nil,
     cancel_token = task.cancel_token,
     on_batch = task.on_batch,
@@ -197,7 +304,7 @@ function Coordinator.start(task)
 
   -- Start worker thread
   local thread_ok, thread_or_err = pcall(function()
-    return vim.uv.new_thread(worker_code, channel:get_async_handle(), input_json)
+    return vim.uv.new_thread(complete_code)
   end)
 
   if not thread_ok then
@@ -208,6 +315,22 @@ function Coordinator.start(task)
 
   handle.thread = thread_or_err
   handle.status = "running"
+
+  -- Connect to the worker's pipe server
+  channel:connect(5000, function(success, err)
+    if not success then
+      local h = active_threads[task_id]
+      if h and h.status == "running" then
+        h.status = "error"
+        if h.on_complete then
+          vim.schedule(function()
+            h.on_complete(nil, "Failed to connect to worker: " .. (err or "unknown"))
+          end)
+        end
+        Coordinator.cleanup(task_id)
+      end
+    end
+  end)
 
   return task_id, nil
 end
@@ -229,7 +352,7 @@ function Coordinator.cancel(task_id, reason)
   handle.status = "cancelled"
 
   -- Note: We cannot force-kill a thread in Lua/libuv
-  -- The worker must check for cancellation cooperatively
+  -- The worker should check for cancellation cooperatively
   -- We mark it cancelled and let cleanup happen
 
   if handle.on_complete then

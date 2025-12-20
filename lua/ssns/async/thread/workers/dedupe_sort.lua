@@ -4,23 +4,26 @@
 --
 -- Input: { columns }
 -- Output: deduplicated and sorted columns with sortText
+--
+-- This code runs inside _WORKER_MAIN(send_message)
+-- _INPUT is the decoded input table
+-- send(msg) sends a message to the main thread
 
-local async_handle, input_json = ...
+local columns = _INPUT.columns or {}
+local total = #columns
 
--- Parse input
-local input = json_decode(input_json)
-if not input then
-  async_handle:send(json_encode({ type = "error", error = "Failed to parse input" }))
-  return
-end
-
-local columns = input.columns or {}
+-- Send initial progress
+send({
+  type = "progress",
+  pct = 0,
+  message = string.format("Deduplicating %d columns...", total),
+})
 
 -- Deduplicate by name
 local seen = {}
 local unique = {}
 
-for _, col in ipairs(columns) do
+for i, col in ipairs(columns) do
   local name = col.name or ""
   local key = name:lower()
 
@@ -28,7 +31,22 @@ for _, col in ipairs(columns) do
     seen[key] = true
     table.insert(unique, col)
   end
+
+  -- Progress every 25%
+  if i % math.max(1, math.floor(total / 4)) == 0 then
+    send({
+      type = "progress",
+      pct = math.floor((i / total) * 50),
+      message = string.format("Processed %d/%d columns...", i, total),
+    })
+  end
 end
+
+send({
+  type = "progress",
+  pct = 50,
+  message = string.format("Sorting %d unique columns...", #unique),
+})
 
 -- Sort by name
 table.sort(unique, function(a, b)
@@ -37,13 +55,19 @@ table.sort(unique, function(a, b)
   return a_name < b_name
 end)
 
+send({
+  type = "progress",
+  pct = 75,
+  message = "Adding sort indices...",
+})
+
 -- Add sort text for completion
 for i, col in ipairs(unique) do
   col.sortText = string.format("%05d_%s", i, col.name or "")
 end
 
 -- Send result
-async_handle:send(json_encode({
+send({
   type = "complete",
   result = { columns = unique },
-}))
+})

@@ -1,30 +1,31 @@
 ---Thread-safe serialization utilities
----Handles conversion of complex objects to JSON for thread communication
+---Handles conversion of complex objects for thread communication
+---Uses mpack for efficient binary serialization
 ---@class ThreadSerializerModule
 local Serializer = {}
 
----Serialize a value to JSON, handling special cases
+---Serialize a value to mpack
 ---@param value any Value to serialize
----@return string json
+---@return string mpack
 function Serializer.encode(value)
-  local ok, json = pcall(vim.fn.json_encode, value)
+  local ok, encoded = pcall(vim.mpack.encode, value)
   if ok then
-    return json
+    return encoded
   end
   -- Fallback for problematic values
-  return "{}"
+  return vim.mpack.encode({})
 end
 
----Deserialize JSON to Lua value
----@param json string JSON string
+---Deserialize mpack to Lua value
+---@param data string mpack data
 ---@return any? value
 ---@return string? error
-function Serializer.decode(json)
-  if not json or json == "" then
-    return nil, "Empty JSON string"
+function Serializer.decode(data)
+  if not data or data == "" then
+    return nil, "Empty data"
   end
 
-  local ok, value = pcall(vim.fn.json_decode, json)
+  local ok, value = pcall(vim.mpack.decode, data)
   if ok then
     return value, nil
   end
@@ -34,7 +35,7 @@ end
 ---Serialize searchable objects for object search threading
 ---Strips non-serializable data (functions, metatables, circular refs)
 ---@param objects table[] Array of searchable objects
----@return string json
+---@return string mpack
 function Serializer.serialize_searchables(objects)
   local simplified = {}
 
@@ -60,344 +61,317 @@ function Serializer.serialize_searchables(objects)
   return Serializer.encode(simplified)
 end
 
----Serialize tree nodes for rendering
----@param nodes table[] Array of tree nodes
----@return string json
-function Serializer.serialize_tree_nodes(nodes)
-  local simplified = {}
-
-  local function serialize_node(node, depth)
-    if depth > 10 then return nil end  -- Prevent infinite recursion
-
-    local data = {
-      name = node.name,
-      object_type = node.object_type,
-      db_name = node.db_name,
-      schema_name = node.schema_name,
-      is_loaded = node.is_loaded,
-      is_expanded = node.ui_state and node.ui_state.expanded,
-    }
-
-    -- Serialize children if present
-    if node.schemas then
-      data.schemas = {}
-      for _, schema in ipairs(node.schemas) do
-        table.insert(data.schemas, serialize_node(schema, depth + 1))
-      end
-    end
-
-    if node.tables then
-      data.tables = {}
-      for _, tbl in ipairs(node.tables) do
-        table.insert(data.tables, { name = tbl.name, object_type = "table" })
-      end
-    end
-
-    if node.views then
-      data.views = {}
-      for _, view in ipairs(node.views) do
-        table.insert(data.views, { name = view.name, object_type = "view" })
-      end
-    end
-
-    if node.procedures then
-      data.procedures = {}
-      for _, proc in ipairs(node.procedures) do
-        table.insert(data.procedures, { name = proc.name, object_type = "procedure" })
-      end
-    end
-
-    if node.functions then
-      data.functions = {}
-      for _, func in ipairs(node.functions) do
-        table.insert(data.functions, { name = func.name, object_type = "function" })
-      end
-    end
-
-    if node.synonyms then
-      data.synonyms = {}
-      for _, syn in ipairs(node.synonyms) do
-        table.insert(data.synonyms, { name = syn.name, object_type = "synonym" })
-      end
-    end
-
-    return data
-  end
-
-  for _, node in ipairs(nodes) do
-    table.insert(simplified, serialize_node(node, 0))
-  end
-
-  return Serializer.encode(simplified)
-end
-
----Serialize columns for completion threading
----@param columns table[] Array of column objects
----@return string json
-function Serializer.serialize_columns(columns)
-  local simplified = {}
-
-  for i, col in ipairs(columns) do
-    simplified[i] = {
-      idx = i,
-      name = col.name or col.column_name,
-      data_type = col.data_type,
-      nullable = col.nullable,
-      is_primary_key = col.is_primary_key,
-      is_foreign_key = col.is_foreign_key,
-      is_identity = col.is_identity,
-      is_computed = col.is_computed,
-      table_name = col.table_name,
-      schema_name = col.schema_name,
-      max_length = col.max_length,
-      precision = col.precision,
-      scale = col.scale,
-    }
-  end
-
-  return Serializer.encode(simplified)
-end
-
----Serialize FK graph for BFS threading
----@param graph table FK constraint graph
----@return string json
-function Serializer.serialize_fk_graph(graph)
-  local simplified = {}
-
-  for key, node in pairs(graph) do
-    simplified[key] = {
-      table_name = node.table_name,
-      schema_name = node.schema_name,
-      constraints = {},
-    }
-
-    if node.constraints then
-      for _, constraint in ipairs(node.constraints) do
-        table.insert(simplified[key].constraints, {
-          name = constraint.name,
-          column_name = constraint.column_name,
-          referenced_table = constraint.referenced_table,
-          referenced_schema = constraint.referenced_schema,
-          referenced_column = constraint.referenced_column,
-        })
-      end
-    end
-  end
-
-  return Serializer.encode(simplified)
-end
-
----Serialize items for sorting
----@param items table[] Array of items to sort
----@param key_field string Field name to sort by
----@return string json
-function Serializer.serialize_for_sort(items, key_field)
-  local simplified = {}
-
-  for i, item in ipairs(items) do
-    simplified[i] = {
-      idx = i,
-      sort_key = item[key_field] or item.name or "",
-      name = item.name,
-      object_type = item.object_type,
-    }
-  end
-
-  return Serializer.encode({
-    items = simplified,
-    key_field = key_field,
-  })
-end
-
----Create a pure Lua JSON encoder for use in worker threads
----Worker threads cannot use vim.fn.json_encode, so we need a pure Lua version
----@return string lua_code Lua code string for JSON encoding
-function Serializer.get_worker_json_encoder()
-  -- Simple JSON encoder that works in pure Lua (no vim.* dependencies)
+---Get pure Lua mpack encoder for worker threads
+---Workers can't use vim.mpack, so we need a pure Lua version
+---This is a simplified mpack encoder that handles common types
+---@return string lua_code Lua code string for mpack encoding
+function Serializer.get_worker_mpack_encoder()
   return [[
-local function json_encode(value)
+-- Simplified mpack encoder for worker threads
+-- Handles: nil, boolean, number, string, array, map
+local function mpack_encode(value)
   local t = type(value)
 
   if value == nil then
-    return "null"
+    return string.char(0xc0)  -- nil
   elseif t == "boolean" then
-    return value and "true" or "false"
+    return string.char(value and 0xc3 or 0xc2)  -- true/false
   elseif t == "number" then
-    if value ~= value then return "null" end  -- NaN
-    if value >= math.huge then return "null" end  -- Infinity
-    if value <= -math.huge then return "null" end  -- -Infinity
-    return tostring(value)
-  elseif t == "string" then
-    -- Escape special characters
-    local escaped = value:gsub('[\\"\b\f\n\r\t]', {
-      ['\\'] = '\\\\',
-      ['"'] = '\\"',
-      ['\b'] = '\\b',
-      ['\f'] = '\\f',
-      ['\n'] = '\\n',
-      ['\r'] = '\\r',
-      ['\t'] = '\\t',
-    })
-    return '"' .. escaped .. '"'
-  elseif t == "table" then
-    -- Check if array or object
-    local is_array = true
-    local max_idx = 0
-    for k, _ in pairs(value) do
-      if type(k) ~= "number" or k < 1 or k ~= math.floor(k) then
-        is_array = false
-        break
-      end
-      if k > max_idx then max_idx = k end
-    end
-
-    if is_array and max_idx == #value then
-      -- Encode as array
-      local parts = {}
-      for i = 1, #value do
-        parts[i] = json_encode(value[i])
-      end
-      return "[" .. table.concat(parts, ",") .. "]"
-    else
-      -- Encode as object
-      local parts = {}
-      for k, v in pairs(value) do
-        if type(k) == "string" then
-          table.insert(parts, json_encode(k) .. ":" .. json_encode(v))
+    if value == math.floor(value) then
+      -- Integer
+      if value >= 0 then
+        if value <= 127 then
+          return string.char(value)  -- positive fixint
+        elseif value <= 0xFF then
+          return string.char(0xcc, value)  -- uint8
+        elseif value <= 0xFFFF then
+          return string.char(0xcd, bit.rshift(value, 8), bit.band(value, 0xFF))  -- uint16
+        elseif value <= 0xFFFFFFFF then
+          return string.char(0xce,
+            bit.band(bit.rshift(value, 24), 0xFF),
+            bit.band(bit.rshift(value, 16), 0xFF),
+            bit.band(bit.rshift(value, 8), 0xFF),
+            bit.band(value, 0xFF))  -- uint32
+        end
+      else
+        if value >= -32 then
+          return string.char(0xe0 + (value + 32))  -- negative fixint
+        elseif value >= -128 then
+          return string.char(0xd0, value + 256)  -- int8
+        elseif value >= -32768 then
+          local v = value + 65536
+          return string.char(0xd1, bit.rshift(v, 8), bit.band(v, 0xFF))  -- int16
         end
       end
-      return "{" .. table.concat(parts, ",") .. "}"
     end
-  else
-    return "null"  -- Functions, userdata, etc.
+    -- Float (double)
+    local function pack_double(n)
+      local sign = 0
+      if n < 0 then sign = 1; n = -n end
+      local mantissa, exponent = math.frexp(n)
+      if n == 0 then
+        return string.char(0xcb, 0, 0, 0, 0, 0, 0, 0, 0)
+      end
+      exponent = exponent + 1022
+      mantissa = (mantissa * 2 - 1) * 2^52
+      local bytes = {}
+      for i = 1, 6 do
+        bytes[7-i] = math.floor(mantissa) % 256
+        mantissa = mantissa / 256
+      end
+      bytes[1] = sign * 128 + math.floor(exponent / 16)
+      bytes[2] = (exponent % 16) * 16 + math.floor(mantissa)
+      return string.char(0xcb, unpack(bytes))
+    end
+    return pack_double(value)
+  elseif t == "string" then
+    local len = #value
+    if len <= 31 then
+      return string.char(0xa0 + len) .. value  -- fixstr
+    elseif len <= 0xFF then
+      return string.char(0xd9, len) .. value  -- str8
+    elseif len <= 0xFFFF then
+      return string.char(0xda, bit.rshift(len, 8), bit.band(len, 0xFF)) .. value  -- str16
+    else
+      return string.char(0xdb,
+        bit.band(bit.rshift(len, 24), 0xFF),
+        bit.band(bit.rshift(len, 16), 0xFF),
+        bit.band(bit.rshift(len, 8), 0xFF),
+        bit.band(len, 0xFF)) .. value  -- str32
+    end
+  elseif t == "table" then
+    -- Check if array or map
+    local is_array = true
+    local max_idx = 0
+    local count = 0
+    for k, _ in pairs(value) do
+      count = count + 1
+      if type(k) ~= "number" or k < 1 or k ~= math.floor(k) then
+        is_array = false
+      elseif k > max_idx then
+        max_idx = k
+      end
+    end
+
+    if is_array and max_idx == count and count > 0 then
+      -- Encode as array
+      local header
+      if count <= 15 then
+        header = string.char(0x90 + count)  -- fixarray
+      elseif count <= 0xFFFF then
+        header = string.char(0xdc, bit.rshift(count, 8), bit.band(count, 0xFF))  -- array16
+      else
+        header = string.char(0xdd,
+          bit.band(bit.rshift(count, 24), 0xFF),
+          bit.band(bit.rshift(count, 16), 0xFF),
+          bit.band(bit.rshift(count, 8), 0xFF),
+          bit.band(count, 0xFF))  -- array32
+      end
+      local parts = {header}
+      for i = 1, count do
+        parts[#parts + 1] = mpack_encode(value[i])
+      end
+      return table.concat(parts)
+    else
+      -- Encode as map
+      local header
+      if count <= 15 then
+        header = string.char(0x80 + count)  -- fixmap
+      elseif count <= 0xFFFF then
+        header = string.char(0xde, bit.rshift(count, 8), bit.band(count, 0xFF))  -- map16
+      else
+        header = string.char(0xdf,
+          bit.band(bit.rshift(count, 24), 0xFF),
+          bit.band(bit.rshift(count, 16), 0xFF),
+          bit.band(bit.rshift(count, 8), 0xFF),
+          bit.band(count, 0xFF))  -- map32
+      end
+      local parts = {header}
+      for k, v in pairs(value) do
+        parts[#parts + 1] = mpack_encode(tostring(k))
+        parts[#parts + 1] = mpack_encode(v)
+      end
+      return table.concat(parts)
+    end
   end
+
+  return string.char(0xc0)  -- nil for unsupported types
 end
 ]]
 end
 
----Create a pure Lua JSON decoder for use in worker threads
----@return string lua_code Lua code string for JSON decoding
-function Serializer.get_worker_json_decoder()
-  -- Simple JSON decoder for pure Lua
+---Get pure Lua mpack decoder for worker threads (if needed for bidirectional)
+---@return string lua_code Lua code string for mpack decoding
+function Serializer.get_worker_mpack_decoder()
   return [[
-local function json_decode(str)
-  if not str or str == "" then return nil end
-
+-- Simplified mpack decoder for worker threads
+local function mpack_decode(data)
   local pos = 1
-  local function skip_whitespace()
-    while pos <= #str and str:sub(pos, pos):match("%s") do
-      pos = pos + 1
-    end
-  end
 
-  local function parse_string()
-    pos = pos + 1  -- Skip opening quote
-    local start = pos
-    local result = ""
-    while pos <= #str do
-      local c = str:sub(pos, pos)
-      if c == '"' then
-        pos = pos + 1
-        return result .. str:sub(start, pos - 2)
-      elseif c == '\\' then
-        result = result .. str:sub(start, pos - 1)
-        pos = pos + 1
-        local escaped = str:sub(pos, pos)
-        if escaped == 'n' then result = result .. '\n'
-        elseif escaped == 't' then result = result .. '\t'
-        elseif escaped == 'r' then result = result .. '\r'
-        elseif escaped == '"' then result = result .. '"'
-        elseif escaped == '\\' then result = result .. '\\'
-        else result = result .. escaped
-        end
-        pos = pos + 1
-        start = pos
-      else
-        pos = pos + 1
-      end
-    end
+  local function read_bytes(n)
+    local result = data:sub(pos, pos + n - 1)
+    pos = pos + n
     return result
   end
 
-  local function parse_number()
-    local start = pos
-    if str:sub(pos, pos) == '-' then pos = pos + 1 end
-    while pos <= #str and str:sub(pos, pos):match("[0-9]") do pos = pos + 1 end
-    if str:sub(pos, pos) == '.' then
-      pos = pos + 1
-      while pos <= #str and str:sub(pos, pos):match("[0-9]") do pos = pos + 1 end
-    end
-    if str:sub(pos, pos):match("[eE]") then
-      pos = pos + 1
-      if str:sub(pos, pos):match("[+-]") then pos = pos + 1 end
-      while pos <= #str and str:sub(pos, pos):match("[0-9]") do pos = pos + 1 end
-    end
-    return tonumber(str:sub(start, pos - 1))
+  local function read_byte()
+    local b = data:byte(pos)
+    pos = pos + 1
+    return b
   end
 
-  local parse_value  -- Forward declaration
+  local function decode_value()
+    local b = read_byte()
+    if not b then return nil end
 
-  local function parse_array()
-    pos = pos + 1  -- Skip [
-    local arr = {}
-    skip_whitespace()
-    if str:sub(pos, pos) == ']' then
-      pos = pos + 1
+    -- nil
+    if b == 0xc0 then return nil end
+    -- false/true
+    if b == 0xc2 then return false end
+    if b == 0xc3 then return true end
+
+    -- positive fixint (0x00 - 0x7f)
+    if b <= 0x7f then return b end
+
+    -- negative fixint (0xe0 - 0xff)
+    if b >= 0xe0 then return b - 256 end
+
+    -- fixstr (0xa0 - 0xbf)
+    if b >= 0xa0 and b <= 0xbf then
+      local len = b - 0xa0
+      return read_bytes(len)
+    end
+
+    -- fixarray (0x90 - 0x9f)
+    if b >= 0x90 and b <= 0x9f then
+      local len = b - 0x90
+      local arr = {}
+      for i = 1, len do arr[i] = decode_value() end
       return arr
     end
-    while true do
-      table.insert(arr, parse_value())
-      skip_whitespace()
-      if str:sub(pos, pos) == ']' then
-        pos = pos + 1
-        return arr
-      elseif str:sub(pos, pos) == ',' then
-        pos = pos + 1
-        skip_whitespace()
-      end
-    end
-  end
 
-  local function parse_object()
-    pos = pos + 1  -- Skip {
-    local obj = {}
-    skip_whitespace()
-    if str:sub(pos, pos) == '}' then
-      pos = pos + 1
-      return obj
-    end
-    while true do
-      skip_whitespace()
-      local key = parse_string()
-      skip_whitespace()
-      pos = pos + 1  -- Skip :
-      skip_whitespace()
-      obj[key] = parse_value()
-      skip_whitespace()
-      if str:sub(pos, pos) == '}' then
-        pos = pos + 1
-        return obj
-      elseif str:sub(pos, pos) == ',' then
-        pos = pos + 1
+    -- fixmap (0x80 - 0x8f)
+    if b >= 0x80 and b <= 0x8f then
+      local len = b - 0x80
+      local map = {}
+      for _ = 1, len do
+        local k = decode_value()
+        local v = decode_value()
+        map[k] = v
       end
+      return map
     end
-  end
 
-  parse_value = function()
-    skip_whitespace()
-    local c = str:sub(pos, pos)
-    if c == '"' then return parse_string()
-    elseif c == '[' then return parse_array()
-    elseif c == '{' then return parse_object()
-    elseif c == 't' then pos = pos + 4; return true
-    elseif c == 'f' then pos = pos + 5; return false
-    elseif c == 'n' then pos = pos + 4; return nil
-    elseif c:match("[0-9-]") then return parse_number()
+    -- uint8
+    if b == 0xcc then return read_byte() end
+
+    -- uint16
+    if b == 0xcd then
+      local b1, b2 = read_byte(), read_byte()
+      return b1 * 256 + b2
     end
+
+    -- uint32
+    if b == 0xce then
+      local b1, b2, b3, b4 = read_byte(), read_byte(), read_byte(), read_byte()
+      return b1 * 16777216 + b2 * 65536 + b3 * 256 + b4
+    end
+
+    -- int8
+    if b == 0xd0 then
+      local v = read_byte()
+      return v < 128 and v or v - 256
+    end
+
+    -- int16
+    if b == 0xd1 then
+      local b1, b2 = read_byte(), read_byte()
+      local v = b1 * 256 + b2
+      return v < 32768 and v or v - 65536
+    end
+
+    -- str8
+    if b == 0xd9 then
+      local len = read_byte()
+      return read_bytes(len)
+    end
+
+    -- str16
+    if b == 0xda then
+      local b1, b2 = read_byte(), read_byte()
+      local len = b1 * 256 + b2
+      return read_bytes(len)
+    end
+
+    -- str32
+    if b == 0xdb then
+      local b1, b2, b3, b4 = read_byte(), read_byte(), read_byte(), read_byte()
+      local len = b1 * 16777216 + b2 * 65536 + b3 * 256 + b4
+      return read_bytes(len)
+    end
+
+    -- array16
+    if b == 0xdc then
+      local b1, b2 = read_byte(), read_byte()
+      local len = b1 * 256 + b2
+      local arr = {}
+      for i = 1, len do arr[i] = decode_value() end
+      return arr
+    end
+
+    -- array32
+    if b == 0xdd then
+      local b1, b2, b3, b4 = read_byte(), read_byte(), read_byte(), read_byte()
+      local len = b1 * 16777216 + b2 * 65536 + b3 * 256 + b4
+      local arr = {}
+      for i = 1, len do arr[i] = decode_value() end
+      return arr
+    end
+
+    -- map16
+    if b == 0xde then
+      local b1, b2 = read_byte(), read_byte()
+      local len = b1 * 256 + b2
+      local map = {}
+      for _ = 1, len do
+        local k = decode_value()
+        local v = decode_value()
+        map[k] = v
+      end
+      return map
+    end
+
+    -- map32
+    if b == 0xdf then
+      local b1, b2, b3, b4 = read_byte(), read_byte(), read_byte(), read_byte()
+      local len = b1 * 16777216 + b2 * 65536 + b3 * 256 + b4
+      local map = {}
+      for _ = 1, len do
+        local k = decode_value()
+        local v = decode_value()
+        map[k] = v
+      end
+      return map
+    end
+
+    -- float64 (double)
+    if b == 0xcb then
+      local bytes = {read_byte(), read_byte(), read_byte(), read_byte(),
+                     read_byte(), read_byte(), read_byte(), read_byte()}
+      local sign = bytes[1] >= 128 and -1 or 1
+      local exp = (bytes[1] % 128) * 16 + math.floor(bytes[2] / 16)
+      local mantissa = (bytes[2] % 16) * 2^48
+      for i = 3, 8 do
+        mantissa = mantissa + bytes[i] * 2^((8-i)*8)
+      end
+      if exp == 0 then return 0 end
+      return sign * 2^(exp - 1023) * (1 + mantissa / 2^52)
+    end
+
     return nil
   end
 
-  return parse_value()
+  return decode_value()
 end
 ]]
 end

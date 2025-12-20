@@ -4,87 +4,138 @@
 --
 -- Input: { objects, pattern, options }
 -- Output: batches of matching objects with progress updates
+--
+-- Options:
+--   case_sensitive: boolean - Match case exactly
+--   use_regex: boolean - Use Lua pattern matching (not plain text)
+--   whole_word: boolean - Match whole words only
+--   search_names: boolean - Search in object names (default true)
+--   search_definitions: boolean - Search in definitions
+--   search_metadata: boolean - Search in metadata
+--   batch_size: number - Results per batch (default 50)
+--
+-- This code runs inside _WORKER_MAIN(send_message)
+-- _INPUT is the decoded input table
+-- send(msg) sends a message to the main thread
 
-local async_handle, input_json = ...
-
--- Parse input
-local input = json_decode(input_json)
-if not input then
-  async_handle:send(json_encode({ type = "error", error = "Failed to parse input" }))
-  return
-end
-
-local objects = input.objects or {}
-local pattern = input.pattern or ""
-local options = input.options or {}
+local objects = _INPUT.objects or {}
+local pattern = _INPUT.pattern or ""
+local options = _INPUT.options or {}
 local batch_size = options.batch_size or 50
-local case_sensitive = options.case_sensitive
-local use_regex = options.use_regex
-local whole_word = options.whole_word
+local case_sensitive = options.case_sensitive or false
+local use_regex = options.use_regex or false
+local whole_word = options.whole_word or false
 local search_names = options.search_names ~= false  -- default true
-local search_definitions = options.search_definitions
-local search_metadata = options.search_metadata
+local search_definitions = options.search_definitions or false
+local search_metadata = options.search_metadata or false
 
 -- Prepare pattern for matching
 local match_pattern = pattern
-if not case_sensitive then
+if not case_sensitive and pattern ~= "" then
   match_pattern = pattern:lower()
 end
 
--- Build regex pattern if whole word matching
-local function check_whole_word(text, pat)
-  if not whole_word then
-    return text:find(pat, 1, not use_regex) ~= nil
-  end
-  -- Whole word matching
-  local pattern_escaped = pat:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
-  local word_pattern = "%f[%w]" .. pattern_escaped .. "%f[%W]"
-  return text:match(word_pattern) ~= nil
+-- Escape pattern for plain text search (when not using regex)
+local function escape_pattern(str)
+  return str:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
 end
 
--- Match function
+-- Check if text matches pattern
+-- Returns: matched (boolean), matched_text (string or nil)
+local function text_matches(text, pat)
+  if not text or text == "" then
+    return false, nil
+  end
+
+  local search_text = case_sensitive and text or text:lower()
+
+  if use_regex then
+    -- Use Lua pattern matching
+    local match_start, match_end = search_text:find(pat)
+    if match_start then
+      if whole_word then
+        -- Check word boundaries for regex match
+        local before_ok = match_start == 1 or not search_text:sub(match_start - 1, match_start - 1):match("%w")
+        local after_ok = match_end == #search_text or not search_text:sub(match_end + 1, match_end + 1):match("%w")
+        if before_ok and after_ok then
+          return true, text:sub(match_start, match_end)
+        end
+        -- Try to find a word-boundary match
+        local pos = 1
+        while pos <= #search_text do
+          match_start, match_end = search_text:find(pat, pos)
+          if not match_start then break end
+          before_ok = match_start == 1 or not search_text:sub(match_start - 1, match_start - 1):match("%w")
+          after_ok = match_end == #search_text or not search_text:sub(match_end + 1, match_end + 1):match("%w")
+          if before_ok and after_ok then
+            return true, text:sub(match_start, match_end)
+          end
+          pos = match_start + 1
+        end
+        return false, nil
+      else
+        return true, text:sub(match_start, match_end)
+      end
+    end
+    return false, nil
+  else
+    -- Plain text search
+    if whole_word then
+      -- Use word boundary pattern for whole word matching
+      local escaped = escape_pattern(pat)
+      local word_pattern = "%f[%w]" .. escaped .. "%f[%W]"
+      local match = search_text:match(word_pattern)
+      if match then
+        return true, match
+      end
+      return false, nil
+    else
+      -- Simple substring search (plain = true for literal match)
+      local match_start = search_text:find(pat, 1, true)
+      if match_start then
+        return true, text:sub(match_start, match_start + #pat - 1)
+      end
+      return false, nil
+    end
+  end
+end
+
+-- Match function - returns (matched, match_type, matched_text)
 local function matches(obj)
   if pattern == "" then
-    return true, "all"
+    return true, "all", nil
   end
 
-  local text_to_search = ""
-
-  -- Build searchable text
+  -- Check name match first (highest priority)
   if search_names then
-    text_to_search = text_to_search .. " " .. (obj.name or "")
-    text_to_search = text_to_search .. " " .. (obj.display_name or "")
-    text_to_search = text_to_search .. " " .. (obj.full_name or "")
-  end
-
-  if search_definitions and obj.definition then
-    text_to_search = text_to_search .. " " .. obj.definition
-  end
-
-  if search_metadata and obj.metadata_text then
-    text_to_search = text_to_search .. " " .. obj.metadata_text
-  end
-
-  if not case_sensitive then
-    text_to_search = text_to_search:lower()
-  end
-
-  if check_whole_word(text_to_search, match_pattern) then
-    -- Determine match type
-    if search_names and obj.name and check_whole_word(
-      case_sensitive and obj.name or obj.name:lower(),
-      match_pattern
-    ) then
-      return true, "name"
-    elseif search_definitions and obj.definition then
-      return true, "definition"
-    elseif search_metadata and obj.metadata_text then
-      return true, "metadata"
+    local name_matched, name_text = text_matches(obj.name, match_pattern)
+    if name_matched then
+      return true, "name", name_text
     end
-    return true, "name"
+    -- Also check display_name
+    local display_matched, display_text = text_matches(obj.display_name, match_pattern)
+    if display_matched then
+      return true, "name", display_text
+    end
   end
 
-  return false, nil
+  -- Check definition match (medium priority)
+  if search_definitions and obj.definition then
+    local def_matched, def_text = text_matches(obj.definition, match_pattern)
+    if def_matched then
+      return true, "definition", def_text
+    end
+  end
+
+  -- Check metadata match (lowest priority)
+  if search_metadata and obj.metadata_text then
+    local meta_matched, meta_text = text_matches(obj.metadata_text, match_pattern)
+    if meta_matched then
+      return true, "metadata", meta_text
+    end
+  end
+
+  return false, nil, nil
 end
 
 -- Process objects
@@ -93,7 +144,7 @@ local total = #objects
 local last_progress = 0
 
 for i, obj in ipairs(objects) do
-  local matched, match_type = matches(obj)
+  local matched, match_type, matched_text = matches(obj)
 
   if matched then
     table.insert(batch, {
@@ -104,6 +155,7 @@ for i, obj in ipairs(objects) do
       server_name = obj.server_name,
       object_type = obj.object_type,
       match_type = match_type,
+      matched_text = matched_text,
       display_name = obj.display_name,
       unique_id = obj.unique_id,
     })
@@ -112,11 +164,11 @@ for i, obj in ipairs(objects) do
   -- Send batch when full
   if #batch >= batch_size then
     local progress = math.floor((i / total) * 100)
-    async_handle:send(json_encode({
+    send({
       type = "batch",
       items = batch,
       progress = progress,
-    }))
+    })
     batch = {}
   end
 
@@ -124,25 +176,25 @@ for i, obj in ipairs(objects) do
   local current_progress = math.floor((i / total) * 10) * 10
   if current_progress > last_progress then
     last_progress = current_progress
-    async_handle:send(json_encode({
+    send({
       type = "progress",
       pct = current_progress,
       message = string.format("Processing %d/%d objects...", i, total),
-    }))
+    })
   end
 end
 
 -- Send remaining batch
 if #batch > 0 then
-  async_handle:send(json_encode({
+  send({
     type = "batch",
     items = batch,
     progress = 100,
-  }))
+  })
 end
 
 -- Send completion
-async_handle:send(json_encode({
+send({
   type = "complete",
   result = { total_processed = total },
-}))
+})

@@ -3,41 +3,84 @@
 -- Pure Lua only - NO vim.* APIs
 --
 -- Input: { items, key_field, descending }
--- Output: sorted items array
+-- Output: sorted items with progress updates
+--
+-- This code runs inside _WORKER_MAIN(send_message)
+-- _INPUT is the decoded input table
+-- send(msg) sends a message to the main thread
 
-local async_handle, input_json = ...
+local items = _INPUT.items or {}
+local key_field = _INPUT.key_field or "name"
+local descending = _INPUT.descending or false
 
--- Parse input
-local input = json_decode(input_json)
-if not input then
-  async_handle:send(json_encode({ type = "error", error = "Failed to parse input" }))
-  return
-end
+local total = #items
 
-local items = input.items or {}
-local key_field = input.key_field or "name"
-local descending = input.descending or false
+-- Send initial progress
+send({
+  type = "progress",
+  pct = 0,
+  message = string.format("Sorting %d items...", total),
+})
 
--- Sort items
+-- Perform sort
 table.sort(items, function(a, b)
-  local a_key = a[key_field] or a.sort_key or a.name or ""
-  local b_key = b[key_field] or b.sort_key or b.name or ""
+  local val_a = a[key_field] or a.name or ""
+  local val_b = b[key_field] or b.name or ""
 
-  -- Case-insensitive string comparison
-  if type(a_key) == "string" and type(b_key) == "string" then
-    a_key = a_key:lower()
-    b_key = b_key:lower()
+  -- Handle string comparison (case-insensitive)
+  if type(val_a) == "string" and type(val_b) == "string" then
+    val_a = val_a:lower()
+    val_b = val_b:lower()
   end
 
   if descending then
-    return a_key > b_key
+    return val_a > val_b
   else
-    return a_key < b_key
+    return val_a < val_b
   end
 end)
 
--- Send sorted result
-async_handle:send(json_encode({
+-- Send progress
+send({
+  type = "progress",
+  pct = 50,
+  message = "Sort complete, sending results...",
+})
+
+-- Send sorted items in batches
+local batch_size = 100
+local batch = {}
+
+for i, item in ipairs(items) do
+  table.insert(batch, {
+    idx = item.idx or i,
+    name = item.name,
+    object_type = item.object_type,
+    sort_key = item[key_field],
+  })
+
+  if #batch >= batch_size then
+    local progress = 50 + math.floor((i / total) * 50)
+    send({
+      type = "batch",
+      items = batch,
+      progress = progress,
+    })
+    batch = {}
+  end
+end
+
+-- Send remaining batch
+if #batch > 0 then
+  send({
+    type = "batch",
+    items = batch,
+    progress = 100,
+  })
+end
+
+-- Send completion
+send({
   type = "complete",
-  result = { items = items },
-}))
+  result = { total_sorted = total },
+})
