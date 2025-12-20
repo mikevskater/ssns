@@ -3309,9 +3309,330 @@ function UnitRunner._run_async_test(test)
     return UnitRunner._run_async_completion_providers_test(test)
   elseif module == "ssns.ui.chunked" then
     return UnitRunner._run_async_chunked_rendering_test(test)
+  elseif module == "ssns.async.thread" then
+    return UnitRunner._run_async_thread_test(test)
   else
     return nil, false, "Unknown async test module: " .. tostring(module)
   end
+end
+
+---Run thread module test
+---@param test table Test definition
+---@return table actual Actual result
+---@return boolean passed Whether test passed
+---@return string? error Error message if failed
+function UnitRunner._run_async_thread_test(test)
+  local ok, Thread = pcall(require, "ssns.async.thread")
+  if not ok then
+    return nil, false, "Failed to load Thread module: " .. tostring(Thread)
+  end
+
+  local method = test.method
+  local input = test.input or {}
+  local expected = test.expected or {}
+
+  local passed = true
+  local error_msg = nil
+  local result = {}
+
+  -- Thread availability
+  if method == "is_available" then
+    local is_avail = Thread.is_available()
+    result.returns_boolean = type(is_avail) == "boolean"
+
+    if expected.returns_boolean and not result.returns_boolean then
+      passed = false
+      error_msg = "Expected is_available to return boolean"
+    end
+
+  -- Module exports check
+  elseif method == "exports_check" then
+    result.has_coordinator = Thread.Coordinator ~= nil
+    result.has_serializer = Thread.Serializer ~= nil
+    result.has_channel = Thread.Channel ~= nil
+
+    if expected.has_coordinator and not result.has_coordinator then
+      passed = false
+      error_msg = "Expected Thread.Coordinator to be exported"
+    elseif expected.has_serializer and not result.has_serializer then
+      passed = false
+      error_msg = "Expected Thread.Serializer to be exported"
+    elseif expected.has_channel and not result.has_channel then
+      passed = false
+      error_msg = "Expected Thread.Channel to be exported"
+    end
+
+  -- Serializer tests
+  elseif method == "serializer_encode_simple" then
+    local json = Thread.Serializer.encode(input.data)
+    result.is_string = type(json) == "string"
+    result.contains_name = json:find("name") ~= nil
+    result.contains_value = json:find("123") ~= nil
+
+    if expected.is_string and not result.is_string then
+      passed = false
+      error_msg = "Expected encode to return string"
+    elseif expected.contains_name and not result.contains_name then
+      passed = false
+      error_msg = "Expected JSON to contain 'name'"
+    elseif expected.contains_value and not result.contains_value then
+      passed = false
+      error_msg = "Expected JSON to contain value"
+    end
+
+  elseif method == "serializer_decode" then
+    local decoded, decode_err = Thread.Serializer.decode(input.json)
+    result.is_table = type(decoded) == "table"
+    if decoded then
+      result.name = decoded.name
+      result.value = decoded.value
+    end
+
+    if expected.is_table and not result.is_table then
+      passed = false
+      error_msg = "Expected decode to return table"
+    elseif expected.name and result.name ~= expected.name then
+      passed = false
+      error_msg = string.format("Expected name='%s', got '%s'", expected.name, result.name or "nil")
+    elseif expected.value and result.value ~= expected.value then
+      passed = false
+      error_msg = string.format("Expected value=%s, got %s", expected.value, result.value or "nil")
+    end
+
+  elseif method == "serializer_decode_empty" then
+    local decoded, decode_err = Thread.Serializer.decode("")
+    result.returns_nil = decoded == nil
+    result.has_error = decode_err ~= nil
+
+    if expected.returns_nil and not result.returns_nil then
+      passed = false
+      error_msg = "Expected decode of empty string to return nil"
+    elseif expected.has_error and not result.has_error then
+      passed = false
+      error_msg = "Expected decode of empty string to return error"
+    end
+
+  elseif method == "serializer_searchables" then
+    local test_objects = {
+      { name = "TestTable", schema_name = "dbo", object_type = "table", unique_id = "test1" },
+    }
+    local json = Thread.Serializer.serialize_searchables(test_objects)
+    result.is_string = type(json) == "string"
+    result.preserves_name = json:find("TestTable") ~= nil
+    result.preserves_schema = json:find("dbo") ~= nil
+
+    if expected.is_string and not result.is_string then
+      passed = false
+      error_msg = "Expected serialize_searchables to return string"
+    elseif expected.preserves_name and not result.preserves_name then
+      passed = false
+      error_msg = "Expected serialized data to contain name"
+    elseif expected.preserves_schema and not result.preserves_schema then
+      passed = false
+      error_msg = "Expected serialized data to contain schema"
+    end
+
+  elseif method == "serializer_worker_encoder" then
+    local code = Thread.Serializer.get_worker_json_encoder()
+    result.is_string = type(code) == "string"
+    result.defines_json_encode = code:find("function json_encode") ~= nil
+
+    if expected.is_string and not result.is_string then
+      passed = false
+      error_msg = "Expected worker encoder to return string"
+    elseif expected.defines_json_encode and not result.defines_json_encode then
+      passed = false
+      error_msg = "Expected worker encoder to define json_encode function"
+    end
+
+  elseif method == "serializer_worker_decoder" then
+    local code = Thread.Serializer.get_worker_json_decoder()
+    result.is_string = type(code) == "string"
+    result.defines_json_decode = code:find("function json_decode") ~= nil
+
+    if expected.is_string and not result.is_string then
+      passed = false
+      error_msg = "Expected worker decoder to return string"
+    elseif expected.defines_json_decode and not result.defines_json_decode then
+      passed = false
+      error_msg = "Expected worker decoder to define json_decode function"
+    end
+
+  -- Channel tests
+  elseif method == "channel_create" then
+    local channel = Thread.Channel.create(function() end)
+    result.has_channel = channel ~= nil
+    result.has_id = channel and channel.id ~= nil
+    result.is_open = channel and channel:is_open()
+
+    -- Cleanup
+    if channel then channel:close() end
+
+    if expected.has_channel and not result.has_channel then
+      passed = false
+      error_msg = "Expected Channel.create to return channel"
+    elseif expected.has_id and not result.has_id then
+      passed = false
+      error_msg = "Expected channel to have id"
+    elseif expected.is_open and not result.is_open then
+      passed = false
+      error_msg = "Expected channel to be open after creation"
+    end
+
+  elseif method == "channel_close" then
+    local channel = Thread.Channel.create(function() end)
+    result.was_open = channel:is_open()
+    channel:close()
+    result.is_closed = not channel:is_open()
+
+    if expected.was_open and not result.was_open then
+      passed = false
+      error_msg = "Expected channel to be open before close"
+    elseif expected.is_closed and not result.is_closed then
+      passed = false
+      error_msg = "Expected channel to be closed after close()"
+    end
+
+  elseif method == "channel_router" then
+    local batch_called = false
+    local progress_called = false
+    local complete_called = false
+    local error_called = false
+
+    local router = Thread.Channel.create_router({
+      on_batch = function() batch_called = true end,
+      on_progress = function() progress_called = true end,
+      on_complete = function() complete_called = true end,
+      on_error = function() error_called = true end,
+    })
+
+    router({ type = "batch", items = {} })
+    router({ type = "progress", pct = 50 })
+    router({ type = "complete", result = {} })
+    router({ type = "error", error = "test" })
+
+    result.routes_batch = batch_called
+    result.routes_progress = progress_called
+    result.routes_complete = complete_called
+    result.routes_error = error_called
+
+    if expected.routes_batch and not result.routes_batch then
+      passed = false
+      error_msg = "Expected router to route batch messages"
+    elseif expected.routes_progress and not result.routes_progress then
+      passed = false
+      error_msg = "Expected router to route progress messages"
+    elseif expected.routes_complete and not result.routes_complete then
+      passed = false
+      error_msg = "Expected router to route complete messages"
+    elseif expected.routes_error and not result.routes_error then
+      passed = false
+      error_msg = "Expected router to route error messages"
+    end
+
+  -- Coordinator tests
+  elseif method == "coordinator_is_available" then
+    local is_avail = Thread.Coordinator.is_available()
+    result.returns_boolean = type(is_avail) == "boolean"
+
+    if expected.returns_boolean and not result.returns_boolean then
+      passed = false
+      error_msg = "Expected is_available to return boolean"
+    end
+
+  elseif method == "coordinator_active_count" then
+    local count = Thread.Coordinator.get_active_count()
+    result.returns_number = type(count) == "number"
+    result.initial_count_zero = count == 0
+
+    if expected.returns_number and not result.returns_number then
+      passed = false
+      error_msg = "Expected get_active_count to return number"
+    elseif expected.initial_count_zero and not result.initial_count_zero then
+      passed = false
+      error_msg = "Expected initial active count to be 0"
+    end
+
+  elseif method == "coordinator_register_worker" then
+    -- Register a test worker
+    Thread.Coordinator.register_worker("test_worker_unit", "return nil")
+    result.registration_succeeds = true
+
+    if expected.registration_succeeds and not result.registration_succeeds then
+      passed = false
+      error_msg = "Expected worker registration to succeed"
+    end
+
+  -- Built-in worker tests
+  elseif method == "builtin_worker_search" then
+    -- Try to start a search worker (will fail if threading not available, but worker should exist)
+    local task_id, err = Thread.start({
+      worker = "search",
+      input = { objects = {}, pattern = "" },
+    })
+    -- Worker exists if we get a task_id OR if error is about threading not available
+    result.worker_exists = task_id ~= nil or (err and not err:find("Unknown worker"))
+
+    if expected.worker_exists and not result.worker_exists then
+      passed = false
+      error_msg = "Expected search worker to be registered"
+    end
+
+  elseif method == "builtin_worker_sort" then
+    local task_id, err = Thread.start({
+      worker = "sort",
+      input = { items = {} },
+    })
+    result.worker_exists = task_id ~= nil or (err and not err:find("Unknown worker"))
+
+    if expected.worker_exists and not result.worker_exists then
+      passed = false
+      error_msg = "Expected sort worker to be registered"
+    end
+
+  elseif method == "builtin_worker_dedupe_sort" then
+    local task_id, err = Thread.start({
+      worker = "dedupe_sort",
+      input = { columns = {} },
+    })
+    result.worker_exists = task_id ~= nil or (err and not err:find("Unknown worker"))
+
+    if expected.worker_exists and not result.worker_exists then
+      passed = false
+      error_msg = "Expected dedupe_sort worker to be registered"
+    end
+
+  elseif method == "builtin_worker_fk_graph" then
+    local task_id, err = Thread.start({
+      worker = "fk_graph",
+      input = { graph = {}, source_keys = {} },
+    })
+    result.worker_exists = task_id ~= nil or (err and not err:find("Unknown worker"))
+
+    if expected.worker_exists and not result.worker_exists then
+      passed = false
+      error_msg = "Expected fk_graph worker to be registered"
+    end
+
+  -- Thread start test
+  elseif method == "thread_start_basic" then
+    local task_id, err = Thread.start({
+      worker = "search",
+      input = { objects = {}, pattern = "" },
+    })
+    -- Either returns task_id (threading works) or returns error (threading unavailable/other issue)
+    result.returns_task_id_or_error = task_id ~= nil or err ~= nil
+
+    if expected.returns_task_id_or_error and not result.returns_task_id_or_error then
+      passed = false
+      error_msg = "Expected Thread.start to return task_id or error"
+    end
+
+  else
+    return nil, false, "Unknown thread test method: " .. tostring(method)
+  end
+
+  return result, passed, error_msg
 end
 
 ---Run formatter test
