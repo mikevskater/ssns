@@ -21,42 +21,6 @@ local function notify_result(success, err, context)
   end
 end
 
----Format the entire buffer
----@param opts? {silent?: boolean} Options
-function FormatterCommands.format_buffer(opts)
-  opts = opts or {}
-
-  if not Formatter.is_enabled() then
-    if not opts.silent then
-      vim.notify("SSNS: Formatter is disabled", vim.log.levels.WARN)
-    end
-    return
-  end
-
-  -- Save cursor position
-  local cursor = vim.api.nvim_win_get_cursor(0)
-  local line_count_before = vim.api.nvim_buf_line_count(0)
-
-  local success, err = Formatter.format_buffer()
-
-  -- Restore cursor position (adjust if line count changed)
-  local line_count_after = vim.api.nvim_buf_line_count(0)
-  local new_line = math.min(cursor[1], line_count_after)
-  local new_col = cursor[2]
-
-  -- Try to get the line length to ensure we don't go past end of line
-  local line_text = vim.api.nvim_buf_get_lines(0, new_line - 1, new_line, false)[1] or ""
-  new_col = math.min(new_col, #line_text)
-
-  pcall(vim.api.nvim_win_set_cursor, 0, { new_line, new_col })
-
-  if not opts.silent then
-    notify_result(success, err, "buffer")
-  end
-
-  return success
-end
-
 ---Active spinner ID for formatting progress
 ---@type string?
 local _format_spinner_id = nil
@@ -221,34 +185,6 @@ function FormatterCommands.cancel_async_format()
   vim.notify("SSNS: Formatting cancelled", vim.log.levels.INFO)
 end
 
----Format a visual selection (range)
----@param start_line number Start line (1-indexed)
----@param end_line number End line (1-indexed)
----@param opts? {silent?: boolean} Options
-function FormatterCommands.format_range(start_line, end_line, opts)
-  opts = opts or {}
-
-  if not Formatter.is_enabled() then
-    if not opts.silent then
-      vim.notify("SSNS: Formatter is disabled", vim.log.levels.WARN)
-    end
-    return
-  end
-
-  -- Ensure start <= end
-  if start_line > end_line then
-    start_line, end_line = end_line, start_line
-  end
-
-  local success, err = Formatter.format_range(start_line, end_line)
-
-  if not opts.silent then
-    notify_result(success, err, string.format("lines %d-%d", start_line, end_line))
-  end
-
-  return success
-end
-
 ---Format the SQL statement under the cursor
 ---@param opts? {silent?: boolean} Options
 function FormatterCommands.format_statement(opts)
@@ -352,18 +288,11 @@ end
 
 ---Register formatter commands
 function FormatterCommands.register_commands()
-  -- :SSNSFormat - Format entire buffer
+  -- :SSNSFormat - Format entire buffer (async with progress)
   vim.api.nvim_create_user_command("SSNSFormat", function()
-    FormatterCommands.format_buffer()
-  end, {
-    desc = "Format entire SQL buffer",
-  })
-
-  -- :SSNSFormatAsync - Format entire buffer asynchronously with progress
-  vim.api.nvim_create_user_command("SSNSFormatAsync", function()
     FormatterCommands.format_buffer_async()
   end, {
-    desc = "Format entire SQL buffer asynchronously",
+    desc = "Format entire SQL buffer",
   })
 
   -- :SSNSFormatCancel - Cancel in-progress async formatting
@@ -380,21 +309,13 @@ function FormatterCommands.register_commands()
     desc = "Open formatter configuration UI",
   })
 
-  -- :SSNSFormatRange - Format visual selection
+  -- :SSNSFormatRange - Format visual selection (async with progress)
   -- This command receives the range from visual mode
   vim.api.nvim_create_user_command("SSNSFormatRange", function(opts)
-    FormatterCommands.format_range(opts.line1, opts.line2)
-  end, {
-    range = true,
-    desc = "Format selected SQL range",
-  })
-
-  -- :SSNSFormatRangeAsync - Format visual selection asynchronously
-  vim.api.nvim_create_user_command("SSNSFormatRangeAsync", function(opts)
     FormatterCommands.format_range_async(opts.line1, opts.line2)
   end, {
     range = true,
-    desc = "Format selected SQL range asynchronously",
+    desc = "Format selected SQL range",
   })
 
   -- :SSNSFormatStatement - Format statement under cursor
@@ -467,52 +388,35 @@ function FormatterCommands.setup_format_on_save(bufnr)
         return
       end
 
-      -- Check file size
-      local lines = vim.api.nvim_buf_get_lines(ev.buf, 0, -1, false)
-      local size = 0
-      for _, line in ipairs(lines) do
-        size = size + #line + 1 -- +1 for newline
-      end
+      -- Always use async formatting for format-on-save
+      -- Schedule async format after save, then re-save
+      vim.schedule(function()
+        if not vim.api.nvim_buf_is_valid(ev.buf) then return end
 
-      local async_threshold = config.async_threshold_bytes or 50000
+        Formatter.format_buffer_async({
+          bufnr = ev.buf,
+          on_progress = function(stage, progress, total)
+            -- Progress is shown via spinner
+          end,
+          on_complete = function(success, err)
+            if success then
+              -- Mark that we're about to save after async format
+              _pending_format_save[ev.buf] = true
 
-      if size <= async_threshold then
-        -- Small file: use sync formatting
-        FormatterCommands.format_buffer({ silent = true })
-      else
-        -- Large file: schedule async format after save, then re-save
-        -- Note: We don't block the write, format will happen after
-        vim.schedule(function()
-          if not vim.api.nvim_buf_is_valid(ev.buf) then return end
-
-          vim.notify("SSNS: Formatting large file asynchronously...", vim.log.levels.INFO)
-
-          Formatter.format_buffer_async({
-            bufnr = ev.buf,
-            on_progress = function(stage, progress, total)
-              -- Progress is shown via spinner
-            end,
-            on_complete = function(success, err)
-              if success then
-                -- Mark that we're about to save after async format
-                _pending_format_save[ev.buf] = true
-
-                vim.schedule(function()
-                  if vim.api.nvim_buf_is_valid(ev.buf) and vim.bo[ev.buf].modified then
-                    -- Silent save after formatting
-                    vim.api.nvim_buf_call(ev.buf, function()
-                      vim.cmd("silent write")
-                    end)
-                    vim.notify("SSNS: Formatted and saved", vim.log.levels.INFO)
-                  end
-                end)
-              else
-                vim.notify(string.format("SSNS: Async format failed: %s", err or "Unknown error"), vim.log.levels.WARN)
-              end
-            end,
-          })
-        end)
-      end
+              vim.schedule(function()
+                if vim.api.nvim_buf_is_valid(ev.buf) and vim.bo[ev.buf].modified then
+                  -- Silent save after formatting
+                  vim.api.nvim_buf_call(ev.buf, function()
+                    vim.cmd("silent write")
+                  end)
+                end
+              end)
+            else
+              vim.notify(string.format("SSNS: Async format failed: %s", err or "Unknown error"), vim.log.levels.WARN)
+            end
+          end,
+        })
+      end)
     end,
     desc = "SSNS: Format SQL on save",
   })
@@ -529,18 +433,18 @@ function FormatterCommands.setup_keymaps(bufnr)
   -- Build keymap definitions
   local keymaps = {}
 
-  -- Format buffer keymap (normal mode)
+  -- Format buffer keymap (normal mode) - uses async
   if format_buffer_key and format_buffer_key ~= "" then
     table.insert(keymaps, {
       mode = 'n',
       lhs = format_buffer_key,
       rhs = function()
-        FormatterCommands.format_buffer()
+        FormatterCommands.format_buffer_async()
       end,
       desc = 'SSNS: Format buffer',
     })
 
-    -- Format visual selection keymap (uses the same key in visual mode)
+    -- Format visual selection keymap (uses the same key in visual mode) - uses async
     table.insert(keymaps, {
       mode = 'v',
       lhs = format_buffer_key,
@@ -554,7 +458,7 @@ function FormatterCommands.setup_keymaps(bufnr)
 
         -- Schedule the format to run after visual mode is exited
         vim.schedule(function()
-          FormatterCommands.format_range(start_line, end_line)
+          FormatterCommands.format_range_async(start_line, end_line)
         end)
       end,
       desc = 'SSNS: Format selection',

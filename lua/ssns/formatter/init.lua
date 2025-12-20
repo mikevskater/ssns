@@ -89,14 +89,6 @@ function Formatter.format_range(start_line, end_line)
   return true, nil
 end
 
----Format the entire current buffer
----@return boolean success
----@return string? error
-function Formatter.format_buffer()
-  local line_count = vim.api.nvim_buf_line_count(0)
-  return Formatter.format_range(1, line_count)
-end
-
 ---@class FormatBufferAsyncOpts
 ---@field on_progress fun(stage: string, progress: number, total: number)? Progress callback
 ---@field on_complete fun(success: boolean, err?: string)? Completion callback

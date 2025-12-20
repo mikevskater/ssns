@@ -234,7 +234,7 @@ function ColumnsProvider.get_completions_async(ctx, opts)
 
   -- Load database async if needed (use true async RPC)
   if not database.is_loaded then
-    database:load_rpc_async({
+    database:load_async({
       timeout_ms = opts.timeout_ms or 5000,
       on_complete = function(success, err)
         -- Check cancellation after load

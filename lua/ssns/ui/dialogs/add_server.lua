@@ -898,11 +898,16 @@ function AddServerUI.save_connection(form_state, edit_connection)
         if server then
           -- If auto_connect, also connect the server
           if connection.auto_connect then
-            server:connect()
+            server:connect_async(function(_, _)
+              -- Refresh tree to show the new server after connect
+              local UiTree = require('ssns.ui.core.tree')
+              UiTree.render()
+            end)
+          else
+            -- Refresh tree to show the new server
+            local UiTree = require('ssns.ui.core.tree')
+            UiTree.render()
           end
-          -- Refresh tree to show the new server
-          local UiTree = require('ssns.ui.core.tree')
-          UiTree.render()
         end
       end
     end
@@ -958,18 +963,17 @@ function AddServerUI.test_connection(form_state)
     return
   end
 
-  -- Try to connect
-  local connect_ok, connect_err = pcall(function()
-    return server:connect()
+  -- Try to connect asynchronously
+  vim.notify("Testing connection...", vim.log.levels.INFO)
+  server:connect_async(function(success, connect_err)
+    if success and server:is_connected() then
+      vim.notify("Connection successful!", vim.log.levels.INFO)
+      -- Disconnect the test server
+      pcall(function() server:disconnect() end)
+    else
+      vim.notify(string.format("Connection failed: %s", connect_err or "Could not connect"), vim.log.levels.ERROR)
+    end
   end)
-
-  if connect_ok and server:is_connected() then
-    vim.notify("Connection successful!", vim.log.levels.INFO)
-    -- Disconnect the test server
-    pcall(function() server:disconnect() end)
-  else
-    vim.notify(string.format("Connection failed: %s", connect_err or "Could not connect"), vim.log.levels.ERROR)
-  end
 end
 
 return AddServerUI

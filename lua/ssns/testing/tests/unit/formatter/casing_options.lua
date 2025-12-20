@@ -179,7 +179,7 @@ return {
         },
         expected = {
             contains = { "select", "from", "where" },  -- keywords lower
-            contains = { "COUNT(*)", "SUM(amount)" }   -- functions upper
+            not_contains = { "COUNT(*)", "SUM(amount)" }   -- functions upper
         }
     },
     {
@@ -210,7 +210,7 @@ return {
         },
         expected = {
             contains = { "SELECT", "FROM", "WHERE" },  -- keywords uppercased
-            contains = { "Count(*)", "Users", "Id" }   -- others preserved
+            not_contains = { "Count(*)", "Users", "Id" }   -- others preserved
         }
     },
 

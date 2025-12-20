@@ -14,7 +14,7 @@ return {
     id = 10301,
     type = "async_integration",
     name = "RPC async - server connect",
-    description = "Verify server connect_rpc_async is truly non-blocking",
+    description = "Verify server connect_async is truly non-blocking",
     operation = "server_connect",
     expected = {
       non_blocking = true,
@@ -27,7 +27,7 @@ return {
     id = 10302,
     type = "async_integration",
     name = "RPC async - server connect with invalid credentials",
-    description = "Verify server connect_rpc_async handles connection failure",
+    description = "Verify server connect_async handles connection failure",
     skip = true, -- Connection failure handling varies by driver and may timeout
     skip_reason = "Invalid connection test requires driver-specific error handling",
     operation = "server_connect",
@@ -43,7 +43,7 @@ return {
     id = 10303,
     type = "async_integration",
     name = "RPC async - server load databases",
-    description = "Verify server load_rpc_async returns database list",
+    description = "Verify server load_async returns database list",
     operation = "server_load",
     expected = {
       non_blocking = true,
@@ -61,7 +61,7 @@ return {
     id = 10310,
     type = "async_integration",
     name = "RPC async - database load schemas",
-    description = "Verify database load_rpc_async returns schemas",
+    description = "Verify database load_async returns schemas",
     operation = "database_load",
     database = "vim_dadbod_test",
     expected = {
@@ -106,9 +106,9 @@ return {
     id = 10320,
     type = "async_integration",
     name = "RPC async - connect and load combined",
-    description = "Verify connect_and_load_rpc_async chains correctly",
-    skip = true, -- Combined operation requires connect_and_load_rpc_async implementation
-    skip_reason = "connect_and_load_rpc_async method not yet implemented on Server class",
+    description = "Verify connect_and_load_async chains correctly",
+    skip = true, -- Combined operation requires connect_and_load_async implementation
+    skip_reason = "connect_and_load_async method not yet implemented on Server class",
     operation = "connect_and_load",
     expected = {
       non_blocking = true,

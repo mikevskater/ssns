@@ -182,14 +182,24 @@ function ServerClass:disconnect()
 end
 
 ---Toggle connection state (connect if disconnected, disconnect if connected)
----@return boolean success
----@return string? error_message
-function ServerClass:toggle_connection()
+---Uses async for non-blocking UI when connecting
+---@param callback fun(success: boolean, error: string?)? Optional callback when complete
+function ServerClass:toggle_connection(callback)
   if self:is_connected() then
     self:disconnect()
-    return true, nil
+    if callback then
+      vim.schedule(function()
+        callback(true, nil)
+      end)
+    end
   else
-    return self:connect()
+    self:connect_async({
+      on_complete = function(success, err)
+        if callback then
+          callback(success, err)
+        end
+      end,
+    })
   end
 end
 
@@ -401,33 +411,6 @@ end
 -- Async Methods
 -- ============================================================================
 
----@class ServerAsyncOpts
----@field timeout_ms number? Timeout in milliseconds
----@field cancel_token CancellationToken? Cancellation token
----@field on_complete fun(success: boolean, error: string?)? Completion callback
-
----Connect to the database server asynchronously
----@param opts ServerAsyncOpts? Options
----@return string task_id Task ID for tracking/cancellation
-function ServerClass:connect_async(opts)
-  opts = opts or {}
-  local Executor = require('ssns.async.executor')
-
-  return Executor.run(function(ctx)
-    ctx.throw_if_cancelled()
-    local success, err = self:connect()
-    if not success then
-      return nil, err
-    end
-    return success
-  end, {
-    name = opts.name or string.format("Connecting to %s", self.name),
-    timeout_ms = opts.timeout_ms,
-    cancel_token = opts.cancel_token,
-    on_complete = opts.on_complete,
-  })
-end
-
 ---@class ServerRPCAsyncOpts
 ---@field timeout_ms number? Timeout in milliseconds (default: 30000)
 ---@field on_complete fun(success: boolean, error: string?)? Completion callback
@@ -437,7 +420,7 @@ end
 ---and calls back when complete.
 ---@param opts ServerRPCAsyncOpts? Options
 ---@return string callback_id Callback ID for tracking/cancellation
-function ServerClass:connect_rpc_async(opts)
+function ServerClass:connect_async(opts)
   opts = opts or {}
   local Connection = require('ssns.connection')
 
@@ -510,32 +493,13 @@ function ServerClass:connect_rpc_async(opts)
   })
 end
 
----Load databases from the server asynchronously
----@param opts ServerAsyncOpts? Options
----@return string task_id Task ID for tracking/cancellation
-function ServerClass:load_async(opts)
-  opts = opts or {}
-  local Executor = require('ssns.async.executor')
-
-  return Executor.run(function(ctx)
-    ctx.throw_if_cancelled()
-    local success = self:load()
-    return success
-  end, {
-    name = opts.name or string.format("Loading databases from %s", self.name),
-    timeout_ms = opts.timeout_ms,
-    cancel_token = opts.cancel_token,
-    on_complete = opts.on_complete,
-  })
-end
-
 ---Load databases from the server using true non-blocking RPC async
 ---This method does NOT block the UI - the query runs in Node.js
 ---and calls back when complete.
----NOTE: Server must already be connected. Use connect_and_load_rpc_async() for combined operation.
+---NOTE: Server must already be connected. Use connect_and_load_async() for combined operation.
 ---@param opts ServerRPCAsyncOpts? Options
 ---@return string callback_id Callback ID for tracking/cancellation
-function ServerClass:load_rpc_async(opts)
+function ServerClass:load_async(opts)
   opts = opts or {}
   local Connection = require('ssns.connection')
 
@@ -553,7 +517,7 @@ function ServerClass:load_rpc_async(opts)
   if not self:is_connected() then
     if opts.on_complete then
       vim.schedule(function()
-        opts.on_complete(false, "Server not connected. Call connect_rpc_async() first or use connect_and_load_rpc_async()")
+        opts.on_complete(false, "Server not connected. Call connect_async() first or use connect_and_load_async()")
       end)
     end
     return "not_connected"
@@ -644,50 +608,12 @@ function ServerClass:load_rpc_async(opts)
   })
 end
 
----Connect and load databases asynchronously (combined operation)
----@param opts ServerAsyncOpts? Options
----@return string task_id Task ID for tracking/cancellation
-function ServerClass:connect_and_load_async(opts)
-  opts = opts or {}
-  local Executor = require('ssns.async.executor')
-
-  return Executor.run(function(ctx)
-    ctx.throw_if_cancelled()
-    ctx.report_progress(0, "Connecting...")
-
-    -- Connect first
-    if not self:is_connected() then
-      local success, err = self:connect()
-      if not success then
-        return nil, err
-      end
-    end
-
-    ctx.throw_if_cancelled()
-    ctx.report_progress(50, "Loading databases...")
-
-    -- Then load
-    local load_success = self:load()
-    if not load_success then
-      return nil, "Failed to load databases"
-    end
-
-    ctx.report_progress(100, "Complete")
-    return true
-  end, {
-    name = opts.name or string.format("Connecting to %s", self.name),
-    timeout_ms = opts.timeout_ms,
-    cancel_token = opts.cancel_token,
-    on_complete = opts.on_complete,
-  })
-end
-
 ---Connect and load databases using true non-blocking RPC async (combined operation)
 ---This method does NOT block the UI - both connection test and database load run in Node.js
 ---and call back when complete.
 ---@param opts ServerRPCAsyncOpts? Options
 ---@return string callback_id Callback ID for tracking/cancellation
-function ServerClass:connect_and_load_rpc_async(opts)
+function ServerClass:connect_and_load_async(opts)
   opts = opts or {}
 
   -- Already connected and loaded - return immediately via callback
@@ -702,13 +628,13 @@ function ServerClass:connect_and_load_rpc_async(opts)
 
   -- Already connected but not loaded - just load
   if self:is_connected() then
-    return self:load_rpc_async(opts)
+    return self:load_async(opts)
   end
 
   -- Not connected - connect first, then load
   local server_self = self  -- Capture self for callback
 
-  return self:connect_rpc_async({
+  return self:connect_async({
     timeout_ms = opts.timeout_ms,
     on_complete = function(success, err)
       if not success then
@@ -719,7 +645,7 @@ function ServerClass:connect_and_load_rpc_async(opts)
       end
 
       -- Connection successful - now load databases
-      server_self:load_rpc_async({
+      server_self:load_async({
         timeout_ms = opts.timeout_ms,
         on_complete = opts.on_complete,
       })

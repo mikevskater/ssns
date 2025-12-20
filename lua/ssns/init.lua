@@ -118,9 +118,8 @@ function Ssns.setup(user_config)
         local server = item.server
         local name = item.name
 
-        -- Use vim.schedule to avoid blocking
-        vim.schedule(function()
-          local success, connect_err = server:connect()
+        -- Use true async RPC to avoid blocking
+        server:connect_async(function(success, connect_err)
           if success then
             connected_count = connected_count + 1
           else

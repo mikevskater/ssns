@@ -45,68 +45,26 @@ function TreeActions.toggle_node(UiTree)
     end
 
     -- Determine async load function based on object type
-    -- Prefer RPC async methods (non-blocking) for responsive UI
-    -- Fall back to vim.schedule async if RPC async not available
-    -- Last resort: synchronous loading
-    local AsyncRPC = require('ssns.async.rpc')
-    local rpc_available = AsyncRPC.check_and_notify()  -- Shows info once if not available
+    -- Use RPC async methods (non-blocking) for responsive UI
+    local async_fn = nil
 
-    local rpc_async_fn = nil
-    local async_load_fn = nil
-    local sync_fallback_fn = nil
-
-    if obj.object_type == "tables_group" then
-      if rpc_available and db.load_all_tables_bulk_rpc_async and adapter.features.schemas then
-        -- Best: non-blocking RPC async
-        rpc_async_fn = function(on_complete) db:load_all_tables_bulk_rpc_async({ on_complete = on_complete }) end
-      elseif db.get_tables_async then
-        -- Fallback: vim.schedule based (still blocks during query)
-        async_load_fn = function(on_complete) db:get_tables_async({ on_complete = on_complete }) end
-      else
-        sync_fallback_fn = function() db:get_tables() end
-      end
-    elseif obj.object_type == "views_group" and adapter.features.views then
-      if rpc_available and db.load_all_views_bulk_rpc_async and adapter.features.schemas then
-        rpc_async_fn = function(on_complete) db:load_all_views_bulk_rpc_async({ on_complete = on_complete }) end
-      elseif db.get_views_async then
-        async_load_fn = function(on_complete) db:get_views_async({ on_complete = on_complete }) end
-      else
-        sync_fallback_fn = function() db:get_views() end
-      end
-    elseif obj.object_type == "procedures_group" and adapter.features.procedures then
-      if rpc_available and db.load_all_procedures_bulk_rpc_async and adapter.features.schemas then
-        rpc_async_fn = function(on_complete) db:load_all_procedures_bulk_rpc_async({ on_complete = on_complete }) end
-      elseif db.get_procedures_async then
-        async_load_fn = function(on_complete) db:get_procedures_async({ on_complete = on_complete }) end
-      else
-        sync_fallback_fn = function() db:get_procedures() end
-      end
-    elseif obj.object_type == "functions_group" and adapter.features.functions then
-      if rpc_available and db.load_all_functions_bulk_rpc_async and adapter.features.schemas then
-        rpc_async_fn = function(on_complete) db:load_all_functions_bulk_rpc_async({ on_complete = on_complete }) end
-      elseif db.get_functions_async then
-        async_load_fn = function(on_complete) db:get_functions_async({ on_complete = on_complete }) end
-      else
-        sync_fallback_fn = function() db:get_functions() end
-      end
-    elseif obj.object_type == "synonyms_group" and adapter.features.synonyms then
-      if rpc_available and db.load_all_synonyms_bulk_rpc_async and adapter.features.schemas then
-        rpc_async_fn = function(on_complete) db:load_all_synonyms_bulk_rpc_async({ on_complete = on_complete }) end
-      elseif db.get_synonyms_async then
-        async_load_fn = function(on_complete) db:get_synonyms_async({ on_complete = on_complete }) end
-      else
-        sync_fallback_fn = function() db:get_synonyms() end
-      end
+    if obj.object_type == "tables_group" and adapter.features.schemas then
+      async_fn = function(on_complete) db:load_tables_async({ on_complete = on_complete }) end
+    elseif obj.object_type == "views_group" and adapter.features.views and adapter.features.schemas then
+      async_fn = function(on_complete) db:load_views_async({ on_complete = on_complete }) end
+    elseif obj.object_type == "procedures_group" and adapter.features.procedures and adapter.features.schemas then
+      async_fn = function(on_complete) db:load_procedures_async({ on_complete = on_complete }) end
+    elseif obj.object_type == "functions_group" and adapter.features.functions and adapter.features.schemas then
+      async_fn = function(on_complete) db:load_functions_async({ on_complete = on_complete }) end
+    elseif obj.object_type == "synonyms_group" and adapter.features.synonyms and adapter.features.schemas then
+      async_fn = function(on_complete) db:load_synonyms_async({ on_complete = on_complete }) end
     elseif obj.object_type == "schemas_group" and adapter.features.schemas then
       -- Schemas are typically fast to load, use sync for simplicity
-      sync_fallback_fn = function() db:get_schemas() end
+      async_fn = nil  -- Will fall through to sync below
     end
 
-    -- Use RPC async if available (preferred - UI stays responsive)
-    local effective_async_fn = rpc_async_fn or async_load_fn
-
     -- Execute async or sync load
-    if effective_async_fn then
+    if async_fn then
       local Buffer = require('ssns.ui.core.buffer')
       local Config = require('ssns.config')
       local Spinner = require('ssns.async.spinner')
@@ -138,10 +96,10 @@ function TreeActions.toggle_node(UiTree)
         hl_group = "Comment",
       })
 
-      -- Force display update (needed for vim.schedule fallback, not for RPC async)
+      -- Force display update
       vim.cmd('redraw')
 
-      effective_async_fn(function(result, err)
+      async_fn(function(result, err)
         -- Stop the animated spinner
         Spinner.stop(spinner_id)
 
@@ -182,9 +140,9 @@ function TreeActions.toggle_node(UiTree)
 
       -- Return early - cursor positioning is handled in the callback
       return
-    elseif sync_fallback_fn then
-      -- Sync fallback
-      sync_fallback_fn()
+    elseif obj.object_type == "schemas_group" and adapter.features.schemas then
+      -- Schemas are typically fast to load, use sync for simplicity
+      db:get_schemas()
     end
   end
 
@@ -354,9 +312,9 @@ function TreeActions.load_node_async(UiTree, obj, line_number)
   end
 
   -- Check if object supports true async RPC (ServerClass)
-  if obj.load_rpc_async then
+  if obj.load_async then
     -- Use true non-blocking RPC async - UI stays responsive
-    local callback_id = obj:load_rpc_async({
+    local callback_id = obj:load_async({
       timeout_ms = 60000, -- 60 seconds for metadata loads
       on_complete = handle_load_complete,
     })
@@ -735,22 +693,27 @@ function TreeActions.toggle_connection(UiTree)
 
   -- Check if it's a server or database
   if obj.toggle_connection then
-    obj:toggle_connection()
+    -- Use async toggle with callback for rendering
+    obj:toggle_connection(function(success, err)
+      if err then
+        vim.notify(string.format("Connection failed: %s", err), vim.log.levels.ERROR)
+      end
 
-    -- Re-render tree
-    UiTree.render()
+      -- Re-render tree after connection state changes
+      UiTree.render()
 
-    -- Restore cursor position with smart column
-    local col = smart_positioning and Buffer.get_name_column(line_number) or 0
-    Buffer.set_cursor(line_number, col)
-    -- Update indent tracking
-    if smart_positioning then
-      Buffer.last_indent_info = {
-        line = line_number,
-        indent_level = Buffer.get_indent_level(line_number),
-        column = col,
-      }
-    end
+      -- Restore cursor position with smart column
+      local col = smart_positioning and Buffer.get_name_column(line_number) or 0
+      Buffer.set_cursor(line_number, col)
+      -- Update indent tracking
+      if smart_positioning then
+        Buffer.last_indent_info = {
+          line = line_number,
+          indent_level = Buffer.get_indent_level(line_number),
+          column = col,
+        }
+      end
+    end)
   else
     vim.notify("Can only toggle connection on servers/databases", vim.log.levels.WARN)
   end

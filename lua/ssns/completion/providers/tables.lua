@@ -500,7 +500,7 @@ function TablesProvider.get_completions_async(ctx, opts)
   for _, db in ipairs(databases_to_load) do
     if not db.is_loaded then
       -- Use true async RPC for non-blocking database load
-      db:load_rpc_async({
+      db:load_async({
         timeout_ms = opts.timeout_ms or 5000,
         on_complete = function(success, err)
           if not success and not has_error then

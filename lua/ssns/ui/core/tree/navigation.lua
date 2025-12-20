@@ -21,15 +21,23 @@ function TreeNavigation.navigate_to_object(UiTree, target_object)
     current = current.parent
   end
 
-  -- Load and expand all parent nodes in order (root to target)
-  for _, parent in ipairs(parents) do
-    -- First, load the object if it has a load method and isn't loaded
-    if not parent.is_loaded and parent.load then
-      parent:load()
-    end
+  -- Find the server and database that contain the target object
+  local server = target_object:get_server()
+  local database = target_object:get_database()
 
-    -- Then expand if it can have children (by type or by actual children)
-    local can_have_children = parent:has_children()
+  if not server then
+    vim.notify("Target server not found", vim.log.levels.WARN)
+    return
+  end
+
+  if not database then
+    vim.notify("Target database not found", vim.log.levels.WARN)
+    return
+  end
+
+  -- Helper to check if object type can have children
+  local function can_have_children(parent)
+    return parent:has_children()
       or parent.object_type == "server"
       or parent.object_type == "database"
       or parent.object_type == "schema"
@@ -49,45 +57,36 @@ function TreeNavigation.navigate_to_object(UiTree, target_object)
       or parent.object_type == "schemas_group"
       or parent.object_type == "system_databases_group"
       or parent.object_type == "system_schemas_group"
+  end
 
-    if not parent.ui_state.expanded and can_have_children then
+  -- Helper to expand a parent node
+  local function expand_parent(parent)
+    if not parent.ui_state.expanded and can_have_children(parent) then
       parent.ui_state.expanded = true
     end
   end
 
-  -- Find the server and database that contain the target object
-  local server = target_object:get_server()
-  local database = target_object:get_database()
+  -- Helper to load a parent async and continue to next
+  local function load_parents_async(idx, on_complete)
+    if idx > #parents then
+      on_complete()
+      return
+    end
 
-  if not server then
-    vim.notify("Target server not found", vim.log.levels.WARN)
-    return
+    local parent = parents[idx]
+
+    -- Expand immediately (doesn't require load)
+    expand_parent(parent)
+
+    -- Load if needed
+    if not parent.is_loaded and parent.load_async then
+      parent:load_async(function(_, _)
+        load_parents_async(idx + 1, on_complete)
+      end)
+    else
+      load_parents_async(idx + 1, on_complete)
+    end
   end
-
-  if not database then
-    vim.notify("Target database not found", vim.log.levels.WARN)
-    return
-  end
-
-  -- Ensure server is loaded and expanded
-  if not server.is_loaded and server.load then
-    server:load()
-  end
-  server.ui_state.expanded = true
-  -- Expand the databases group inside the server
-  server["_ui_databases_group_expanded"] = true
-
-  -- Load the database if not loaded
-  if not database.is_loaded and database.load then
-    database:load()
-  end
-  database.ui_state.expanded = true
-
-  -- Verify object exists in cached data using typed arrays
-  -- Compare by identity (schema + name) not reference, since synonym resolution may cache old refs
-  local group_type = nil
-  local sub_group_type = nil  -- For nested groups like SCALAR/TABLE functions
-  local found_object = nil  -- The actual object from the database's collection
 
   -- Helper to find object in a collection by schema and name
   local function find_in_collection(collection, schema_name, object_name)
@@ -102,88 +101,96 @@ function TreeNavigation.navigate_to_object(UiTree, target_object)
     return nil
   end
 
-  -- Get target's schema and name for comparison
-  local target_schema = target_object.schema_name
-  local target_name = target_object.table_name or target_object.view_name
-                      or target_object.procedure_name or target_object.function_name
-                      or target_object.synonym_name or target_object.name
+  -- Helper to continue after all async loads complete
+  local function finish_navigation()
+    -- Ensure expansions are set
+    server.ui_state.expanded = true
+    server["_ui_databases_group_expanded"] = true
+    database.ui_state.expanded = true
 
-  if target_object.object_type == "table" then
-    group_type = "tables_group"
-    found_object = find_in_collection(database:get_tables(), target_schema, target_name)
-  elseif target_object.object_type == "view" then
-    group_type = "views_group"
-    found_object = find_in_collection(database:get_views(), target_schema, target_name)
-  elseif target_object.object_type == "procedure" then
-    group_type = "procedures_group"
-    found_object = find_in_collection(database:get_procedures(), target_schema, target_name)
-  elseif target_object.object_type == "function" then
-    -- Functions have nested sub-groups (SCALAR/TABLE)
-    group_type = "functions_group"
-    found_object = find_in_collection(database:get_functions(), target_schema, target_name)
-    -- Determine which sub-group based on function type
-    if found_object and found_object.is_table_valued and found_object:is_table_valued() then
-      sub_group_type = "table_functions_group"
-    else
-      sub_group_type = "scalar_functions_group"
+    -- Verify object exists in cached data using typed arrays
+    local group_type = nil
+    local sub_group_type = nil
+    local found_object = nil
+
+    -- Get target's schema and name for comparison
+    local target_schema = target_object.schema_name
+    local target_name = target_object.table_name or target_object.view_name
+                        or target_object.procedure_name or target_object.function_name
+                        or target_object.synonym_name or target_object.name
+
+    if target_object.object_type == "table" then
+      group_type = "tables_group"
+      found_object = find_in_collection(database:get_tables(), target_schema, target_name)
+    elseif target_object.object_type == "view" then
+      group_type = "views_group"
+      found_object = find_in_collection(database:get_views(), target_schema, target_name)
+    elseif target_object.object_type == "procedure" then
+      group_type = "procedures_group"
+      found_object = find_in_collection(database:get_procedures(), target_schema, target_name)
+    elseif target_object.object_type == "function" then
+      group_type = "functions_group"
+      found_object = find_in_collection(database:get_functions(), target_schema, target_name)
+      if found_object and found_object.is_table_valued and found_object:is_table_valued() then
+        sub_group_type = "table_functions_group"
+      else
+        sub_group_type = "scalar_functions_group"
+      end
+    elseif target_object.object_type == "synonym" then
+      group_type = "synonyms_group"
+      found_object = find_in_collection(database:get_synonyms(), target_schema, target_name)
     end
-  elseif target_object.object_type == "synonym" then
-    group_type = "synonyms_group"
-    found_object = find_in_collection(database:get_synonyms(), target_schema, target_name)
-  end
 
-  -- Use the found object (from current cache) instead of potentially stale target_object
-  if found_object then
-    target_object = found_object
-  end
-
-  -- Object doesn't exist in cached data - don't expand
-  if not found_object then
-    vim.notify(string.format("Object '%s.%s' not found in database (may have been dropped)", target_schema, target_name), vim.log.levels.WARN)
-    return
-  end
-
-  -- Object exists - store expansion state for the ephemeral groups
-  -- Groups are always created at database level in render_database(), so store on database
-  -- (The ephemeral groups will read this when created during render)
-  if group_type then
-    -- Expand the object's group at database level
-    database["_ui_" .. group_type .. "_expanded"] = true
-    -- For functions, also expand the sub-group (SCALAR or TABLE)
-    if sub_group_type then
-      database["_ui_" .. sub_group_type .. "_expanded"] = true
+    -- Use the found object (from current cache) instead of potentially stale target_object
+    if found_object then
+      target_object = found_object
     end
+
+    -- Object doesn't exist in cached data - don't expand
+    if not found_object then
+      vim.notify(string.format("Object '%s.%s' not found in database (may have been dropped)", target_schema, target_name), vim.log.levels.WARN)
+      return
+    end
+
+    -- Object exists - store expansion state for the ephemeral groups
+    if group_type then
+      database["_ui_" .. group_type .. "_expanded"] = true
+      if sub_group_type then
+        database["_ui_" .. sub_group_type .. "_expanded"] = true
+      end
+    end
+
+    -- Re-render tree to show all expanded nodes
+    UiTree.render()
+
+    -- Find the line number for the target object
+    local target_line = UiTree.object_map[target_object]
+    if not target_line then
+      vim.notify("Object not found in tree after expansion", vim.log.levels.WARN)
+      return
+    end
+
+    -- Position cursor on the target object with smart positioning
+    local Buffer = require('ssns.ui.core.buffer')
+    local Config = require('ssns.config')
+    local smart_positioning = Config.get_ui().smart_cursor_positioning
+
+    local col = smart_positioning and Buffer.get_name_column(target_line) or 0
+    Buffer.set_cursor(target_line, col)
+
+    if smart_positioning then
+      Buffer.last_indent_info = {
+        line = target_line,
+        indent_level = Buffer.get_indent_level(target_line),
+        column = col,
+      }
+    end
+
+    vim.notify(string.format("Navigated to %s", target_object.name), vim.log.levels.INFO)
   end
 
-  -- Re-render tree to show all expanded nodes
-  UiTree.render()
-
-  -- Find the line number for the target object
-  local target_line = UiTree.object_map[target_object]
-  if not target_line then
-    vim.notify("Object not found in tree after expansion", vim.log.levels.WARN)
-    return
-  end
-
-  -- Position cursor on the target object with smart positioning
-  local Buffer = require('ssns.ui.core.buffer')
-  local Config = require('ssns.config')
-  local smart_positioning = Config.get_ui().smart_cursor_positioning
-
-  -- Use smart positioning to align cursor at object name start
-  local col = smart_positioning and Buffer.get_name_column(target_line) or 0
-  Buffer.set_cursor(target_line, col)
-
-  -- Update indent tracking for smart positioning
-  if smart_positioning then
-    Buffer.last_indent_info = {
-      line = target_line,
-      indent_level = Buffer.get_indent_level(target_line),
-      column = col,
-    }
-  end
-
-  vim.notify(string.format("Navigated to %s", target_object.name), vim.log.levels.INFO)
+  -- Start the async loading chain
+  load_parents_async(1, finish_navigation)
 end
 
 ---Go to the first child in the current group

@@ -16,56 +16,64 @@ function M.connect(connection_name)
   local Cache = require('ssns.cache')
   local Connections = require('ssns.connections')
 
+  -- Helper to connect server and notify
+  local function do_connect(server)
+    server:connect_async(function(success, err)
+      if success then
+        vim.notify(string.format("SSNS: Connected to '%s'", connection_name), vim.log.levels.INFO)
+      else
+        vim.notify(string.format("SSNS: Failed to connect to '%s': %s", connection_name, err), vim.log.levels.ERROR)
+      end
+    end)
+  end
+
   -- Check if already in cache
   local existing_server = Cache.find_server(connection_name)
   if existing_server then
-    local success, err = existing_server:connect()
-    if success then
-      vim.notify(string.format("SSNS: Connected to '%s'", connection_name), vim.log.levels.INFO)
-    else
-      vim.notify(string.format("SSNS: Failed to connect to '%s': %s", connection_name, err), vim.log.levels.ERROR)
-    end
+    do_connect(existing_server)
     return
   end
-
-  -- Get connection config from config or connections file
-  local connection_config = nil
 
   -- First check config (now stores ConnectionData objects)
   local config_connections = Config.get_connections()
-  connection_config = config_connections[connection_name]
+  local connection_config = config_connections[connection_name]
 
-  -- If not in config, check connections file
-  if not connection_config then
-    local file_conn = Connections.find(connection_name)
-    if file_conn then
-      connection_config = file_conn  -- file_conn IS the ConnectionData
+  if connection_config then
+    -- Found in config, create and connect
+    local Factory = require('ssns.factory')
+    local server, err = Factory.create_server(connection_name, connection_config)
+    if not server then
+      vim.notify(string.format("SSNS: Failed to create connection '%s': %s", connection_name, err), vim.log.levels.ERROR)
+      return
     end
-  end
-
-  if not connection_config then
-    vim.notify(string.format("SSNS: Connection '%s' not found", connection_name), vim.log.levels.ERROR)
+    Cache.add_server(server)
+    do_connect(server)
     return
   end
 
-  -- Create and add server
-  local Factory = require('ssns.factory')
-  local server, err = Factory.create_server(connection_name, connection_config)
+  -- If not in config, check connections file asynchronously
+  Connections.find_async(connection_name, function(file_conn, find_err)
+    if find_err then
+      vim.notify(string.format("SSNS: Error finding connection '%s': %s", connection_name, find_err), vim.log.levels.ERROR)
+      return
+    end
 
-  if not server then
-    vim.notify(string.format("SSNS: Failed to create connection '%s': %s", connection_name, err), vim.log.levels.ERROR)
-    return
-  end
+    if not file_conn then
+      vim.notify(string.format("SSNS: Connection '%s' not found", connection_name), vim.log.levels.ERROR)
+      return
+    end
 
-  Cache.add_server(server)
+    -- Create and add server
+    local Factory = require('ssns.factory')
+    local server, err = Factory.create_server(connection_name, file_conn)
+    if not server then
+      vim.notify(string.format("SSNS: Failed to create connection '%s': %s", connection_name, err), vim.log.levels.ERROR)
+      return
+    end
 
-  -- Connect
-  local success, connect_err = server:connect()
-  if success then
-    vim.notify(string.format("SSNS: Connected to '%s'", connection_name), vim.log.levels.INFO)
-  else
-    vim.notify(string.format("SSNS: Failed to connect to '%s': %s", connection_name, connect_err), vim.log.levels.ERROR)
-  end
+    Cache.add_server(server)
+    do_connect(server)
+  end)
 end
 
 ---Attach current buffer to a connection (flat picker)

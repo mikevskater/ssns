@@ -732,15 +732,15 @@ local function run_async_rpc_test(test_data, opts)
     local callback_called = false
     local ui_responsive = true
 
-    -- Check if connect_rpc_async exists
-    if server.connect_rpc_async then
+    -- Check if connect_async exists
+    if server.connect_async then
       -- Start a timer to verify UI is responsive
       local timer_fired = false
       local timer = vim.fn.timer_start(100, function()
         timer_fired = true
       end)
 
-      server:connect_rpc_async({
+      server:connect_async({
         on_complete = function(success, connect_err)
           callback_called = true
           signal({ success = success, error = connect_err })
@@ -797,13 +797,13 @@ local function run_async_rpc_test(test_data, opts)
     local waiter, signal = create_async_waiter(timeout_ms)
     local callback_called = false
 
-    if server.load_rpc_async then
+    if server.load_async then
       local timer_fired = false
       local timer = vim.fn.timer_start(100, function()
         timer_fired = true
       end)
 
-      server:load_rpc_async({
+      server:load_async({
         on_complete = function(success, err)
           callback_called = true
           signal({ success = success, error = err })
@@ -873,8 +873,8 @@ local function run_async_rpc_test(test_data, opts)
     local waiter, signal = create_async_waiter(timeout_ms)
     local callback_called = false
 
-    if database.load_rpc_async then
-      database:load_rpc_async({
+    if database.load_async then
+      database:load_async({
         on_complete = function(success)
           callback_called = true
           signal({ success = success })
@@ -911,8 +911,8 @@ local function run_async_rpc_test(test_data, opts)
     local waiter, signal = create_async_waiter(timeout_ms)
     local callback_called = false
 
-    if server.connect_and_load_rpc_async then
-      server:connect_and_load_rpc_async({
+    if server.connect_and_load_async then
+      server:connect_and_load_async({
         on_complete = function(success)
           callback_called = true
           signal({ success = success })

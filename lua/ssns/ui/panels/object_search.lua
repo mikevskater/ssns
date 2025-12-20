@@ -699,14 +699,26 @@ local function load_objects_for_databases(callback)
       ui_state.loading_progress = 100
       ui_state.loading_message = message or string.format("Loaded %d objects", #ui_state.loaded_objects)
 
-      -- Apply search filter
-      UiObjectSearch._apply_search(ui_state.search_term)
+      -- Apply search filter (async handles its own rendering)
+      UiObjectSearch._apply_search_async(ui_state.search_term, function()
+        if multi_panel then
+          multi_panel:render_all()
+        end
+        if callback then callback(status) end
+      end)
+      return
     elseif status == "cancelled" then
       ui_state.loading_message = "Loading cancelled"
 
-      -- Apply search to partial results if any
+      -- Apply search to partial results if any (async handles its own rendering)
       if #ui_state.loaded_objects > 0 then
-        UiObjectSearch._apply_search(ui_state.search_term)
+        UiObjectSearch._apply_search_async(ui_state.search_term, function()
+          if multi_panel then
+            multi_panel:render_all()
+          end
+          if callback then callback(status) end
+        end)
+        return
       end
     end
 
@@ -740,10 +752,6 @@ local function load_objects_for_databases(callback)
     ui_state.loading_message = string.format("Loading %s (%d/%d)", db.db_name, db_idx, total_dbs)
     ui_state.loading_progress = math.floor((db_idx - 1) / total_dbs * 100)
 
-    -- Async operation chain state
-    local definitions_map = {}
-    local metadata_map = {}
-
     ---Finalize this database and move to next
     local function finalize_db_and_continue()
       -- Check cancellation
@@ -756,39 +764,18 @@ local function load_objects_for_databases(callback)
       update_detail("Processing objects...")
       local db_objects = flatten_database_objects(db, server)
       for _, obj in ipairs(db_objects) do
-        -- Apply bulk-loaded definition and metadata if available
-        if obj.object_type ~= "schema" then
-          local key = string.format("%s.%s.%s", obj.schema_name or "dbo", obj.object_type, obj.name)
-
-          -- Apply definition
-          if definitions_map[key] then
-            obj.definition = definitions_map[key]
-            obj.definition_loaded = true
-            ui_state.definitions_cache[obj.unique_id] = definitions_map[key]
-          end
-
-          -- Apply metadata (columns/parameters as searchable text)
-          if metadata_map[key] then
-            obj.metadata_text = metadata_map[key]
-            obj.metadata_loaded = true
-          end
-        end
         table.insert(ui_state.loaded_objects, obj)
       end
 
-      -- Apply search filter incrementally to show results as they load
-      UiObjectSearch._apply_search(ui_state.search_term)
-
-      -- Re-render results panel to show incremental results
-      if multi_panel then
-        multi_panel:render_panel("results")
+      -- Apply search filter incrementally to show results as they load (async handles rendering)
+      UiObjectSearch._apply_search_async(ui_state.search_term, function()
         -- Force display update so results are visible immediately
         vim.cmd('redraw')
-      end
 
-      -- Move to next database
-      db_idx = db_idx + 1
-      vim.schedule(process_next_database)
+        -- Move to next database
+        db_idx = db_idx + 1
+        vim.schedule(process_next_database)
+      end)
     end
 
     ---Chain async operations with callbacks
@@ -829,139 +816,63 @@ local function load_objects_for_databases(callback)
       vim.schedule(run_next)
     end
 
-    -- Check if RPC async is available (truly non-blocking)
-    local AsyncRPC = require('ssns.async.rpc')
-    local use_rpc_async = AsyncRPC.check_and_notify()  -- Shows info once if not available
-
     -- Build async operation chain for this database
-    -- Prefer RPC async methods for non-blocking UI, fall back to vim.schedule async
+    -- Uses true non-blocking RPC async methods
     local operations = {
       {
         name = "Loading schemas...",
         fn = function(on_done)
-          if db.load_async then
-            db:load_async({
-              cancel_token = cancel_token,
-              on_complete = function() on_done() end,
-            })
-          else
-            pcall(function() db:load() end)
-            on_done()
-          end
+          db:load_async({
+            on_complete = function() on_done() end,
+          })
         end,
       },
       {
         name = "Loading tables...",
         fn = function(on_done)
-          if use_rpc_async and db.load_all_tables_bulk_rpc_async then
-            db:load_all_tables_bulk_rpc_async({
-              on_complete = function() on_done() end,
-            })
-          else
-            db:load_all_tables_bulk_async({
-              cancel_token = cancel_token,
-              on_complete = function() on_done() end,
-            })
-          end
+          db:load_tables_async({
+            on_complete = function() on_done() end,
+          })
         end,
       },
       {
         name = "Loading views...",
         fn = function(on_done)
-          if use_rpc_async and db.load_all_views_bulk_rpc_async then
-            db:load_all_views_bulk_rpc_async({
-              on_complete = function() on_done() end,
-            })
-          else
-            db:load_all_views_bulk_async({
-              cancel_token = cancel_token,
-              on_complete = function() on_done() end,
-            })
-          end
+          db:load_views_async({
+            on_complete = function() on_done() end,
+          })
         end,
       },
       {
         name = "Loading procedures...",
         fn = function(on_done)
-          if use_rpc_async and db.load_all_procedures_bulk_rpc_async then
-            db:load_all_procedures_bulk_rpc_async({
-              on_complete = function() on_done() end,
-            })
-          else
-            db:load_all_procedures_bulk_async({
-              cancel_token = cancel_token,
-              on_complete = function() on_done() end,
-            })
-          end
+          db:load_procedures_async({
+            on_complete = function() on_done() end,
+          })
         end,
       },
       {
         name = "Loading functions...",
         fn = function(on_done)
-          if use_rpc_async and db.load_all_functions_bulk_rpc_async then
-            db:load_all_functions_bulk_rpc_async({
-              on_complete = function() on_done() end,
-            })
-          else
-            db:load_all_functions_bulk_async({
-              cancel_token = cancel_token,
-              on_complete = function() on_done() end,
-            })
-          end
+          db:load_functions_async({
+            on_complete = function() on_done() end,
+          })
         end,
       },
     }
 
     -- Add synonyms if supported
-    if db.load_all_synonyms_bulk_async or db.load_all_synonyms_bulk_rpc_async then
+    if db.load_synonyms_async then
       table.insert(operations, {
         name = "Loading synonyms...",
         fn = function(on_done)
-          if use_rpc_async and db.load_all_synonyms_bulk_rpc_async then
-            db:load_all_synonyms_bulk_rpc_async({
-              on_complete = function() on_done() end,
-            })
-          elseif db.load_all_synonyms_bulk_async then
-            db:load_all_synonyms_bulk_async({
-              cancel_token = cancel_token,
-              on_complete = function() on_done() end,
-            })
-          end
-        end,
-      })
-    end
-
-    -- Add definitions if supported
-    if db.load_all_definitions_bulk_async then
-      table.insert(operations, {
-        name = "Loading definitions...",
-        fn = function(on_done)
-          db:load_all_definitions_bulk_async({
-            cancel_token = cancel_token,
-            on_complete = function(result)
-              if result then definitions_map = result end
-              on_done()
-            end,
+          db:load_synonyms_async({
+            on_complete = function() on_done() end,
           })
         end,
       })
     end
 
-    -- Add metadata if supported
-    if db.load_all_metadata_bulk_async then
-      table.insert(operations, {
-        name = "Loading metadata...",
-        fn = function(on_done)
-          db:load_all_metadata_bulk_async({
-            cancel_token = cancel_token,
-            on_complete = function(result)
-              if result then metadata_map = result end
-              on_done()
-            end,
-          })
-        end,
-      })
-    end
 
     -- Start the async chain
     run_async_chain(operations, finalize_db_and_continue)
@@ -1109,13 +1020,26 @@ local function text_matches_pattern(text, pattern, regex, pattern_lower)
   end
 end
 
----Apply search filter to loaded objects
+---Apply search filter asynchronously with chunked processing
+---Yields via vim.schedule() between chunks to keep UI responsive
 ---@param pattern string Search pattern
-function UiObjectSearch._apply_search(pattern)
+---@param callback fun()? Optional callback when search completes
+function UiObjectSearch._apply_search_async(pattern, callback)
+  -- Cancel any in-progress search
+  if search_cancel_token then
+    search_cancel_token:cancel("New search started")
+  end
+
+  -- Create new cancellation token
+  search_cancel_token = Cancellation.create_token()
+  local cancel_token = search_cancel_token
+
+  local total_objects = #ui_state.loaded_objects
+  local max_results = 500
+
+  -- Handle empty pattern case: show all objects (no pattern matching)
   if not pattern or pattern == "" then
-    -- No search - show all objects (limited)
     ui_state.filtered_results = {}
-    local max_results = 500
     local count = 0
     for _, obj in ipairs(ui_state.loaded_objects) do
       if count >= max_results then break end
@@ -1134,151 +1058,6 @@ function UiObjectSearch._apply_search(pattern)
         end
       end
     end
-    return
-  end
-
-  local filtered = {}
-  local regex = nil
-  -- Pre-compute lowercase pattern once (optimization to avoid repeated string:lower() calls)
-  local pattern_lower = not ui_state.case_sensitive and pattern:lower() or nil
-
-  -- Compile regex if in regex mode
-  if ui_state.use_regex then
-    local regex_pattern = pattern
-
-    if ui_state.whole_word then
-      regex_pattern = "\\<" .. regex_pattern .. "\\>"
-    end
-
-    if not ui_state.case_sensitive then
-      regex_pattern = "\\c" .. regex_pattern
-    end
-
-    local ok, compiled = pcall(vim.regex, regex_pattern)
-    if ok then
-      regex = compiled
-    end
-  end
-
-  local max_results = 500
-
-  for _, searchable in ipairs(ui_state.loaded_objects) do
-    if #filtered >= max_results then break end
-
-    -- Filter system objects unless show_system is enabled
-    if not ui_state.show_system and is_system_object(searchable) then
-      goto continue
-    end
-
-    -- Filter by object type
-    if not should_show_object_type(searchable) then
-      goto continue
-    end
-
-    local match_details = {}
-    local matched_name = false
-    local matched_def = false
-    local matched_meta = false
-
-    -- Search in name
-    if ui_state.search_names then
-      local matched, matched_text = text_matches_pattern(searchable.name, pattern, regex, pattern_lower)
-      if matched then
-        matched_name = true
-        table.insert(match_details, { field = "name", matched_text = matched_text or "" })
-      end
-    end
-
-    -- Search in definition (lazy load)
-    if ui_state.search_definitions and not matched_name then
-      local definition = load_definition(searchable)
-      if definition then
-        local matched, matched_text = text_matches_pattern(definition, pattern, regex, pattern_lower)
-        if matched then
-          matched_def = true
-          table.insert(match_details, { field = "definition", matched_text = matched_text or "" })
-        end
-      end
-    end
-
-    -- Search in metadata (lazy load)
-    if ui_state.search_metadata and not matched_name and not matched_def then
-      local metadata = load_metadata_text(searchable)
-      if metadata then
-        local matched, matched_text = text_matches_pattern(metadata, pattern, regex, pattern_lower)
-        if matched then
-          matched_meta = true
-          table.insert(match_details, { field = "metadata", matched_text = matched_text or "" })
-        end
-      end
-    end
-
-    -- Add to results if any match
-    if #match_details > 0 then
-      local match_type = "name"
-      local sort_priority = 3
-
-      if matched_name then
-        match_type = "name"
-        sort_priority = 1
-      elseif matched_def then
-        match_type = "def"
-        sort_priority = 2
-      elseif matched_meta then
-        match_type = "meta"
-        sort_priority = 3
-      end
-
-      if #match_details > 1 then
-        match_type = "multi"
-      end
-
-      table.insert(filtered, {
-        searchable = searchable,
-        match_type = match_type,
-        match_details = match_details,
-        display_name = build_display_name(searchable),
-        sort_priority = sort_priority,
-      })
-    end
-
-    ::continue::
-  end
-
-  -- Sort by priority (name matches first)
-  table.sort(filtered, function(a, b)
-    if a.sort_priority ~= b.sort_priority then
-      return a.sort_priority < b.sort_priority
-    end
-    return a.display_name < b.display_name
-  end)
-
-  ui_state.filtered_results = filtered
-
-  -- Reset selection if invalid
-  if ui_state.selected_result_idx > #ui_state.filtered_results then
-    ui_state.selected_result_idx = math.max(1, #ui_state.filtered_results)
-  end
-end
-
----Apply search filter asynchronously with chunked processing
----Yields via vim.schedule() between chunks to keep UI responsive
----@param pattern string Search pattern
----@param callback fun()? Optional callback when search completes
-function UiObjectSearch._apply_search_async(pattern, callback)
-  -- Cancel any in-progress search
-  if search_cancel_token then
-    search_cancel_token:cancel("New search started")
-  end
-
-  -- Create new cancellation token
-  search_cancel_token = Cancellation.create_token()
-  local cancel_token = search_cancel_token
-
-  -- If no pattern or small dataset, use sync version for simplicity
-  local total_objects = #ui_state.loaded_objects
-  if not pattern or pattern == "" or total_objects < SEARCH_CHUNK_SIZE then
-    UiObjectSearch._apply_search(pattern)
     search_cancel_token = nil
     search_in_progress = false
     search_progress = 0
@@ -1292,14 +1071,16 @@ function UiObjectSearch._apply_search_async(pattern, callback)
   search_progress = 0
   search_start_time = vim.uv.hrtime()
 
-  -- Start the search spinner for animated progress
-  start_search_spinner()
+  -- For small datasets, skip spinner (completes too fast to be useful)
+  local use_progressive_display = total_objects >= SEARCH_CHUNK_SIZE
+  if use_progressive_display then
+    start_search_spinner()
+  end
 
   -- Pre-compute search state
   local filtered = {}
   local regex = nil
   local pattern_lower = not ui_state.case_sensitive and pattern:lower() or nil
-  local max_results = 500
 
   -- Compile regex if in regex mode
   if ui_state.use_regex then
@@ -1425,6 +1206,12 @@ function UiObjectSearch._apply_search_async(pattern, callback)
 
     -- Check if more chunks to process
     if idx <= total_objects and #filtered < max_results then
+      -- For small datasets, process all in one go (no scheduling)
+      if not use_progressive_display then
+        -- Continue processing immediately without yielding
+        return process_chunk()
+      end
+
       -- Update intermediate results for progressive display
       ui_state.filtered_results = filtered
 
@@ -1433,7 +1220,7 @@ function UiObjectSearch._apply_search_async(pattern, callback)
         multi_panel:render_panel("results")
       end
 
-      -- Schedule next chunk
+      -- Schedule next chunk (only for large datasets)
       vim.schedule(process_chunk)
     else
       -- Done processing - finalize
@@ -2134,8 +1921,9 @@ end
 ---Cancel search
 local function cancel_search()
   ui_state.search_term = ui_state.search_term_before_edit
-  UiObjectSearch._apply_search(ui_state.search_term)
-  vim.cmd('stopinsert')
+  UiObjectSearch._apply_search_async(ui_state.search_term, function()
+    vim.cmd('stopinsert')
+  end)
 end
 
 ---Commit search
@@ -2159,12 +1947,12 @@ local function apply_current_search()
     if search_buf and vim.api.nvim_buf_is_valid(search_buf) then
       local lines = vim.api.nvim_buf_get_lines(search_buf, 0, 1, false)
       local text = (lines[1] or ""):gsub("^%s+", "")
-      UiObjectSearch._apply_search(text)
+      UiObjectSearch._apply_search_async(text)
       return
     end
   end
-  -- Use committed search term
-  UiObjectSearch._apply_search(ui_state.search_term)
+  -- Use committed search term (async handles rendering)
+  UiObjectSearch._apply_search_async(ui_state.search_term)
 end
 
 ---Sync filter dropdown values with current ui_state
@@ -2657,7 +2445,7 @@ local function _show_server_picker_with_connections(saved_connections)
         vim.notify("Connecting to " .. selected.name .. "...", vim.log.levels.INFO)
 
         -- Use true non-blocking RPC async (UI stays responsive)
-        server:connect_and_load_rpc_async({
+        server:connect_and_load_async({
           on_complete = function(success, err)
             if not success then
               vim.notify("Failed to connect: " .. (err or "Unknown"), vim.log.levels.ERROR)
@@ -3220,7 +3008,7 @@ function UiObjectSearch.show(options)
           multi_panel:render_panel("results")
 
           -- Use true non-blocking RPC async (UI stays responsive)
-          server:connect_and_load_rpc_async({
+          server:connect_and_load_async({
             on_complete = function(success, err)
               -- Stop loading state
               ui_state.server_loading = false

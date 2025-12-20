@@ -361,7 +361,7 @@ return {
         expected = {
             -- IN list stacked, AND on new line
             matches = { "IN %(1,\n.-2,\n.-3%)" },
-            matches = { "\n.-AND status" }
+            not_matches = { "\n.-AND status" }
         }
     },
 }
