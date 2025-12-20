@@ -479,8 +479,18 @@ function DbClass:load_all_synonyms_bulk()
 end
 
 ---Bulk load all definitions for views, procedures, functions, and tables in this database
+---This method does double duty:
+---  1. Returns definitions map for object search (backward compatible)
+---  2. ALSO populates actual objects (Table/View/Procedure/Function definitions)
+---     so tree UI and search share the same cache
 ---@return table<string, string> definitions Map of "schema.object_type.name" -> definition
 function DbClass:load_all_definitions_bulk()
+  -- Check if already loaded
+  if self._bulk_definitions_loaded then
+    -- Return cached definitions map if we have it
+    return self._bulk_definitions_cache or {}
+  end
+
   local adapter = self:get_adapter()
   local definitions = {}
 
@@ -488,27 +498,228 @@ function DbClass:load_all_definitions_bulk()
   if adapter.get_all_definitions_bulk_query then
     local query = adapter:get_all_definitions_bulk_query(self.db_name, nil)
     local results = adapter:execute(self:_get_db_connection_config(), query)
+
+    -- Parse into definitions map (for backward compatibility)
     if adapter.parse_definitions_bulk then
       local module_defs = adapter:parse_definitions_bulk(results)
       for k, v in pairs(module_defs) do
         definitions[k] = v
       end
     end
+
+    -- ALSO populate actual objects with definitions
+    self:_populate_module_definitions_from_bulk_results(results)
   end
 
   -- Load table definitions (generated CREATE TABLE scripts)
   if adapter.get_all_table_definitions_bulk_query then
     local query = adapter:get_all_table_definitions_bulk_query(self.db_name, nil)
     local results = adapter:execute(self:_get_db_connection_config(), query)
+
+    -- Parse into definitions map (for backward compatibility)
     if adapter.parse_table_definitions_bulk then
       local table_defs = adapter:parse_table_definitions_bulk(results)
       for k, v in pairs(table_defs) do
         definitions[k] = v
       end
     end
+
+    -- ALSO populate actual table objects with definitions
+    self:_populate_table_definitions_from_bulk_results(results)
   end
 
+  -- Cache results
+  self._bulk_definitions_loaded = true
+  self._bulk_definitions_cache = definitions
+
   return definitions
+end
+
+---Populate view/procedure/function definitions from bulk query results
+---@param results table Raw query results from get_all_definitions_bulk_query
+---@private
+function DbClass:_populate_module_definitions_from_bulk_results(results)
+  if not results or not results.success then
+    return
+  end
+
+  local rows = {}
+  if results.resultSets and #results.resultSets > 0 then
+    rows = results.resultSets[1].rows or {}
+  elseif results.rows then
+    rows = results.rows
+  end
+
+  if #rows == 0 then
+    return
+  end
+
+  -- Group definitions by schema.type.name
+  -- Each row has: schema_name, object_name, object_type, definition
+  local defs_by_object = {}
+  for _, row in ipairs(rows) do
+    local schema_name = row.schema_name
+    local object_name = row.object_name
+    local object_type = row.object_type
+    local definition = row.definition
+
+    if schema_name and object_name and object_type and definition then
+      -- Normalize line endings
+      definition = definition:gsub('\r', '')
+      local key = string.format("%s.%s.%s", schema_name, object_type, object_name)
+      defs_by_object[key] = definition
+    end
+  end
+
+  -- Now distribute to actual objects
+  -- For schema-based servers, iterate schemas
+  if self.schemas then
+    for _, schema in ipairs(self.schemas) do
+      -- Views
+      for _, view in ipairs(schema.views or {}) do
+        if not view.definition_loaded then
+          local key = string.format("%s.view.%s", schema.schema_name, view.view_name)
+          local def = defs_by_object[key]
+          if def then
+            view.definition = def
+            view.definition_loaded = true
+          end
+        end
+      end
+
+      -- Procedures
+      for _, proc in ipairs(schema.procedures or {}) do
+        if not proc.definition_loaded then
+          local key = string.format("%s.procedure.%s", schema.schema_name, proc.procedure_name or proc.name)
+          local def = defs_by_object[key]
+          if def then
+            proc.definition = def
+            proc.definition_loaded = true
+          end
+        end
+      end
+
+      -- Functions
+      for _, func in ipairs(schema.functions or {}) do
+        if not func.definition_loaded then
+          local key = string.format("%s.function.%s", schema.schema_name, func.function_name or func.name)
+          local def = defs_by_object[key]
+          if def then
+            func.definition = def
+            func.definition_loaded = true
+          end
+        end
+      end
+    end
+  else
+    -- Non-schema servers (MySQL, SQLite) - objects directly on database
+    local adapter = self:get_adapter()
+    local default_schema = adapter.features.schemas and self:get_default_schema() or "dbo"
+
+    -- Views
+    for _, view in ipairs(self.views or {}) do
+      if not view.definition_loaded then
+        local key = string.format("%s.view.%s", default_schema, view.view_name or view.name)
+        local def = defs_by_object[key]
+        if def then
+          view.definition = def
+          view.definition_loaded = true
+        end
+      end
+    end
+
+    -- Procedures
+    for _, proc in ipairs(self.procedures or {}) do
+      if not proc.definition_loaded then
+        local key = string.format("%s.procedure.%s", default_schema, proc.procedure_name or proc.name)
+        local def = defs_by_object[key]
+        if def then
+          proc.definition = def
+          proc.definition_loaded = true
+        end
+      end
+    end
+
+    -- Functions
+    for _, func in ipairs(self.functions or {}) do
+      if not func.definition_loaded then
+        local key = string.format("%s.function.%s", default_schema, func.function_name or func.name)
+        local def = defs_by_object[key]
+        if def then
+          func.definition = def
+          func.definition_loaded = true
+        end
+      end
+    end
+  end
+end
+
+---Populate table definitions from bulk query results
+---@param results table Raw query results from get_all_table_definitions_bulk_query
+---@private
+function DbClass:_populate_table_definitions_from_bulk_results(results)
+  if not results or not results.success then
+    return
+  end
+
+  local rows = {}
+  if results.resultSets and #results.resultSets > 0 then
+    rows = results.resultSets[1].rows or {}
+  elseif results.rows then
+    rows = results.rows
+  end
+
+  if #rows == 0 then
+    return
+  end
+
+  -- Group definitions by schema.table.name
+  -- Each row has: schema_name, table_name, definition
+  local defs_by_table = {}
+  for _, row in ipairs(rows) do
+    local schema_name = row.schema_name
+    local table_name = row.table_name
+    local definition = row.definition
+
+    if schema_name and table_name and definition then
+      -- Normalize line endings
+      definition = definition:gsub('\r', '')
+      local key = string.format("%s.table.%s", schema_name, table_name)
+      defs_by_table[key] = definition
+    end
+  end
+
+  -- Now distribute to actual objects
+  -- For schema-based servers, iterate schemas
+  if self.schemas then
+    for _, schema in ipairs(self.schemas) do
+      for _, tbl in ipairs(schema.tables or {}) do
+        if not tbl.definition_loaded then
+          local key = string.format("%s.table.%s", schema.schema_name, tbl.table_name)
+          local def = defs_by_table[key]
+          if def then
+            tbl.definition = def
+            tbl.definition_loaded = true
+          end
+        end
+      end
+    end
+  else
+    -- Non-schema servers (MySQL, SQLite) - objects directly on database
+    local adapter = self:get_adapter()
+    local default_schema = adapter.features.schemas and self:get_default_schema() or "dbo"
+
+    for _, tbl in ipairs(self.tables or {}) do
+      if not tbl.definition_loaded then
+        local key = string.format("%s.table.%s", default_schema, tbl.table_name or tbl.name)
+        local def = defs_by_table[key]
+        if def then
+          tbl.definition = def
+          tbl.definition_loaded = true
+        end
+      end
+    end
+  end
 end
 
 ---Bulk load all metadata (columns for tables/views/TVFs, parameters for procedures/functions)
@@ -1760,6 +1971,10 @@ end
 ---Returns a map of "schema.object" -> "definition text"
 ---Queries run sequentially to avoid overloading the server
 ---Results are cached - subsequent calls return cached data without querying
+---This method does double duty:
+---  1. Returns definitions map for object search (backward compatible)
+---  2. ALSO populates actual objects (Table/View/Procedure/Function definitions)
+---     so tree UI and search share the same cache
 ---@param opts { on_complete: fun(definitions: table<string,string>?, err: string?)?, on_error: fun(err: string)?, timeout_ms: number?, force_reload: boolean? }?
 ---@return string task_id
 function DbClass:load_all_definitions_bulk_async(opts)
@@ -1797,12 +2012,16 @@ function DbClass:load_all_definitions_bulk_async(opts)
           return
         end
 
+        -- Parse into definitions map (for backward compatibility)
         if adapter.parse_definitions_bulk then
           local module_defs = adapter:parse_definitions_bulk(results)
           for k, v in pairs(module_defs) do
             definitions[k] = v
           end
         end
+
+        -- ALSO populate actual objects with definitions
+        db_self:_populate_module_definitions_from_bulk_results(results)
 
         next_step()
       end,
@@ -1831,12 +2050,16 @@ function DbClass:load_all_definitions_bulk_async(opts)
           return
         end
 
+        -- Parse into definitions map (for backward compatibility)
         if adapter.parse_table_definitions_bulk then
           local table_defs = adapter:parse_table_definitions_bulk(results)
           for k, v in pairs(table_defs) do
             definitions[k] = v
           end
         end
+
+        -- ALSO populate actual table objects with definitions
+        db_self:_populate_table_definitions_from_bulk_results(results)
 
         next_step()
       end,
