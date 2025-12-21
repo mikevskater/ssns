@@ -157,7 +157,7 @@ local ui_state = {
   -- Search options
   show_system = false,
   case_sensitive = false,
-  use_regex = false,
+  use_regex = true,
   whole_word = false,
   filtered_results = {},
   selected_result_idx = 1,
@@ -409,7 +409,7 @@ end
 ---@return string
 function M.get_loading_spinner_frame()
   if loading_text_spinner then
-    return loading_text_spinner:get_current_frame()
+    return loading_text_spinner:get_frame()
   end
   return ""
 end
@@ -418,9 +418,29 @@ end
 ---@return string
 function M.get_search_spinner_frame()
   if search_text_spinner then
-    return search_text_spinner:get_current_frame()
+    return search_text_spinner:get_frame()
   end
   return ""
+end
+
+-- ============================================================================
+-- Panel Refresh Helper
+-- ============================================================================
+
+---Refresh UI panels (results, filters, and optionally settings)
+---@param opts { settings: boolean?, all: boolean? }? Options: settings=include settings panel, all=include all panels
+function M.refresh_panels(opts)
+  opts = opts or {}
+  if not multi_panel or not multi_panel:is_valid() then
+    return
+  end
+
+  multi_panel:render_panel("results")
+  multi_panel:render_panel("filters")
+
+  if opts.settings or opts.all then
+    multi_panel:render_panel("settings")
+  end
 end
 
 -- ============================================================================
@@ -458,7 +478,7 @@ function M.reset_state(clear_saved)
     -- Search options
     show_system = false,
     case_sensitive = false,
-    use_regex = false,
+    use_regex = true,
     whole_word = false,
     filtered_results = {},
     selected_result_idx = 1,
@@ -551,6 +571,8 @@ function M.restore_saved_state()
   if #ui_state.loaded_objects > 0 then
     ui_state.loading_status = "complete"
     ui_state.loading_message = string.format("Loaded %d objects", #ui_state.loaded_objects)
+    -- Enable search when restoring state with loaded objects
+    ui_state.search_ready = true
   end
 
   return true

@@ -4,6 +4,7 @@ local M = {}
 
 local State = require('ssns.ui.panels.object_search.state')
 local Helpers = require('ssns.ui.panels.object_search.helpers')
+local Render = require('ssns.ui.panels.object_search.render')
 local Cancellation = require('ssns.async.cancellation')
 local Thread = require('ssns.async.thread')
 
@@ -93,6 +94,9 @@ end
 ---@param pattern string Search pattern
 ---@param callback fun()? Optional callback when search completes
 function M.apply_search_async(pattern, callback)
+  -- Invalidate visible count cache since loaded_objects may have changed
+  Render.invalidate_visible_count_cache()
+
   -- Try threaded search first (always preferred for non-blocking UI)
   if Thread.is_available() then
     local started = M._apply_search_threaded(pattern, callback)
@@ -326,12 +330,7 @@ function M._apply_search_chunked(pattern, callback)
 
       -- Update intermediate results for progressive display
       ui_state.filtered_results = filtered
-
-      -- Re-render results panel to show progress
-      if multi_panel then
-        multi_panel:render_panel("results")
-        multi_panel:render_panel("filters")  -- Update match count
-      end
+      State.refresh_panels()
 
       -- Schedule next chunk (only for large datasets)
       vim.schedule(process_chunk)
@@ -466,9 +465,7 @@ function M._apply_search_threaded(pattern, callback)
 
   -- Clear existing results immediately when starting new search
   ui_state.filtered_results = {}
-  if multi_panel then
-    multi_panel:render_panel("results")
-  end
+  State.refresh_panels()
 
   -- Prepare serializable objects for thread
   -- Extract only the data needed for searching (no class instances)
@@ -545,11 +542,7 @@ function M._apply_search_threaded(pattern, callback)
       if batch.progress then
         State.set_search_progress(batch.progress)
       end
-
-      if multi_panel then
-        multi_panel:render_panel("results")
-        multi_panel:render_panel("filters")  -- Update match count
-      end
+      State.refresh_panels()
     end,
     on_progress = function(pct, message)
       State.set_search_progress(pct)

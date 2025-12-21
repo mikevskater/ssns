@@ -4,7 +4,7 @@ local M = {}
 
 local State = require('ssns.ui.panels.object_search.state')
 local Render = require('ssns.ui.panels.object_search.render')
-local KeymapManager = require('ssns.ui.core.keymap_manager')
+local KeymapManager = require('ssns.keymap_manager')
 
 ---Forward reference for apply_search_async (injected by init.lua)
 ---@type fun(pattern: string, callback: fun()?)?
@@ -157,102 +157,78 @@ end
 ---Toggle case sensitive search
 function M.toggle_case_sensitive()
   local ui_state = State.get_ui_state()
-  local multi_panel = State.get_multi_panel()
 
   ui_state.case_sensitive = not ui_state.case_sensitive
   M.apply_current_search()
   M.sync_settings_dropdowns()
-  if multi_panel then
-    multi_panel:render_panel("results")
-  end
+  State.refresh_panels()
   vim.notify("Case sensitive: " .. (ui_state.case_sensitive and "ON" or "OFF"), vim.log.levels.INFO)
 end
 
 ---Toggle regex search
 function M.toggle_regex()
   local ui_state = State.get_ui_state()
-  local multi_panel = State.get_multi_panel()
 
   ui_state.use_regex = not ui_state.use_regex
   M.apply_current_search()
   M.sync_settings_dropdowns()
-  if multi_panel then
-    multi_panel:render_panel("results")
-  end
+  State.refresh_panels()
   vim.notify("Regex: " .. (ui_state.use_regex and "ON" or "OFF"), vim.log.levels.INFO)
 end
 
 ---Toggle whole word search
 function M.toggle_whole_word()
   local ui_state = State.get_ui_state()
-  local multi_panel = State.get_multi_panel()
 
   ui_state.whole_word = not ui_state.whole_word
   M.apply_current_search()
   M.sync_settings_dropdowns()
-  if multi_panel then
-    multi_panel:render_panel("results")
-  end
+  State.refresh_panels()
   vim.notify("Whole word: " .. (ui_state.whole_word and "ON" or "OFF"), vim.log.levels.INFO)
 end
 
 ---Toggle search in names
 function M.toggle_search_names()
   local ui_state = State.get_ui_state()
-  local multi_panel = State.get_multi_panel()
 
   ui_state.search_names = not ui_state.search_names
   M.apply_current_search()
   M.sync_filter_dropdowns()
-  if multi_panel then
-    multi_panel:render_panel("results")
-    multi_panel:render_panel("settings")
-  end
+  State.refresh_panels({ settings = true })
   vim.notify("Search names: " .. (ui_state.search_names and "ON" or "OFF"), vim.log.levels.INFO)
 end
 
 ---Toggle search in definitions
 function M.toggle_search_defs()
   local ui_state = State.get_ui_state()
-  local multi_panel = State.get_multi_panel()
 
   ui_state.search_definitions = not ui_state.search_definitions
   M.apply_current_search()
   M.sync_filter_dropdowns()
-  if multi_panel then
-    multi_panel:render_panel("results")
-    multi_panel:render_panel("settings")
-  end
+  State.refresh_panels({ settings = true })
   vim.notify("Search definitions: " .. (ui_state.search_definitions and "ON" or "OFF"), vim.log.levels.INFO)
 end
 
 ---Toggle search in metadata
 function M.toggle_search_meta()
   local ui_state = State.get_ui_state()
-  local multi_panel = State.get_multi_panel()
 
   ui_state.search_metadata = not ui_state.search_metadata
   M.apply_current_search()
   M.sync_filter_dropdowns()
-  if multi_panel then
-    multi_panel:render_panel("results")
-    multi_panel:render_panel("settings")
-  end
+  State.refresh_panels({ settings = true })
   vim.notify("Search metadata: " .. (ui_state.search_metadata and "ON" or "OFF"), vim.log.levels.INFO)
 end
 
 ---Toggle show system objects
 function M.toggle_system()
   local ui_state = State.get_ui_state()
-  local multi_panel = State.get_multi_panel()
 
   ui_state.show_system = not ui_state.show_system
   M.apply_current_search()
   M.sync_settings_dropdowns()
   M.sync_filter_dropdowns()
-  if multi_panel then
-    multi_panel:render_panel("results")
-  end
+  State.refresh_panels()
   vim.notify("Show system: " .. (ui_state.show_system and "ON" or "OFF"), vim.log.levels.INFO)
 end
 
@@ -263,90 +239,66 @@ end
 ---Toggle show tables
 function M.toggle_tables()
   local ui_state = State.get_ui_state()
-  local multi_panel = State.get_multi_panel()
 
   ui_state.show_tables = not ui_state.show_tables
   M.apply_current_search()
   M.sync_filter_dropdowns()
-  if multi_panel then
-    multi_panel:render_panel("results")
-    multi_panel:render_panel("filters")
-  end
+  State.refresh_panels()
   vim.notify("Show tables: " .. (ui_state.show_tables and "ON" or "OFF"), vim.log.levels.INFO)
 end
 
 ---Toggle show views
 function M.toggle_views()
   local ui_state = State.get_ui_state()
-  local multi_panel = State.get_multi_panel()
 
   ui_state.show_views = not ui_state.show_views
   M.apply_current_search()
   M.sync_filter_dropdowns()
-  if multi_panel then
-    multi_panel:render_panel("results")
-    multi_panel:render_panel("filters")
-  end
+  State.refresh_panels()
   vim.notify("Show views: " .. (ui_state.show_views and "ON" or "OFF"), vim.log.levels.INFO)
 end
 
 ---Toggle show procedures
 function M.toggle_procedures()
   local ui_state = State.get_ui_state()
-  local multi_panel = State.get_multi_panel()
 
   ui_state.show_procedures = not ui_state.show_procedures
   M.apply_current_search()
   M.sync_filter_dropdowns()
-  if multi_panel then
-    multi_panel:render_panel("results")
-    multi_panel:render_panel("filters")
-  end
+  State.refresh_panels()
   vim.notify("Show procedures: " .. (ui_state.show_procedures and "ON" or "OFF"), vim.log.levels.INFO)
 end
 
 ---Toggle show functions
 function M.toggle_functions()
   local ui_state = State.get_ui_state()
-  local multi_panel = State.get_multi_panel()
 
   ui_state.show_functions = not ui_state.show_functions
   M.apply_current_search()
   M.sync_filter_dropdowns()
-  if multi_panel then
-    multi_panel:render_panel("results")
-    multi_panel:render_panel("filters")
-  end
+  State.refresh_panels()
   vim.notify("Show functions: " .. (ui_state.show_functions and "ON" or "OFF"), vim.log.levels.INFO)
 end
 
 ---Toggle show synonyms
 function M.toggle_synonyms()
   local ui_state = State.get_ui_state()
-  local multi_panel = State.get_multi_panel()
 
   ui_state.show_synonyms = not ui_state.show_synonyms
   M.apply_current_search()
   M.sync_filter_dropdowns()
-  if multi_panel then
-    multi_panel:render_panel("results")
-    multi_panel:render_panel("filters")
-  end
+  State.refresh_panels()
   vim.notify("Show synonyms: " .. (ui_state.show_synonyms and "ON" or "OFF"), vim.log.levels.INFO)
 end
 
 ---Toggle show schemas
 function M.toggle_schemas()
   local ui_state = State.get_ui_state()
-  local multi_panel = State.get_multi_panel()
 
   ui_state.show_schemas = not ui_state.show_schemas
   M.apply_current_search()
   M.sync_filter_dropdowns()
-  if multi_panel then
-    multi_panel:render_panel("results")
-    multi_panel:render_panel("filters")
-  end
+  State.refresh_panels()
   vim.notify("Show schemas: " .. (ui_state.show_schemas and "ON" or "OFF"), vim.log.levels.INFO)
 end
 

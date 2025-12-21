@@ -216,9 +216,7 @@ function M.load_synonym_referenced_databases_async(callback)
 
   -- Update loading status
   ui_state.loading_message = string.format("Loading %d referenced databases...", ref_count)
-  if multi_panel then
-    multi_panel:render_panel("results")
-  end
+  State.refresh_panels()
 
   -- Find and load referenced databases
   local databases = server:get_databases() or {}
@@ -255,9 +253,7 @@ function M.load_synonym_referenced_databases_async(callback)
     ui_state.loading_message = string.format("Loading referenced: %s (%d/%d)",
       db.db_name, db_idx, #dbs_to_load)
 
-    if multi_panel then
-      multi_panel:render_panel("results")
-    end
+    State.refresh_panels()
 
     -- Load the database's full structure (schemas, tables, views, procedures, functions)
     -- This enables synonym resolution to find target objects
@@ -348,10 +344,7 @@ function M.preload_metadata_async(callback)
 
   -- Keep spinner running
   State.start_spinner_animation()
-
-  if multi_panel then
-    multi_panel:render_panel("results")
-  end
+  State.refresh_panels()
 
   -- Get list of databases to load metadata for
   local databases = {}
@@ -533,14 +526,13 @@ function M.preload_metadata_async(callback)
 
     local db = databases[db_idx]
     ui_state.loading_message = string.format("Loading metadata for %s (%d/%d)", db.db_name, db_idx, total_dbs)
-
-    if multi_panel then
-      multi_panel:render_panel("results")
-    end
+    State.refresh_panels()
 
     load_database(db, function()
       completed_dbs = completed_dbs + 1
       ui_state.loading_progress = math.floor((completed_dbs / total_dbs) * 100)
+      State.refresh_panels()
+
       db_idx = db_idx + 1
       vim.schedule(load_next_database)
     end)
@@ -593,11 +585,7 @@ function M.load_objects_for_databases(callback)
 
   -- Start spinner animation
   State.start_spinner_animation()
-
-  if multi_panel then
-    multi_panel:render_panel("results")
-    multi_panel:render_panel("filters")
-  end
+  State.refresh_panels()
 
   -- Process databases in sequence using vim.schedule to avoid blocking
   local db_idx = 1
@@ -619,9 +607,7 @@ function M.load_objects_for_databases(callback)
       M.load_synonym_referenced_databases_async(function()
         -- Now preload metadata for all databases (including newly loaded ones)
         ui_state.loading_message = string.format("Loaded %d objects - preloading metadata...", #ui_state.loaded_objects)
-        if multi_panel then
-          multi_panel:render_panel("results")
-        end
+        State.refresh_panels()
 
         M.preload_metadata_async(function()
           -- Now search is ready - apply initial search filter
@@ -702,6 +688,7 @@ function M.load_objects_for_databases(callback)
     local db = databases[db_idx]
     ui_state.loading_message = string.format("Loading %s (%d/%d)", db.db_name, db_idx, total_dbs)
     ui_state.loading_progress = math.floor((db_idx - 1) / total_dbs * 100)
+    State.refresh_panels()
 
     ---Finalize this database and move to next
     local function finalize_db_and_continue()
@@ -754,15 +741,7 @@ function M.load_objects_for_databases(callback)
 
         local op = operations[op_idx]
         update_detail(op.name)
-
-        -- Re-render results panel to show current operation before blocking call
-        if multi_panel then
-          multi_panel:render_panel("results")
-        end
-
-        -- Force display update BEFORE blocking RPC call
-        -- This ensures spinner/progress text is visible even if next call blocks
-        vim.cmd('redraw')
+        State.refresh_panels()
 
         op.fn(function(result)
           op_idx = op_idx + 1

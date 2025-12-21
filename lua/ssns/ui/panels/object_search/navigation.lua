@@ -40,9 +40,10 @@ end
 -- ============================================================================
 
 ---Open selected object's definition in new buffer
+---Uses the same pattern as tree actions (TreeActions.execute_action "alter" action)
 function M.open_in_buffer()
   local ui_state = State.get_ui_state()
-  local UiQuery = require('ssns.ui.panels.query')
+  local UiQuery = require('ssns.ui.core.query')
 
   if ui_state.selected_result_idx < 1 or ui_state.selected_result_idx > #ui_state.filtered_results then
     return
@@ -51,37 +52,61 @@ function M.open_in_buffer()
   local result = ui_state.filtered_results[ui_state.selected_result_idx]
   local searchable = result.searchable
 
-  -- Get definition
-  local definition = load_definition_fn and load_definition_fn(searchable) or nil
-
-  if not definition then
-    vim.notify("No definition available for this object", vim.log.levels.WARN)
+  -- Use the object directly (same pattern as tree actions)
+  local obj = searchable.object
+  if not obj then
+    vim.notify("Object not available", vim.log.levels.WARN)
     return
   end
 
-  -- Find server and database objects
-  local server = Cache.find_server(searchable.server_name)
-  local database = nil
-  if server then
-    database = Cache.find_database(searchable.server_name, searchable.database_name)
-  end
+  -- Get server and database from the object itself (like tree actions do)
+  local server = obj:get_server()
+  local database = obj:get_database()
 
   -- Close search window
   if close_fn then
     close_fn()
   end
 
-  -- Create new query buffer
-  UiQuery.create_query_buffer(server or searchable.server_name, database or searchable.database_name)
+  -- Prefer async loading if available (like tree actions "alter" action)
+  if obj.load_definition_async then
+    obj:load_definition_async({
+      on_complete = function(definition, err)
+        if err then
+          vim.notify(string.format("Failed to load definition: %s", err), vim.log.levels.ERROR)
+          return
+        end
 
-  vim.schedule(function()
-    local query_buf = vim.api.nvim_get_current_buf()
-    vim.api.nvim_buf_set_option(query_buf, "modifiable", true)
-    vim.api.nvim_buf_set_lines(query_buf, 0, -1, false, vim.split(definition, "\n"))
-
-    vim.notify(string.format("Opened definition: %s.%s",
-      searchable.database_name, searchable.name), vim.log.levels.INFO)
-  end)
+        if definition then
+          UiQuery.create_query_buffer(server, database, definition, obj.name)
+          vim.notify(string.format("Opened definition: %s.%s",
+            searchable.database_name, searchable.name), vim.log.levels.INFO)
+        else
+          vim.notify("No definition available", vim.log.levels.WARN)
+        end
+      end,
+    })
+  elseif obj.get_definition then
+    -- Fallback to sync
+    local definition = obj:get_definition()
+    if definition then
+      UiQuery.create_query_buffer(server, database, definition, obj.name)
+      vim.notify(string.format("Opened definition: %s.%s",
+        searchable.database_name, searchable.name), vim.log.levels.INFO)
+    else
+      vim.notify("No definition available", vim.log.levels.WARN)
+    end
+  else
+    -- Try using cached definition from searchable
+    local definition = load_definition_fn and load_definition_fn(searchable) or nil
+    if definition then
+      UiQuery.create_query_buffer(server, database, definition, obj.name)
+      vim.notify(string.format("Opened definition: %s.%s",
+        searchable.database_name, searchable.name), vim.log.levels.INFO)
+    else
+      vim.notify("No definition available for this object", vim.log.levels.WARN)
+    end
+  end
 end
 
 ---Yank object name to clipboard
@@ -109,9 +134,10 @@ end
 
 ---Execute SELECT or EXEC for selected object in new buffer
 ---Tables/Views/Functions get SELECT, Procedures get EXEC
+---Uses the same pattern as tree actions (TreeActions.execute_action)
 function M.select_or_exec_in_buffer()
   local ui_state = State.get_ui_state()
-  local UiQuery = require('ssns.ui.panels.query')
+  local UiQuery = require('ssns.ui.core.query')
 
   if ui_state.selected_result_idx < 1 or ui_state.selected_result_idx > #ui_state.filtered_results then
     return
@@ -120,57 +146,25 @@ function M.select_or_exec_in_buffer()
   local result = ui_state.filtered_results[ui_state.selected_result_idx]
   local searchable = result.searchable
 
-  -- Find the actual object from cache
-  local server = Cache.find_server(searchable.server_name)
-  local database = server and Cache.find_database(searchable.server_name, searchable.database_name)
-  local schema = database and Cache.find_schema(searchable.server_name, searchable.database_name, searchable.schema_name)
-
-  if not schema then
-    vim.notify("Could not find schema for object", vim.log.levels.WARN)
-    return
-  end
-
-  local obj = nil
-  local obj_type = searchable.object_type
-
-  -- Find the object based on type
-  if obj_type == "table" then
-    obj = schema:find_table(searchable.name)
-  elseif obj_type == "view" then
-    obj = schema:find_view(searchable.name)
-  elseif obj_type == "synonym" then
-    obj = schema:find_synonym(searchable.name)
-  elseif obj_type == "procedure" then
-    -- Find procedure in schema's procedures list
-    local procedures = schema:get_procedures({ skip_load = true })
-    for _, proc in ipairs(procedures) do
-      if proc.name == searchable.name then
-        obj = proc
-        break
-      end
-    end
-  elseif obj_type == "function" then
-    -- Find function in schema's functions list
-    local functions = schema:get_functions({ skip_load = true })
-    for _, func in ipairs(functions) do
-      if func.name == searchable.name then
-        obj = func
-        break
-      end
-    end
-  end
-
+  -- Use the object directly (same pattern as tree actions)
+  local obj = searchable.object
   if not obj then
-    vim.notify("Could not find object: " .. searchable.name, vim.log.levels.WARN)
+    vim.notify("Object not available", vim.log.levels.WARN)
     return
   end
+
+  -- Get server and database from the object itself (like tree actions do)
+  local server = obj:get_server()
+  local database = obj:get_database()
 
   -- Close search window
   if close_fn then
     close_fn()
   end
 
-  -- Generate and execute the appropriate statement
+  local obj_type = searchable.object_type
+
+  -- Generate and execute the appropriate statement (same logic as TreeActions.execute_action)
   if obj_type == "procedure" then
     -- EXEC for procedures (with parameter handling)
     if obj.generate_exec then
@@ -191,7 +185,7 @@ function M.select_or_exec_in_buffer()
 
           UiParamInput.show_input(
             proc_name,
-            server.name,
+            server and server.name or searchable.server_name,
             database and database.db_name or nil,
             input_params,
             function(values)
@@ -207,15 +201,27 @@ function M.select_or_exec_in_buffer()
         end
       end
 
-      -- Load parameters if needed
-      if obj.parameters then
-        show_exec_ui(obj.parameters)
+      -- Prefer async parameter loading if available (like tree actions)
+      if obj.load_parameters_async then
+        obj:load_parameters_async({
+          on_complete = function(parameters, err)
+            if err then
+              vim.notify(string.format("Failed to load parameters: %s", err), vim.log.levels.ERROR)
+              -- Fallback to simple exec without parameters
+              local sql = obj:generate_exec()
+              UiQuery.create_query_buffer(server, database, sql, obj.name)
+              return
+            end
+            show_exec_ui(obj.parameters)
+          end,
+        })
       elseif obj.load_parameters then
+        -- Sync fallback
         obj:load_parameters()
         show_exec_ui(obj.parameters)
       else
-        local sql = obj:generate_exec()
-        UiQuery.create_query_buffer(server, database, sql, obj.name)
+        -- No parameter loading available
+        show_exec_ui({})
       end
     else
       vim.notify("EXEC not available for this procedure", vim.log.levels.WARN)

@@ -16,7 +16,7 @@ local Navigation = require('ssns.ui.panels.object_search.navigation')
 
 local UiFloat = require('ssns.ui.core.float')
 local ContentBuilder = require('ssns.ui.core.content_builder')
-local KeymapManager = require('ssns.ui.core.keymap_manager')
+local KeymapManager = require('ssns.keymap_manager')
 local Cache = require('ssns.cache')
 
 -- ============================================================================
@@ -429,7 +429,7 @@ function M.show(options)
 
         if not server then
           local Conns = require('ssns.connections')
-          local conn = Conns.find_by_name(value)
+          local conn = Conns.find(value)
           if conn then
             server = Cache.find_or_create_server(value, conn)
           end
@@ -452,8 +452,7 @@ function M.show(options)
           -- Update UI to show loading state immediately
           local new_cb = Render.render_settings(multi_panel)
           multi_panel:update_inputs("settings", new_cb)
-          multi_panel:render_panel("settings")
-          multi_panel:render_panel("results")
+          State.refresh_panels({ settings = true })
 
           -- Use true non-blocking RPC async (UI stays responsive)
           server:connect_and_load_async({
@@ -471,8 +470,7 @@ function M.show(options)
               if mp and mp:is_valid() then
                 local final_cb = Render.render_settings(mp)
                 mp:update_inputs("settings", final_cb)
-                mp:render_panel("settings")
-                mp:render_panel("results")
+                State.refresh_panels({ settings = true })
               end
             end,
           })
@@ -499,7 +497,7 @@ function M.show(options)
           -- Clear results if no databases selected
           ui_state.loaded_objects = {}
           ui_state.filtered_results = {}
-          multi_panel:render_panel("results")
+          State.refresh_panels()
         end
       elseif key == "search_options" then
         -- Update search options state from dropdown
@@ -509,7 +507,7 @@ function M.show(options)
         ui_state.show_system = vim.tbl_contains(values, "system")
         Input.apply_current_search()
         Input.sync_filter_dropdowns()  -- Show system affects object count in filters
-        multi_panel:render_panel("results")
+        State.refresh_panels()
       end
     end,
   })
@@ -554,8 +552,7 @@ function M.show(options)
         ui_state.search_definitions = vim.tbl_contains(values, "defs")
         ui_state.search_metadata = vim.tbl_contains(values, "meta")
         Input.apply_current_search()
-        multi_panel:render_panel("results")
-        multi_panel:render_panel("filters")
+        State.refresh_panels()
       elseif key == "object_types" then
         -- Update object type state from dropdown
         ui_state.show_tables = vim.tbl_contains(values, "table")
@@ -565,8 +562,7 @@ function M.show(options)
         ui_state.show_synonyms = vim.tbl_contains(values, "synonym")
         ui_state.show_schemas = vim.tbl_contains(values, "schema")
         Input.apply_current_search()
-        multi_panel:render_panel("results")
-        multi_panel:render_panel("filters")
+        State.refresh_panels()
       end
     end,
   })
