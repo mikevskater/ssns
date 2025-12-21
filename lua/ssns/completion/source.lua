@@ -508,6 +508,20 @@ function Source:_route_to_provider(context_result, provider_ctx, callback, start
       return
     end
 
+    -- Check if this is a JOIN context - use JoinsProvider for FK-aware suggestions
+    local mode = context_result.mode or ""
+    if mode:sub(1, 4) == "join" then
+      Debug.log("[COMPLETION] Calling JoinsProvider (async) for JOIN context")
+      local JoinsProvider = require('ssns.completion.providers.joins')
+      JoinsProvider.get_completions_async(provider_ctx, {
+        cancel_token = cancel_token,
+        on_complete = function(items, _)
+          wrapped_callback(items or {})
+        end
+      })
+      return
+    end
+
     -- Table/view/synonym completion (async to avoid blocking on database load)
     Debug.log("[COMPLETION] Calling TablesProvider (async)")
     local TablesProvider = require('ssns.completion.providers.tables')

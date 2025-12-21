@@ -121,6 +121,67 @@ function FuzzyMatcher.find_matches(needle, haystack, threshold)
   return matches
 end
 
+---Extract common suffix from column name (ID, Name, Date, etc.)
+---@param name string Column name
+---@return string base Base name without suffix
+---@return string? suffix The suffix if found
+local function extract_suffix(name)
+  local suffixes = { "id", "name", "date", "time", "code", "num", "no", "key", "ref", "type" }
+  local lower = name:lower()
+
+  for _, suffix in ipairs(suffixes) do
+    if lower:sub(-#suffix) == suffix and #lower > #suffix then
+      return name:sub(1, -#suffix - 1), suffix
+    end
+  end
+
+  return name, nil
+end
+
+---Check if one string is an abbreviation of another
+---E.g., "Emp" is abbreviation of "Employee", "CustID" of "CustomerID"
+---@param short string Potential abbreviation
+---@param long string Full string
+---@return boolean is_abbrev True if short is likely an abbreviation of long
+---@return number score Confidence score (0.8-0.95)
+local function is_abbreviation(short, long)
+  if #short >= #long then
+    return false, 0
+  end
+
+  local short_lower = short:lower()
+  local long_lower = long:lower()
+
+  -- Must start with the same character
+  if short_lower:sub(1, 1) ~= long_lower:sub(1, 1) then
+    return false, 0
+  end
+
+  -- Check if short is a prefix of long
+  if long_lower:sub(1, #short_lower) == short_lower then
+    -- Exact prefix match (e.g., "Emp" prefix of "Employee")
+    local ratio = #short / #long
+    if ratio >= 0.5 then
+      return true, 0.92  -- High confidence for 50%+ prefix
+    elseif ratio >= 0.3 then
+      return true, 0.88  -- Medium confidence for 30%+ prefix
+    end
+    return false, 0
+  end
+
+  -- Check for consonant-based abbreviation (e.g., "Cust" from "Customer")
+  -- Extract consonants from long string and see if short matches the start
+  local consonants = long_lower:gsub("[aeiou]", "")
+  if #consonants >= 2 and consonants:sub(1, math.min(#short_lower, #consonants)) == short_lower:sub(1, math.min(#short_lower, #consonants)) then
+    local ratio = #short / #long
+    if ratio >= 0.4 then
+      return true, 0.85
+    end
+  end
+
+  return false, 0
+end
+
 ---Compare column names for JOIN matching
 ---Special handling for common column naming patterns
 ---@param col1_name string First column name
@@ -144,7 +205,50 @@ function FuzzyMatcher.match_columns(col1_name, col2_name, threshold)
     return true, 1.0
   end
 
-  -- Third check: fuzzy match
+  -- Third check: suffix-based matching
+  -- Extract common suffixes (ID, Name, etc.) and compare bases
+  local base1, suffix1 = extract_suffix(norm1)
+  local base2, suffix2 = extract_suffix(norm2)
+
+  -- If both have the same suffix, compare the bases
+  if suffix1 and suffix2 and suffix1 == suffix2 then
+    -- Check if bases are similar or one is abbreviation of other
+    if base1 == base2 then
+      return true, 0.98
+    end
+
+    -- Check abbreviation (shorter is abbrev of longer)
+    local is_abbrev, abbrev_score
+    if #base1 < #base2 then
+      is_abbrev, abbrev_score = is_abbreviation(base1, base2)
+    else
+      is_abbrev, abbrev_score = is_abbreviation(base2, base1)
+    end
+
+    if is_abbrev and abbrev_score >= threshold then
+      return true, abbrev_score
+    end
+
+    -- Check base similarity
+    local base_similarity = FuzzyMatcher.similarity(base1, base2)
+    if base_similarity >= threshold then
+      return true, base_similarity
+    end
+  end
+
+  -- Fourth check: abbreviation matching (without suffix extraction)
+  local is_abbrev, abbrev_score
+  if #norm1 < #norm2 then
+    is_abbrev, abbrev_score = is_abbreviation(norm1, norm2)
+  else
+    is_abbrev, abbrev_score = is_abbreviation(norm2, norm1)
+  end
+
+  if is_abbrev and abbrev_score >= threshold then
+    return true, abbrev_score
+  end
+
+  -- Fifth check: general fuzzy match
   local score = FuzzyMatcher.similarity(col1_name, col2_name)
   return score >= threshold, score
 end

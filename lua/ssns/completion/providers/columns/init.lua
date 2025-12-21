@@ -119,21 +119,13 @@ function ColumnsProvider._get_completions_impl(ctx)
     end
     return get_special().get_on_clause_columns(connection, sql_context)
 
-  elseif sql_context.mode == "where" then
-    -- Pattern: WHERE col = | (show columns with type compatibility warnings)
-    if not connection or not connection.database then
-      return {}
-    end
-    return get_unqualified().get_where_clause_columns(connection, sql_context)
-
-  elseif sql_context.mode == "select" or
+  elseif sql_context.mode == "where" or
+         sql_context.mode == "select" or
          sql_context.mode == "order_by" or sql_context.mode == "group_by" or
          sql_context.mode == "having" or sql_context.mode == "set" then
-    -- Pattern: SELECT | or ORDER BY | or GROUP BY | or HAVING | or UPDATE SET | (show columns from all tables in query)
-    if not connection or not connection.database then
-      return {}
-    end
-    return get_unqualified().get_all_columns_from_query(connection, sql_context)
+    -- These modes use async path with threading - see get_completions_async
+    -- Return empty from sync path to enforce async usage
+    return {}
 
   elseif sql_context.mode == "qualified_bracket" then
     -- Pattern: [schema].[table].| or [database].|
@@ -168,11 +160,8 @@ function ColumnsProvider._get_completions_impl(ctx)
       -- Get columns from the DML target table
       return get_special().get_output_pseudo_table_columns(connection, sql_context)
     else
-      -- Just "OUTPUT |" - suggest all columns from target or return empty
-      if not connection or not connection.database then
-        return {}
-      end
-      return get_unqualified().get_all_columns_from_query(connection, sql_context)
+      -- "OUTPUT |" uses async path with threading - see get_completions_async
+      return {}
     end
 
   else
@@ -303,8 +292,49 @@ function ColumnsProvider._async_with_resolved_scope(ctx, opts, on_complete)
         cancel_token = cancel_token,
         on_complete = on_complete,
       })
+    elseif mode == "on" then
+      -- ON clause: show columns from all tables with fuzzy matching
+      -- If table_ref is specified (e.g., r.|), use qualified completion
+      if sql_context.table_ref then
+        get_qualified().get_qualified_columns_async(sql_context, connection, sql_context, {
+          cancel_token = cancel_token,
+          on_complete = on_complete,
+        })
+      else
+        -- ON | - show columns with fuzzy matching to left side
+        vim.schedule(function()
+          if cancel_token and cancel_token.is_cancelled then
+            return
+          end
+          local success, result = pcall(function()
+            return get_special().get_on_clause_columns(connection, sql_context)
+          end)
+          on_complete(success and result or {}, not success and tostring(result) or nil)
+        end)
+      end
+    elseif mode == "output" then
+      -- OUTPUT mode: if no table_ref or not inserted/deleted, use async columns
+      local table_ref = sql_context.table_ref
+      if table_ref and (table_ref:lower() == "inserted" or table_ref:lower() == "deleted") then
+        -- OUTPUT inserted.| or OUTPUT deleted.| - use sync special handler
+        vim.schedule(function()
+          if cancel_token and cancel_token.is_cancelled then
+            return
+          end
+          local success, result = pcall(function()
+            return get_special().get_output_pseudo_table_columns(connection, sql_context)
+          end)
+          on_complete(success and result or {}, not success and tostring(result) or nil)
+        end)
+      else
+        -- OUTPUT | - show all columns from query (async with threading)
+        get_unqualified().get_all_columns_from_query_async(connection, sql_context, {
+          cancel_token = cancel_token,
+          on_complete = on_complete,
+        })
+      end
     else
-      -- Other modes: run sync impl (special cases like ON, INSERT, VALUES, OUTPUT)
+      -- Other modes: run sync impl (special cases like INSERT, VALUES)
       vim.schedule(function()
         -- Check cancellation before running sync impl
         if cancel_token and cancel_token.is_cancelled then

@@ -11,12 +11,12 @@ local TokenContext = require('ssns.completion.token_context')
 JoinsProvider.get_completions = BaseProvider.create_safe_wrapper(JoinsProvider, "Joins", true)
 
 ---Internal implementation of JOIN completion retrieval
+---Uses TablesProvider for fallback tables instead of duplicating logic
 ---@param ctx table Context from source
 ---@return table[] items Array of CompletionItems
 function JoinsProvider._get_completions_impl(ctx)
-  local Utils = require('ssns.completion.utils')
   local Resolver = require('ssns.completion.metadata.resolver')
-  local Context = require('ssns.completion.statement_context')
+  local TablesProvider = require('ssns.completion.providers.tables')
 
   -- Get connection information from context
   local connection_info = ctx.connection
@@ -33,8 +33,8 @@ function JoinsProvider._get_completions_impl(ctx)
   local existing_tables = Resolver.resolve_all_tables_in_query(connection_info, sql_context)
 
   if not existing_tables or #existing_tables == 0 then
-    -- No tables in query - fall back to general table list
-    return JoinsProvider._get_fallback_tables(connection_info, {})
+    -- No tables in query - use TablesProvider for general table list
+    return TablesProvider._get_completions_impl(ctx)
   end
 
   -- Use pre-built aliases from context
@@ -73,13 +73,14 @@ function JoinsProvider._get_completions_impl(ctx)
     end
   end
 
-  -- Get fallback tables (general table list)
-  local fallback_tables = JoinsProvider._get_fallback_tables(connection_info, existing_aliases)
+  -- Get fallback tables from TablesProvider (reuse instead of duplicate)
+  local fallback_tables = TablesProvider._get_completions_impl(ctx)
 
   -- Filter out tables already suggested via FK
   local filtered_fallback = {}
   for _, item in ipairs(fallback_tables) do
-    local table_name = item.data.name
+    -- TablesProvider uses item.data.name or item.label for table name
+    local table_name = (item.data and item.data.name) or item.label
     if table_name and not suggested_tables[table_name:lower()] then
       table.insert(filtered_fallback, item)
     end
@@ -320,8 +321,18 @@ function JoinsProvider._build_fk_chain_suggestions(chain_results, existing_alias
       end
     end
 
-    -- Priority based on hop count: 1 hop = 100, 2 hops = 200, etc.
-    local priority = result.hop_count * 100
+    -- Build table path for usage weight lookup
+    local table_path = table_name
+    if table_obj.schema then
+      table_path = table_obj.schema .. "." .. table_name
+    end
+
+    -- Get usage weight for this table
+    local weight = BaseProvider.get_usage_weight(connection, "table", table_path)
+
+    -- Priority: hop count base (1 hop = 100, 2 hops = 200) minus weight boost
+    -- Higher weight = lower priority number = shown first
+    local priority = (result.hop_count * 100) - math.min(weight, 90)
 
     local item = {
       label = label,
@@ -337,6 +348,7 @@ function JoinsProvider._build_fk_chain_suggestions(chain_results, existing_alias
         table_name = table_name,
         hop_count = result.hop_count,
         is_fk_suggestion = true,
+        weight = weight,
       },
     }
 
@@ -345,119 +357,6 @@ function JoinsProvider._build_fk_chain_suggestions(chain_results, existing_alias
   end
 
   return items, suggested_tables
-end
-
----Get all tables as fallback suggestions
----Used when no FK relationships found or as general table list
----@param connection table Connection info
----@param existing_aliases table<string, string> Aliases already in use
----@return table[] items Array of CompletionItems
-function JoinsProvider._get_fallback_tables(connection, existing_aliases)
-  local Utils = require('ssns.completion.utils')
-  local Config = require('ssns.config').get()
-
-  if not connection or not connection.database then
-    return {}
-  end
-
-  local database = connection.database
-
-  -- Get show_schema_prefix option from config
-  local show_schema_prefix = Config.ui and Config.ui.show_schema_prefix
-  if show_schema_prefix == nil then
-    show_schema_prefix = true -- Default to true
-  end
-
-  local items = {}
-
-  -- Use database accessor method (handles schema-based vs non-schema servers)
-  local tables = database:get_tables()
-
-  for _, table_obj in ipairs(tables) do
-    local table_name = table_obj.name or table_obj.table_name
-
-    -- Generate alias for this table
-    local alias = JoinsProvider._generate_alias(table_name, existing_aliases)
-
-    -- Build insert text: "TableName alias"
-    local table_reference = table_name
-    if show_schema_prefix and table_obj.schema then
-      table_reference = table_obj.schema .. "." .. table_name
-    end
-
-    local insertText = string.format("%s %s", table_reference, alias)
-
-    -- Format as completion item
-    local detail
-    if show_schema_prefix and table_obj.schema then
-      detail = string.format("%s.%s (TABLE)", table_obj.schema, table_name)
-    else
-      detail = string.format("%s (TABLE)", table_name)
-    end
-
-    table.insert(items, {
-      label = table_name,
-      kind = Utils.CompletionItemKind.Class,
-      detail = detail,
-      documentation = nil,
-      insertText = insertText,
-      filterText = table_name,
-      sortText = Utils.generate_sort_text(9, table_name), -- Low priority
-      data = {
-        type = "join_fallback",
-        name = table_name,
-        schema = table_obj.schema,
-        has_fk = false,
-      }
-    })
-  end
-
-  -- Also include views if supported
-  local adapter = database:get_adapter()
-  if adapter.features and adapter.features.views then
-    local views = database:get_views()
-
-    for _, view_obj in ipairs(views) do
-      local view_name = view_obj.name or view_obj.view_name
-
-      -- Generate alias for this view
-      local alias = JoinsProvider._generate_alias(view_name, existing_aliases)
-
-      -- Build insert text: "ViewName alias"
-      local view_reference = view_name
-      if show_schema_prefix and view_obj.schema then
-        view_reference = view_obj.schema .. "." .. view_name
-      end
-
-      local insertText = string.format("%s %s", view_reference, alias)
-
-      -- Format as completion item
-      local detail
-      if show_schema_prefix and view_obj.schema then
-        detail = string.format("%s.%s (VIEW)", view_obj.schema, view_name)
-      else
-        detail = string.format("%s (VIEW)", view_name)
-      end
-
-      table.insert(items, {
-        label = view_name,
-        kind = Utils.CompletionItemKind.Class,
-        detail = detail,
-        documentation = nil,
-        insertText = insertText,
-        filterText = view_name,
-        sortText = Utils.generate_sort_text(9, view_name), -- Low priority
-        data = {
-          type = "join_fallback",
-          name = view_name,
-          schema = view_obj.schema,
-          has_fk = false,
-        }
-      })
-    end
-  end
-
-  return items
 end
 
 -- ============================================================================
