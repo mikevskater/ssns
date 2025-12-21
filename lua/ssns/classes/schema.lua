@@ -57,6 +57,9 @@ end
 ---Preserves existing table objects to maintain loaded column data
 ---@param table_data_list table[] Array of parsed table data from adapter
 function SchemaClass:set_tables(table_data_list)
+  -- Invalidate sorted objects cache (used by tree rendering)
+  self._sorted_objects = nil
+
   local adapter = self:get_adapter()
 
   -- If tables already exist, preserve them and their loaded data
@@ -107,6 +110,9 @@ end
 ---Preserves existing view objects to maintain loaded column data
 ---@param view_data_list table[] Array of parsed view data from adapter
 function SchemaClass:set_views(view_data_list)
+  -- Invalidate sorted objects cache (used by tree rendering)
+  self._sorted_objects = nil
+
   local adapter = self:get_adapter()
 
   -- If views already exist, preserve them and their loaded data
@@ -162,6 +168,9 @@ end
 ---Preserves existing procedure objects to maintain loaded parameter data
 ---@param proc_data_list table[] Array of parsed procedure data from adapter
 function SchemaClass:set_procedures(proc_data_list)
+  -- Invalidate sorted objects cache (used by tree rendering)
+  self._sorted_objects = nil
+
   local ProcedureClass = require('ssns.classes.procedure')
 
   -- If procedures already exist, preserve them and their loaded data
@@ -222,6 +231,9 @@ end
 ---Preserves existing function objects to maintain loaded parameter data
 ---@param func_data_list table[] Array of parsed function data from adapter
 function SchemaClass:set_functions(func_data_list)
+  -- Invalidate sorted objects cache (used by tree rendering)
+  self._sorted_objects = nil
+
   local FunctionClass = require('ssns.classes.function')
 
   -- If functions already exist, preserve them and their loaded data
@@ -283,6 +295,9 @@ end
 ---Preserves existing synonym objects to maintain any cached resolution data
 ---@param syn_data_list table[] Array of parsed synonym data from adapter
 function SchemaClass:set_synonyms(syn_data_list)
+  -- Invalidate sorted objects cache (used by tree rendering)
+  self._sorted_objects = nil
+
   local SynonymClass = require('ssns.classes.synonym')
 
   -- If synonyms already exist, preserve them and their loaded data

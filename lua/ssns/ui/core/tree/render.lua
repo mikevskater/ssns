@@ -51,10 +51,10 @@ function TreeRender.create_ui_group(parent, name, object_type, items)
   return group
 end
 
----Get all objects from a schema combined into a single sorted list
+---Collect all objects from a schema (unsorted)
 ---@param schema SchemaClass The schema to get objects from
----@return BaseDbObject[] all_objects Combined and sorted list of all objects
-function TreeRender.get_schema_all_objects(schema)
+---@return BaseDbObject[] all_objects Combined list of all objects (unsorted)
+function TreeRender.collect_schema_objects(schema)
   local all_objects = {}
 
   -- Collect from all typed arrays
@@ -64,12 +64,151 @@ function TreeRender.get_schema_all_objects(schema)
   for _, f in ipairs(schema:get_functions() or {}) do table.insert(all_objects, f) end
   for _, s in ipairs(schema:get_synonyms() or {}) do table.insert(all_objects, s) end
 
+  return all_objects
+end
+
+---Get all objects from a schema combined into a single sorted list (sync fallback)
+---@param schema SchemaClass The schema to get objects from
+---@return BaseDbObject[] all_objects Combined and sorted list of all objects
+function TreeRender.get_schema_all_objects(schema)
+  local all_objects = TreeRender.collect_schema_objects(schema)
+
   -- Sort alphabetically by name (case-insensitive)
   table.sort(all_objects, function(a, b)
     return (a.name or ""):lower() < (b.name or ""):lower()
   end)
 
   return all_objects
+end
+
+---Start async sorting of schema objects
+---Caches sorted result on schema and triggers re-render when complete
+---@param schema SchemaClass The schema to sort objects for
+---@param opts { on_complete: function?, bufnr: number?, line: number? }? Options
+function TreeRender.sort_schema_objects_async(schema, opts)
+  opts = opts or {}
+  local Thread = require('ssns.async.thread')
+  local Spinner = require('ssns.async.spinner')
+
+  -- Stop any existing spinner for this schema
+  if schema._sort_spinner_id then
+    Spinner.stop(schema._sort_spinner_id)
+    schema._sort_spinner_id = nil
+  end
+
+  -- Check if threading is available
+  if not Thread.is_available() then
+    -- Fallback to sync sorting
+    schema._sorted_objects = TreeRender.get_schema_all_objects(schema)
+    schema._sorting = false
+    if opts.on_complete then opts.on_complete() end
+    return
+  end
+
+  -- Mark as sorting
+  schema._sorting = true
+  schema._sorted_objects = nil
+
+  -- Start spinner if buffer info provided
+  if opts.bufnr and opts.line and vim.api.nvim_buf_is_valid(opts.bufnr) then
+    schema._sort_spinner_id = Spinner.start_in_buffer(opts.bufnr, {
+      line = opts.line,
+      text = "    Sorting " .. schema.name,
+      style = "braille",
+      show_runtime = true,
+    })
+  end
+
+  -- Collect unsorted objects
+  local all_objects = TreeRender.collect_schema_objects(schema)
+
+  -- If empty, no need to sort
+  if #all_objects == 0 then
+    schema._sorted_objects = {}
+    schema._sorting = false
+    if schema._sort_spinner_id then
+      Spinner.stop(schema._sort_spinner_id)
+      schema._sort_spinner_id = nil
+    end
+    if opts.on_complete then opts.on_complete() end
+    return
+  end
+
+  -- Prepare items for thread (minimal serializable data + index for reconstruction)
+  local items = {}
+  for i, obj in ipairs(all_objects) do
+    table.insert(items, {
+      idx = i,
+      name = obj.name or "",
+      object_type = obj.object_type,
+    })
+  end
+
+  -- Sorted result accumulator
+  local sorted_indices = {}
+
+  -- Start threaded sort
+  Thread.start({
+    worker = "sort",
+    input = {
+      items = items,
+      key_field = "name",
+      descending = false,
+    },
+    on_batch = function(batch)
+      -- Accumulate sorted indices
+      for _, item in ipairs(batch.items or {}) do
+        table.insert(sorted_indices, item.idx)
+      end
+    end,
+    on_complete = function(result, err)
+      -- Stop spinner
+      vim.schedule(function()
+        if schema._sort_spinner_id then
+          Spinner.stop(schema._sort_spinner_id)
+          schema._sort_spinner_id = nil
+        end
+      end)
+
+      if err then
+        -- On error, fallback to sync sort
+        vim.schedule(function()
+          schema._sorted_objects = TreeRender.get_schema_all_objects(schema)
+          schema._sorting = false
+          if opts.on_complete then opts.on_complete() end
+        end)
+        return
+      end
+
+      -- Reconstruct sorted objects from indices
+      vim.schedule(function()
+        local sorted = {}
+        for _, idx in ipairs(sorted_indices) do
+          if all_objects[idx] then
+            table.insert(sorted, all_objects[idx])
+          end
+        end
+        schema._sorted_objects = sorted
+        schema._sorting = false
+        if opts.on_complete then opts.on_complete() end
+      end)
+    end,
+  })
+end
+
+---Invalidate cached sorted objects for a schema
+---Call this when schema contents change
+---@param schema SchemaClass
+function TreeRender.invalidate_schema_cache(schema)
+  -- Stop any running spinner
+  if schema._sort_spinner_id then
+    local Spinner = require('ssns.async.spinner')
+    Spinner.stop(schema._sort_spinner_id)
+    schema._sort_spinner_id = nil
+  end
+
+  schema._sorted_objects = nil
+  schema._sorting = false
 end
 
 ---Get icon for object type
@@ -483,6 +622,7 @@ function TreeRender.render_database(UiTree, db, lines, indent_level)
 end
 
 ---Render a schema and its children (flat list sorted by name)
+---Uses async threading for sorting - shows animated spinner while sort is in progress
 ---@param UiTree table The main UiTree module
 ---@param schema SchemaClass
 ---@param lines string[]
@@ -490,28 +630,29 @@ end
 function TreeRender.render_schema(UiTree, schema, lines, indent_level)
   local Config = require('ssns.config')
   local UiFilters = require('ssns.ui.core.filters')
+  local Buffer = require('ssns.ui.core.buffer')
   local icons = Config.get_ui().icons
 
   local indent = string.rep("  ", indent_level)
   local expand_icon = schema.ui_state.expanded and (icons.expanded or "▾") or (icons.collapsed or "▸")
   local schema_icon = icons.schema or ""
 
-  -- Get all objects combined and sorted for count display
-  local all_objects = {}
+  -- Calculate count display (fast - just collecting, no sorting needed)
   local count_display = ""
+  local filtered_objects = {}
+
   if schema.is_loaded then
-    all_objects = TreeRender.get_schema_all_objects(schema)
+    -- Use cached sorted objects if available, otherwise collect unsorted for count
+    local all_objects = schema._sorted_objects or TreeRender.collect_schema_objects(schema)
 
     -- Apply filters to get filtered list and effective total
     local filters = UiFilters.get(schema)
-    local filtered_objects, effective_total = UiFilters.apply(all_objects, filters)
+    local effective_total
+    filtered_objects, effective_total = UiFilters.apply(all_objects, filters)
     local filtered_count = #filtered_objects
 
     -- Get count display (shows "x/y" if filtered, or just "x" if not)
     count_display = " " .. UiFilters.get_count_display(schema, filtered_count, effective_total)
-
-    -- Store filtered objects for rendering children
-    all_objects = filtered_objects
   end
 
   -- Schema line with icon and count
@@ -522,16 +663,42 @@ function TreeRender.render_schema(UiTree, schema, lines, indent_level)
   UiTree.line_map[#lines] = schema
   UiTree.object_map[schema] = #lines
 
-  -- If expanded, render all objects as flat sorted list
+  -- If expanded, render children
   if schema.ui_state.expanded then
-    if schema.is_loaded then
-      -- Render each object directly (no intermediate groups)
-      for _, obj in ipairs(all_objects) do
+    if not schema.is_loaded then
+      -- Schema data not loaded yet
+      local loading_icon = icons.connecting or "⋯"
+      table.insert(lines, indent .. "    " .. loading_icon .. " Loading...")
+    elseif schema._sorting then
+      -- Async sort in progress - add placeholder line for spinner overlay
+      -- (spinner is already running from when sort started)
+      table.insert(lines, "")  -- Empty line - spinner overlays this
+    elseif schema._sorted_objects then
+      -- Have cached sorted objects - render them
+      for _, obj in ipairs(filtered_objects) do
         TreeRender.render_object(UiTree, obj, lines, indent_level + 1)
       end
     else
-      local loading_icon = icons.connecting or "⋯"
-      table.insert(lines, indent .. "    " .. loading_icon .. " Loading...")
+      -- Need to start async sort
+      -- Add placeholder line for spinner overlay (0-indexed for spinner)
+      local spinner_line = #lines  -- This will be the line index after we add it
+      table.insert(lines, "")  -- Empty line - spinner will overlay
+
+      -- Start async sort with spinner - defer to next tick so buffer is written first
+      vim.defer_fn(function()
+        if not schema._sorting and not schema._sorted_objects then
+          TreeRender.sort_schema_objects_async(schema, {
+            bufnr = Buffer.bufnr,
+            line = spinner_line,  -- 0-indexed line for spinner
+            on_complete = function()
+              -- Re-render tree when sort completes
+              vim.schedule(function()
+                TreeRender.render(UiTree)
+              end)
+            end,
+          })
+        end
+      end, 10)  -- Small delay to ensure buffer is written
     end
   end
 end
