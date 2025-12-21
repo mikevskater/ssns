@@ -3703,7 +3703,7 @@ function UiObjectSearch.show(options)
           { key = "j/k", desc = "Move up/down in results" },
           { key = "Tab", desc = "Cycle focus: results → right panels" },
           { key = "S-Tab", desc = "Cycle right panels: definition ↔ metadata" },
-          { key = "A-/", desc = "Activate search input" },
+          { key = "/", desc = "Activate search input" },
         },
       },
       {
@@ -3726,20 +3726,20 @@ function UiObjectSearch.show(options)
       {
         header = "Search In",
         keys = {
-          { key = "A-1", desc = "Toggle search names" },
-          { key = "A-2", desc = "Toggle search definitions" },
-          { key = "A-3", desc = "Toggle search metadata" },
+          { key = "1", desc = "Toggle search names" },
+          { key = "2", desc = "Toggle search definitions" },
+          { key = "3", desc = "Toggle search metadata" },
         },
       },
       {
         header = "Object Types",
         keys = {
-          { key = "A-!", desc = "Toggle tables" },
-          { key = "A-@", desc = "Toggle views" },
-          { key = "A-#", desc = "Toggle procedures" },
-          { key = "A-$", desc = "Toggle functions" },
-          { key = "A-%", desc = "Toggle synonyms" },
-          { key = "A-^", desc = "Toggle schemas" },
+          { key = "!", desc = "Toggle tables" },
+          { key = "@", desc = "Toggle views" },
+          { key = "#", desc = "Toggle procedures" },
+          { key = "$", desc = "Toggle functions" },
+          { key = "%", desc = "Toggle synonyms" },
+          { key = "^", desc = "Toggle schemas" },
         },
       },
       {
@@ -4003,7 +4003,7 @@ function UiObjectSearch.show(options)
       end,
       ["<Tab>"] = navigate_tab,
       ["<S-Tab>"] = navigate_shift_tab,
-      ["<A-/>"] = activate_search,
+      ["/"] = activate_search,
       ["<A-s>"] = focus_settings_panel,
       ["<A-d>"] = focus_database_dropdown,
       ["<A-*>"] = focus_filters_panel,
@@ -4011,18 +4011,18 @@ function UiObjectSearch.show(options)
       ["<A-x>"] = toggle_regex,
       ["<A-w>"] = toggle_whole_word,
       ["<A-S>"] = toggle_system,
-      ["<A-1>"] = toggle_search_names,
-      ["<A-2>"] = toggle_search_defs,
-      ["<A-3>"] = toggle_search_meta,
+      ["1"] = toggle_search_names,
+      ["2"] = toggle_search_defs,
+      ["3"] = toggle_search_meta,
       ["<A-r>"] = refresh_objects,
       ["<A-R>"] = function() UiObjectSearch.reset(false) end,  -- Clear state without reopen
       -- Object type toggles
-      ["<A-!>"] = toggle_tables,
-      ["<A-@>"] = toggle_views,
-      ["<A-#>"] = toggle_procedures,
-      ["<A-$>"] = toggle_functions,
-      ["<A-%>"] = toggle_synonyms,
-      ["<A-^>"] = toggle_schemas,
+      ["!"] = toggle_tables,
+      ["@"] = toggle_views,
+      ["#"] = toggle_procedures,
+      ["$"] = toggle_functions,
+      ["%"] = toggle_synonyms,
+      ["^"] = toggle_schemas,
     }
   end
 
