@@ -2900,8 +2900,10 @@ local function navigate_results(direction)
   end
 
   if multi_panel then
-    -- DON'T re-render results panel on navigation - just move cursor
-    -- This avoids expensive chunked re-renders on every j/k press
+    -- Re-render results panel to update arrow indicator
+    multi_panel:render_panel("results")
+
+    -- Move cursor to the selected result
     local results_buf = multi_panel:get_panel_buffer("results")
     if results_buf and vim.api.nvim_buf_is_valid(results_buf) then
       local line_count = vim.api.nvim_buf_line_count(results_buf)
@@ -2910,7 +2912,7 @@ local function navigate_results(direction)
       multi_panel:set_cursor("results", target_line, 0)
     end
 
-    -- Only re-render metadata and definition panels (they show selected item details)
+    -- Also re-render metadata and definition panels (they show selected item details)
     multi_panel:render_panel("metadata")
     multi_panel:render_panel("definition")
   end
@@ -3882,6 +3884,35 @@ function UiObjectSearch.show(options)
   results_keymaps["o"] = open_in_buffer
   results_keymaps["y"] = yank_object_name
   multi_panel:set_panel_keymaps("results", results_keymaps)
+
+  -- Setup CursorMoved autocmd for results panel to sync selection with cursor
+  -- This handles scrolling with mouse wheel and clicking on results
+  local results_buf = multi_panel:get_panel_buffer("results")
+  if results_buf and vim.api.nvim_buf_is_valid(results_buf) then
+    vim.api.nvim_create_autocmd("CursorMoved", {
+      buffer = results_buf,
+      callback = function()
+        -- Get current cursor line
+        local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
+
+        -- Only update if cursor line is within results range
+        if cursor_line >= 1 and cursor_line <= #ui_state.filtered_results then
+          -- Only update if selection changed
+          if ui_state.selected_result_idx ~= cursor_line then
+            ui_state.selected_result_idx = cursor_line
+
+            -- Re-render results panel to update arrow indicator
+            if multi_panel and multi_panel:is_valid() then
+              multi_panel:render_panel("results")
+              -- Also update metadata and definition panels
+              multi_panel:render_panel("metadata")
+              multi_panel:render_panel("definition")
+            end
+          end
+        end
+      end,
+    })
+  end
 
   -- Setup keymaps for metadata and definition panels
   multi_panel:set_panel_keymaps("metadata", get_common_keymaps())
