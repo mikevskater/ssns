@@ -592,6 +592,9 @@ function MultiPanelWindow:_recalculate_layout()
       col = footer_col,  -- Centered within the layout
     })
   end
+
+  -- Re-render all panels so they can adjust to new dimensions
+  self:render_all()
 end
 
 ---Check if multi-panel window is valid

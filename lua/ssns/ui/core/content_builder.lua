@@ -143,8 +143,10 @@ local STYLE_MAPPINGS = {
 ---@field inputs table<string, InputField> Map of input key -> field info
 
 ---Create a new ContentBuilder instance
+---@param opts? { max_width?: number } Optional configuration
 ---@return ContentBuilder
-function ContentBuilder.new()
+function ContentBuilder.new(opts)
+  opts = opts or {}
   local self = setmetatable({}, ContentBuilder)
   self._lines = {}  -- Array of { text = string, highlights = {} }
   self._namespace = nil
@@ -154,7 +156,22 @@ function ContentBuilder.new()
   self._dropdown_order = {}  -- Ordered list of dropdown keys
   self._multi_dropdowns = {}  -- Map of key -> MultiDropdownField
   self._multi_dropdown_order = {}  -- Ordered list of multi-dropdown keys
+  self._max_width = opts.max_width  -- Optional: cap input widths to fit within this
   return self
+end
+
+---Set maximum width for inputs (used to cap dropdowns to fit within panel)
+---@param width number Maximum width in columns
+---@return ContentBuilder self For chaining
+function ContentBuilder:set_max_width(width)
+  self._max_width = width
+  return self
+end
+
+---Get the current max width setting
+---@return number|nil max_width
+function ContentBuilder:get_max_width()
+  return self._max_width
 end
 
 ---Clear all content, resetting the builder for reuse
@@ -520,15 +537,24 @@ function ContentBuilder:dropdown(key, opts)
   -- Build the line text
   local prefix = ""
   if label ~= "" then
-    -- Pad label to label_width if specified
-    local padded_label = label
+    prefix = label .. separator
+    -- Pad after separator to label_width if specified (e.g., "Types:     " not "Types    :")
     if label_width then
-      local label_display_len = vim.fn.strdisplaywidth(label)
-      if label_display_len < label_width then
-        padded_label = label .. string.rep(" ", label_width - label_display_len)
+      local prefix_display_len = vim.fn.strdisplaywidth(prefix)
+      if prefix_display_len < label_width then
+        prefix = prefix .. string.rep(" ", label_width - prefix_display_len)
       end
     end
-    prefix = padded_label .. separator
+  end
+
+  -- Cap width to fit within max_width if set
+  -- Total line: prefix + "[" + content + "]" = prefix + 2 + width
+  if self._max_width then
+    local prefix_display_len = vim.fn.strdisplaywidth(prefix)
+    local available = self._max_width - prefix_display_len - 2  -- 2 for brackets
+    if available > 0 and width > available then
+      width = available
+    end
   end
 
   -- Calculate effective width (fixed to specified width)
@@ -742,15 +768,24 @@ function ContentBuilder:multi_dropdown(key, opts)
   -- Build the line text
   local prefix = ""
   if label ~= "" then
-    -- Pad label to label_width if specified
-    local padded_label = label
+    prefix = label .. separator
+    -- Pad after separator to label_width if specified (e.g., "Types:     " not "Types    :")
     if label_width then
-      local label_display_len = vim.fn.strdisplaywidth(label)
-      if label_display_len < label_width then
-        padded_label = label .. string.rep(" ", label_width - label_display_len)
+      local prefix_display_len = vim.fn.strdisplaywidth(prefix)
+      if prefix_display_len < label_width then
+        prefix = prefix .. string.rep(" ", label_width - prefix_display_len)
       end
     end
-    prefix = padded_label .. separator
+  end
+
+  -- Cap width to fit within max_width if set
+  -- Total line: prefix + "[" + content + "]" = prefix + 2 + width
+  if self._max_width then
+    local prefix_display_len = vim.fn.strdisplaywidth(prefix)
+    local available = self._max_width - prefix_display_len - 2  -- 2 for brackets
+    if available > 0 and width > available then
+      width = available
+    end
   end
 
   -- Arrow indicator for multi-dropdown uses different symbol

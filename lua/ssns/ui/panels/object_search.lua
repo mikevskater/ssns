@@ -2071,12 +2071,17 @@ end
 ---@param state MultiPanelState
 ---@return string[] lines, table[] highlights
 local function render_filters(state)
+  -- Get panel width for responsive input sizing
+  local panel_width = state.panels and state.panels["filters"] and state.panels["filters"].float._win_width
   local cb = ContentBuilder.new()
+  if panel_width then
+    cb:set_max_width(panel_width)
+  end
 
   -- Row 1: Search targets dropdown (what to search in)
   cb:multi_dropdown("search_targets", {
     label = "Search In",
-    label_width = 9,
+    label_width = 11,
     options = {
       { value = "names", label = "Names {1}" },
       { value = "defs", label = "Definitions {2}" },
@@ -2091,7 +2096,7 @@ local function render_filters(state)
   -- Row 2: Object types dropdown (what types to show)
   cb:multi_dropdown("object_types", {
     label = "Types",
-    label_width = 9,
+    label_width = 11,
     options = {
       { value = "table", label = "T Tables {!}" },
       { value = "view", label = "V Views {@}" },
@@ -2239,12 +2244,17 @@ end
 ---@param state MultiPanelState
 ---@return ContentBuilder cb
 render_settings = function(state)
+  -- Get panel width for responsive input sizing
+  local panel_width = state.panels and state.panels["settings"] and state.panels["settings"].float._win_width
   local cb = ContentBuilder.new()
+  if panel_width then
+    cb:set_max_width(panel_width)
+  end
 
   -- Row 1: Server dropdown
   cb:dropdown("server", {
     label = "Server",
-    label_width = 9,
+    label_width = 11,
     options = get_server_options(),
     value = ui_state.selected_server and ui_state.selected_server.name or "",
     placeholder = "(select server)",
@@ -2274,7 +2284,7 @@ render_settings = function(state)
 
   cb:multi_dropdown("databases", {
     label = "Databases",
-    label_width = 9,
+    label_width = 11,
     options = db_options,
     values = get_selected_db_names(),
     display_mode = "count",
@@ -2287,7 +2297,7 @@ render_settings = function(state)
   -- Row 3: Search options multi-dropdown (list mode)
   cb:multi_dropdown("search_options", {
     label = "Options",
-    label_width = 9,
+    label_width = 11,
     options = {
       { value = "case", label = "Case {c}" },
       { value = "regex", label = "Regex {x}" },
@@ -3860,7 +3870,7 @@ function UiObjectSearch.show(options)
   local filters_cb = ContentBuilder.new()
   filters_cb:multi_dropdown("search_targets", {
     label = "Search In",
-    label_width = 9,
+    label_width = 11,
     options = {
       { value = "names", label = "Names {1}" },
       { value = "defs", label = "Definitions {2}" },
@@ -3873,7 +3883,7 @@ function UiObjectSearch.show(options)
   })
   filters_cb:multi_dropdown("object_types", {
     label = "Types",
-    label_width = 9,
+    label_width = 11,
     options = {
       { value = "table", label = "T Tables {!}" },
       { value = "view", label = "V Views {@}" },
