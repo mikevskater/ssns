@@ -95,6 +95,118 @@ local function get_object_style(object_type)
   return styles[object_type] or "normal"
 end
 
+---Build spans with match positions highlighted
+---@param text string The text to highlight
+---@param positions MatchPosition[] Match positions (1-indexed, from search)
+---@param base_style string Default style for non-matched text
+---@param match_style string Style for matched text (default: "search_match")
+---@return table[] spans Array of {text, style} for ContentBuilder
+local function build_highlighted_spans(text, positions, base_style, match_style)
+  match_style = match_style or "search_match"
+
+  if not positions or #positions == 0 then
+    return {{ text = text, style = base_style }}
+  end
+
+  local spans = {}
+  local last_end = 1
+
+  -- Sort by start position (in case they're not sorted)
+  local sorted_positions = {}
+  for _, pos in ipairs(positions) do
+    table.insert(sorted_positions, pos)
+  end
+  table.sort(sorted_positions, function(a, b) return a.start < b.start end)
+
+  for _, pos in ipairs(sorted_positions) do
+    -- Add text before this match
+    if pos.start > last_end then
+      local before_text = text:sub(last_end, pos.start - 1)
+      if #before_text > 0 then
+        table.insert(spans, { text = before_text, style = base_style })
+      end
+    end
+
+    -- Add the matched text
+    local match_end = pos.end_ or (pos.start + #(pos.text or "") - 1)
+    local matched_text = text:sub(pos.start, match_end)
+    if #matched_text > 0 then
+      table.insert(spans, { text = matched_text, style = match_style })
+    end
+
+    last_end = match_end + 1
+  end
+
+  -- Add remaining text after last match
+  if last_end <= #text then
+    local after_text = text:sub(last_end)
+    if #after_text > 0 then
+      table.insert(spans, { text = after_text, style = base_style })
+    end
+  end
+
+  -- Handle edge case: if no spans were added, return the original text
+  if #spans == 0 then
+    return {{ text = text, style = base_style }}
+  end
+
+  return spans
+end
+
+---Find matches in a text segment for metadata items (re-search in main thread)
+---@param segment_text string The text segment (e.g., column name)
+---@return MatchPosition[] positions Match positions within the segment
+local function find_matches_in_segment(segment_text)
+  local ui_state = State.get_ui_state()
+  local pattern = ui_state.search_term
+
+  if not pattern or pattern == "" or not segment_text or segment_text == "" then
+    return {}
+  end
+
+  local search_text = ui_state.case_sensitive and segment_text or segment_text:lower()
+  local search_pattern = ui_state.case_sensitive and pattern or pattern:lower()
+
+  local positions = {}
+  local pos = 1
+  local max_positions = 20  -- Limit for safety
+
+  while pos <= #search_text and #positions < max_positions do
+    local match_start, match_end
+
+    if ui_state.use_regex then
+      -- Use Lua pattern matching
+      match_start, match_end = search_text:find(search_pattern, pos)
+    else
+      -- Plain text search
+      match_start, match_end = search_text:find(search_pattern, pos, true)
+      if match_start then
+        match_end = match_start + #search_pattern - 1
+      end
+    end
+
+    if not match_start then break end
+
+    -- Check whole word if needed
+    local is_valid = true
+    if ui_state.whole_word then
+      is_valid = Helpers.is_whole_word_match(search_text, match_start, match_end)
+    end
+
+    if is_valid then
+      table.insert(positions, {
+        start = match_start,
+        end_ = match_end,
+        text = segment_text:sub(match_start, match_end),
+      })
+    end
+
+    pos = match_start + 1
+  end
+
+  return positions
+end
+
 -- ============================================================================
 -- Settings Panel Helpers
 -- ============================================================================
@@ -478,10 +590,40 @@ function M.render_results(state)
     local spans = {
       { text = prefix, style = is_selected and "highlight" or "normal" },
       { text = icon .. " ", style = is_selected and "strong" or obj_style },
-      { text = result.searchable.database_name, style = is_selected and "strong" or "database" },
-      { text = ".", style = is_selected and "strong" or "muted" },
-      { text = result.display_name, style = is_selected and "strong" or obj_style },
     }
+
+    -- Add database_name with highlights (skip if selected)
+    if not is_selected then
+      local db_positions = find_matches_in_segment(result.searchable.database_name)
+      if #db_positions > 0 then
+        local db_spans = build_highlighted_spans(result.searchable.database_name, db_positions, "database", "search_match")
+        for _, span in ipairs(db_spans) do
+          table.insert(spans, span)
+        end
+      else
+        table.insert(spans, { text = result.searchable.database_name, style = "database" })
+      end
+    else
+      table.insert(spans, { text = result.searchable.database_name, style = "strong" })
+    end
+
+    table.insert(spans, { text = ".", style = is_selected and "strong" or "muted" })
+
+    -- Build display_name with highlights (skip if selected - already highlighted)
+    -- Re-search within display_name since it includes schema prefix that shifts positions
+    if not is_selected then
+      local name_positions = find_matches_in_segment(result.display_name)
+      if #name_positions > 0 then
+        local name_spans = build_highlighted_spans(result.display_name, name_positions, obj_style, "search_match")
+        for _, span in ipairs(name_spans) do
+          table.insert(spans, span)
+        end
+      else
+        table.insert(spans, { text = result.display_name, style = obj_style })
+      end
+    else
+      table.insert(spans, { text = result.display_name, style = "strong" })
+    end
 
     if badge ~= "" then
       table.insert(spans, { text = badge, style = "muted" })
@@ -526,22 +668,54 @@ function M.render_metadata(state)
 
   -- Header
   cb:blank()
-  cb:spans({
+
+  -- Header with object name (highlight matches)
+  local name_spans = {
     { text = " ", style = "normal" },
     { text = searchable.object_type:upper(), style = "muted" },
     { text = ": ", style = "muted" },
-    { text = searchable.name, style = obj_style },
-  })
+  }
+  local name_positions = find_matches_in_segment(searchable.name)
+  if #name_positions > 0 then
+    local highlighted = build_highlighted_spans(searchable.name, name_positions, obj_style, "search_match")
+    for _, span in ipairs(highlighted) do
+      table.insert(name_spans, span)
+    end
+  else
+    table.insert(name_spans, { text = searchable.name, style = obj_style })
+  end
+  cb:spans(name_spans)
 
-  cb:spans({
+  -- Schema line (highlight matches)
+  local schema_text = searchable.schema_name or "N/A"
+  local schema_spans = {
     { text = " Schema: ", style = "label" },
-    { text = searchable.schema_name or "N/A", style = "schema" },
-  })
+  }
+  local schema_positions = find_matches_in_segment(schema_text)
+  if #schema_positions > 0 then
+    local highlighted = build_highlighted_spans(schema_text, schema_positions, "schema", "search_match")
+    for _, span in ipairs(highlighted) do
+      table.insert(schema_spans, span)
+    end
+  else
+    table.insert(schema_spans, { text = schema_text, style = "schema" })
+  end
+  cb:spans(schema_spans)
 
-  cb:spans({
+  -- Database line (highlight matches)
+  local db_spans = {
     { text = " Database: ", style = "label" },
-    { text = searchable.database_name, style = "database" },
-  })
+  }
+  local db_positions = find_matches_in_segment(searchable.database_name)
+  if #db_positions > 0 then
+    local highlighted = build_highlighted_spans(searchable.database_name, db_positions, "database", "search_match")
+    for _, span in ipairs(highlighted) do
+      table.insert(db_spans, span)
+    end
+  else
+    table.insert(db_spans, { text = searchable.database_name, style = "database" })
+  end
+  cb:spans(db_spans)
 
   cb:blank()
 
@@ -559,14 +733,29 @@ function M.render_metadata(state)
         for _, col in ipairs(columns) do
           local nullable_style = col.nullable and "muted" or "warning"
           local nullable_text = col.nullable and "NULL" or "NOT NULL"
-          cb:spans({
+
+          -- Check for search matches in column name
+          local name_positions = find_matches_in_segment(col.name)
+          local spans = {
             { text = "   ", style = "normal" },
-            { text = col.name, style = "column" },
-            { text = " (", style = "muted" },
-            { text = col.data_type or "?", style = "keyword" },
-            { text = ") ", style = "muted" },
-            { text = nullable_text, style = nullable_style },
-          })
+          }
+
+          -- Add column name with or without highlighting
+          if #name_positions > 0 then
+            local name_spans = build_highlighted_spans(col.name, name_positions, "column", "search_match")
+            for _, span in ipairs(name_spans) do
+              table.insert(spans, span)
+            end
+          else
+            table.insert(spans, { text = col.name, style = "column" })
+          end
+
+          table.insert(spans, { text = " (", style = "muted" })
+          table.insert(spans, { text = col.data_type or "?", style = "keyword" })
+          table.insert(spans, { text = ") ", style = "muted" })
+          table.insert(spans, { text = nullable_text, style = nullable_style })
+
+          cb:spans(spans)
         end
       else
         cb:styled("   (Load object to see columns)", "comment")
@@ -585,15 +774,30 @@ function M.render_metadata(state)
         for _, param in ipairs(params) do
           local direction = param.is_output and "OUT" or "IN"
           local dir_style = param.is_output and "warning" or "success"
-          cb:spans({
+
+          -- Check for search matches in parameter name
+          local name_positions = find_matches_in_segment(param.name)
+          local spans = {
             { text = "   ", style = "normal" },
             { text = direction, style = dir_style },
             { text = " ", style = "normal" },
-            { text = param.name, style = "param" },
-            { text = " (", style = "muted" },
-            { text = param.data_type or "?", style = "keyword" },
-            { text = ")", style = "muted" },
-          })
+          }
+
+          -- Add param name with or without highlighting
+          if #name_positions > 0 then
+            local name_spans = build_highlighted_spans(param.name, name_positions, "param", "search_match")
+            for _, span in ipairs(name_spans) do
+              table.insert(spans, span)
+            end
+          else
+            table.insert(spans, { text = param.name, style = "param" })
+          end
+
+          table.insert(spans, { text = " (", style = "muted" })
+          table.insert(spans, { text = param.data_type or "?", style = "keyword" })
+          table.insert(spans, { text = ")", style = "muted" })
+
+          cb:spans(spans)
         end
       else
         cb:styled("   (Load object to see parameters)", "comment")
@@ -653,9 +857,45 @@ function M.render_definition(state)
     definition = load_definition_fn(searchable)
   end
 
+  -- Get definition positions from match_details for overlay highlighting
+  local def_positions = {}
+  for _, detail in ipairs(result.match_details or {}) do
+    if detail.field == "definition" and detail.positions and #detail.positions > 0 then
+      def_positions = detail.positions
+      break
+    end
+  end
+
+  -- Track header line count for position offset
+  local header_lines = #lines
+
   if definition then
-    for _, def_line in ipairs(vim.split(definition, "\n")) do
+    local def_lines = vim.split(definition, "\n")
+
+    -- Track current character position in the full definition text
+    local current_pos = 1
+
+    for line_idx, def_line in ipairs(def_lines) do
       table.insert(lines, def_line)
+
+      -- Calculate line boundaries (1-indexed positions in full text)
+      local line_start = current_pos
+      local line_end = current_pos + #def_line - 1
+
+      -- Find positions overlapping this line
+      for _, pos in ipairs(def_positions) do
+        if pos.end_ >= line_start and pos.start <= line_end then
+          -- Calculate column positions (0-indexed for nvim API)
+          local col_start = math.max(0, pos.start - line_start)
+          local col_end = math.min(#def_line, pos.end_ - line_start + 1)
+          local line_0idx = header_lines + line_idx - 1  -- 0-indexed line number
+
+          table.insert(highlights, {line_0idx, col_start, col_end, "SsnsSearchMatch"})
+        end
+      end
+
+      -- Move position past this line plus newline character
+      current_pos = line_end + 2
     end
   else
     table.insert(lines, "-- Definition not available")

@@ -43,6 +43,57 @@ local function escape_pattern(str)
   return str:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
 end
 
+-- Maximum positions per field (performance limit)
+local MAX_POSITIONS_PER_FIELD = 100
+
+-- Check if match is at word boundaries
+local function is_word_boundary_match(text, match_start, match_end)
+  local before_ok = match_start == 1 or not text:sub(match_start - 1, match_start - 1):match("%w")
+  local after_ok = match_end == #text or not text:sub(match_end + 1, match_end + 1):match("%w")
+  return before_ok and after_ok
+end
+
+-- Find ALL match positions in text
+-- Returns: MatchPosition[] Array of {start, end_, text}
+local function find_all_matches(text, original_text, pat)
+  if not text or text == "" or pat == "" then
+    return {}
+  end
+
+  local positions = {}
+  local pos = 1
+
+  while pos <= #text and #positions < MAX_POSITIONS_PER_FIELD do
+    local match_start, match_end
+
+    if use_regex then
+      match_start, match_end = text:find(pat, pos)
+    else
+      match_start, match_end = text:find(pat, pos, true)
+      if match_start then
+        match_end = match_start + #pat - 1
+      end
+    end
+
+    if not match_start then break end
+
+    -- Check whole word boundary if required
+    local is_valid = not whole_word or is_word_boundary_match(text, match_start, match_end)
+
+    if is_valid then
+      table.insert(positions, {
+        start = match_start,
+        end_ = match_end,
+        text = original_text:sub(match_start, match_end),
+      })
+    end
+
+    pos = match_start + 1  -- Move past this match to find more
+  end
+
+  return positions
+end
+
 -- Check if text matches pattern
 -- Returns: matched (boolean), matched_text (string or nil)
 local function text_matches(text, pat)
@@ -103,42 +154,93 @@ local function text_matches(text, pat)
   end
 end
 
--- Match function - returns (matched, match_type, matched_text)
+-- Match function - returns (matched, match_type, matched_text, match_positions)
+-- match_positions = { name = [...], definition = [...], metadata = [...] }
 local function matches(obj)
   if pattern == "" then
-    return true, "all", nil
+    return true, "all", nil, {}
   end
 
-  -- Check name match first (highest priority)
+  local match_positions = {
+    name = {},
+    definition = {},
+    metadata = {},
+  }
+  local primary_match_type = nil
+  local primary_matched_text = nil
+
+  -- Check name match (highest priority)
+  -- Searches: name, display_name, schema_name, database_name
   if search_names then
-    local name_matched, name_text = text_matches(obj.name, match_pattern)
-    if name_matched then
-      return true, "name", name_text
+    local name_search = case_sensitive and obj.name or (obj.name and obj.name:lower())
+    if name_search then
+      local positions = find_all_matches(name_search, obj.name, match_pattern)
+      if #positions > 0 then
+        match_positions.name = positions
+        primary_match_type = primary_match_type or "name"
+        primary_matched_text = primary_matched_text or positions[1].text
+      end
     end
     -- Also check display_name
-    local display_matched, display_text = text_matches(obj.display_name, match_pattern)
-    if display_matched then
-      return true, "name", display_text
+    local display_search = case_sensitive and obj.display_name or (obj.display_name and obj.display_name:lower())
+    if display_search and #match_positions.name == 0 then
+      local positions = find_all_matches(display_search, obj.display_name, match_pattern)
+      if #positions > 0 then
+        match_positions.name = positions
+        primary_match_type = primary_match_type or "name"
+        primary_matched_text = primary_matched_text or positions[1].text
+      end
+    end
+    -- Also check schema_name
+    if obj.schema_name and #match_positions.name == 0 then
+      local schema_search = case_sensitive and obj.schema_name or obj.schema_name:lower()
+      local positions = find_all_matches(schema_search, obj.schema_name, match_pattern)
+      if #positions > 0 then
+        match_positions.name = positions
+        primary_match_type = primary_match_type or "name"
+        primary_matched_text = primary_matched_text or positions[1].text
+      end
+    end
+    -- Also check database_name
+    if obj.database_name and #match_positions.name == 0 then
+      local db_search = case_sensitive and obj.database_name or obj.database_name:lower()
+      local positions = find_all_matches(db_search, obj.database_name, match_pattern)
+      if #positions > 0 then
+        match_positions.name = positions
+        primary_match_type = primary_match_type or "name"
+        primary_matched_text = primary_matched_text or positions[1].text
+      end
     end
   end
 
   -- Check definition match (medium priority)
   if search_definitions and obj.definition then
-    local def_matched, def_text = text_matches(obj.definition, match_pattern)
-    if def_matched then
-      return true, "definition", def_text
+    local def_search = case_sensitive and obj.definition or obj.definition:lower()
+    local positions = find_all_matches(def_search, obj.definition, match_pattern)
+    if #positions > 0 then
+      match_positions.definition = positions
+      primary_match_type = primary_match_type or "definition"
+      primary_matched_text = primary_matched_text or positions[1].text
     end
   end
 
   -- Check metadata match (lowest priority)
   if search_metadata and obj.metadata_text then
-    local meta_matched, meta_text = text_matches(obj.metadata_text, match_pattern)
-    if meta_matched then
-      return true, "metadata", meta_text
+    local meta_search = case_sensitive and obj.metadata_text or obj.metadata_text:lower()
+    local positions = find_all_matches(meta_search, obj.metadata_text, match_pattern)
+    if #positions > 0 then
+      match_positions.metadata = positions
+      primary_match_type = primary_match_type or "metadata"
+      primary_matched_text = primary_matched_text or positions[1].text
     end
   end
 
-  return false, nil, nil
+  -- Check if any field matched
+  local has_any_match = #match_positions.name > 0 or
+                        #match_positions.definition > 0 or
+                        #match_positions.metadata > 0
+
+  return has_any_match, primary_match_type, primary_matched_text, match_positions
 end
 
 -- Process objects with time-based batching
@@ -148,7 +250,7 @@ local last_progress = 0
 local last_batch_time = os.clock()
 
 for i, obj in ipairs(objects) do
-  local matched, match_type, matched_text = matches(obj)
+  local matched, match_type, matched_text, match_positions = matches(obj)
 
   if matched then
     table.insert(batch, {
@@ -160,6 +262,7 @@ for i, obj in ipairs(objects) do
       object_type = obj.object_type,
       match_type = match_type,
       matched_text = matched_text,
+      match_positions = match_positions,  -- NEW: All match positions by field
       display_name = obj.display_name,
       unique_id = obj.unique_id,
     })

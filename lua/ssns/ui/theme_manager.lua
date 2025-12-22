@@ -384,6 +384,9 @@ function ThemeManager.apply_colors(colors)
   vim.api.nvim_set_hl(0, "SsnsFloatSelected", colors.ui_selected or { link = "PmenuSel" })
   vim.api.nvim_set_hl(0, "SsnsFloatHint", colors.ui_hint or { link = "Comment" })
 
+  -- Search match highlight (overlay with background for use on syntax-highlighted content)
+  vim.api.nvim_set_hl(0, "SsnsSearchMatch", colors.search_match or { bg = "#515C6A", bold = true })
+
   -- Input field highlights
   vim.api.nvim_set_hl(0, "SsnsFloatInput", colors.ui_input or { bg = "#2D2D2D", fg = "#CCCCCC" })
   vim.api.nvim_set_hl(0, "SsnsFloatInputActive", colors.ui_input_active or { bg = "#3C3C3C", fg = "#FFFFFF", bold = true })

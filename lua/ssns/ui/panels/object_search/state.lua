@@ -21,9 +21,15 @@ local Spinner = require('ssns.async.spinner')
 ---@field metadata_loaded boolean Whether metadata has been loaded
 ---@field unique_id string Unique identifier "server:db:schema:type:name"
 
+---@class MatchPosition
+---@field start number 1-indexed start position in the text
+---@field end_ number 1-indexed end position in the text (end_ avoids Lua keyword)
+---@field text string The matched text fragment
+
 ---@class MatchDetail
 ---@field field string "name"|"definition"|"metadata"
 ---@field matched_text string The text that matched
+---@field positions MatchPosition[]? Array of ALL match positions in this field
 
 ---@class SearchResult
 ---@field searchable SearchableObject The matched object

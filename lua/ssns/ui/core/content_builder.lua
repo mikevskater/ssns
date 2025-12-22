@@ -23,6 +23,7 @@ local STYLE_MAPPINGS = {
   emphasis = "SsnsFunction",        -- function (cyan)
   strong = "SsnsKeyword",           -- keyword (blue bold)
   highlight = "SsnsSearch",         -- search highlighting
+  search_match = "SsnsSearchMatch", -- search match overlay (background highlight)
   
   -- Status styles
   success = "SsnsStatusConnected",  -- status_connected (green/cyan)

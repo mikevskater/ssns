@@ -84,6 +84,86 @@ local function text_matches_pattern(text, pattern, regex, pattern_lower)
   end
 end
 
+-- Maximum positions per field (performance limit)
+local MAX_POSITIONS_PER_FIELD = 100
+
+---Find ALL match positions in text (main thread version)
+---@param text string Text to search in
+---@param pattern string Search pattern
+---@param regex table? Compiled regex
+---@param pattern_lower string? Pre-computed lowercase pattern
+---@return MatchPosition[] positions Array of {start, end_, text}
+local function find_all_positions(text, pattern, regex, pattern_lower)
+  local ui_state = State.get_ui_state()
+
+  if not text or text == "" or not pattern or pattern == "" then
+    return {}
+  end
+
+  local positions = {}
+  local search_in = text
+  local search_for = pattern
+
+  if not ui_state.case_sensitive then
+    search_in = text:lower()
+    search_for = pattern_lower or pattern:lower()
+  end
+
+  if ui_state.use_regex and regex then
+    -- Use vim.regex for regex mode
+    local pos = 0
+    while pos < #search_in and #positions < MAX_POSITIONS_PER_FIELD do
+      local match_start = regex:match_str(search_in:sub(pos + 1))
+      if not match_start then break end
+
+      -- match_start is 0-indexed offset from pos+1, convert to 1-indexed
+      local abs_start = pos + match_start + 1
+      local abs_end = abs_start + #pattern - 1  -- Approximate for regex
+
+      -- For regex, try to find actual match end
+      local _, actual_end = search_in:find(search_for, abs_start)
+      if actual_end then
+        abs_end = actual_end
+      end
+
+      -- Check whole word if needed
+      local is_valid = not ui_state.whole_word or Helpers.is_whole_word_match(search_in, abs_start, abs_end)
+
+      if is_valid then
+        table.insert(positions, {
+          start = abs_start,
+          end_ = abs_end,
+          text = text:sub(abs_start, abs_end),
+        })
+      end
+
+      pos = abs_start  -- Move past this match
+    end
+  else
+    -- Plain text mode
+    local pos = 1
+    while pos <= #search_in and #positions < MAX_POSITIONS_PER_FIELD do
+      local match_start, match_end = search_in:find(search_for, pos, true)
+      if not match_start then break end
+
+      -- Check whole word if needed
+      local is_valid = not ui_state.whole_word or Helpers.is_whole_word_match(search_in, match_start, match_end)
+
+      if is_valid then
+        table.insert(positions, {
+          start = match_start,
+          end_ = match_end,
+          text = text:sub(match_start, match_end),
+        })
+      end
+
+      pos = match_start + 1  -- Move past this match
+    end
+  end
+
+  return positions
+end
+
 -- ============================================================================
 -- Async Search Entry Point
 -- ============================================================================
@@ -253,35 +333,47 @@ function M._apply_search_chunked(pattern, callback)
       local matched_def = false
       local matched_meta = false
 
-      -- Search in name
+      -- Search in name - find ALL positions
       if ui_state.search_names then
-        local matched, matched_text = text_matches_pattern(searchable.name, pattern, regex, pattern_lower)
-        if matched then
+        local positions = find_all_positions(searchable.name, pattern, regex, pattern_lower)
+        if #positions > 0 then
           matched_name = true
-          table.insert(match_details, { field = "name", matched_text = matched_text or "" })
+          table.insert(match_details, {
+            field = "name",
+            matched_text = positions[1].text,
+            positions = positions,
+          })
         end
       end
 
-      -- Search in definition (lazy load)
+      -- Search in definition (lazy load) - find ALL positions
       if ui_state.search_definitions and not matched_name then
         local definition = load_definition_fn and load_definition_fn(searchable) or searchable.definition
         if definition then
-          local matched, matched_text = text_matches_pattern(definition, pattern, regex, pattern_lower)
-          if matched then
+          local positions = find_all_positions(definition, pattern, regex, pattern_lower)
+          if #positions > 0 then
             matched_def = true
-            table.insert(match_details, { field = "definition", matched_text = matched_text or "" })
+            table.insert(match_details, {
+              field = "definition",
+              matched_text = positions[1].text,
+              positions = positions,
+            })
           end
         end
       end
 
-      -- Search in metadata (lazy load)
+      -- Search in metadata (lazy load) - find ALL positions
       if ui_state.search_metadata and not matched_name and not matched_def then
         local metadata = load_metadata_text_fn and load_metadata_text_fn(searchable) or searchable.metadata_text
         if metadata then
-          local matched, matched_text = text_matches_pattern(metadata, pattern, regex, pattern_lower)
-          if matched then
+          local positions = find_all_positions(metadata, pattern, regex, pattern_lower)
+          if #positions > 0 then
             matched_meta = true
-            table.insert(match_details, { field = "metadata", matched_text = matched_text or "" })
+            table.insert(match_details, {
+              field = "metadata",
+              matched_text = positions[1].text,
+              positions = positions,
+            })
           end
         end
       end
@@ -526,10 +618,40 @@ function M._apply_search_threaded(pattern, callback)
           -- Map back to SearchResult format using original object reference
           local original_obj = ui_state.loaded_objects[item.idx]
           if original_obj then
+            -- Build match_details with positions from worker
+            local match_details = {}
+            if item.match_positions then
+              if item.match_positions.name and #item.match_positions.name > 0 then
+                table.insert(match_details, {
+                  field = "name",
+                  matched_text = item.match_positions.name[1].text,
+                  positions = item.match_positions.name,
+                })
+              end
+              if item.match_positions.definition and #item.match_positions.definition > 0 then
+                table.insert(match_details, {
+                  field = "definition",
+                  matched_text = item.match_positions.definition[1].text,
+                  positions = item.match_positions.definition,
+                })
+              end
+              if item.match_positions.metadata and #item.match_positions.metadata > 0 then
+                table.insert(match_details, {
+                  field = "metadata",
+                  matched_text = item.match_positions.metadata[1].text,
+                  positions = item.match_positions.metadata,
+                })
+              end
+            end
+            -- Fallback if no positions (backward compatibility)
+            if #match_details == 0 then
+              match_details = {{ field = item.match_type or "name", matched_text = item.matched_text or "" }}
+            end
+
             table.insert(accumulated_results, {
               searchable = original_obj,
               match_type = item.match_type or "name",
-              match_details = {{ field = item.match_type or "name", matched_text = "" }},
+              match_details = match_details,
               display_name = item.display_name or Helpers.build_display_name(original_obj),
               sort_priority = item.match_type == "name" and 1 or (item.match_type == "definition" and 2 or 3),
             })
