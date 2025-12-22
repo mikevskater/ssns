@@ -7,10 +7,24 @@ local QueryHistory = require('ssns.query_history')
 local UiQuery = require('ssns.ui.core.query')
 local Cache = require('ssns.cache')
 local KeymapManager = require('ssns.keymap_manager')
+local Spinner = require('ssns.async.spinner')
+local Cancellation = require('ssns.async.cancellation')
+local Thread = require('ssns.async.thread')
+
+---@class HistoryMatchPosition
+---@field start number 1-indexed start position
+---@field end_ number 1-indexed end position
+---@field text string The matched text fragment
+
+---@class HistoryEntryMatch
+---@field buffer_idx number Index into all_buffer_histories
+---@field entry_idx number Index into buffer entries
+---@field positions HistoryMatchPosition[] Match positions in the query
 
 ---@class HistoryUIState
 ---@field all_buffer_histories QueryBufferHistory[] Unfiltered buffer histories
 ---@field buffer_histories QueryBufferHistory[] Filtered buffer histories (for display)
+---@field entry_matches table<string, HistoryMatchPosition[]> Map of "buffer_idx:entry_idx" to match positions
 ---@field selected_buffer_idx number Currently selected buffer index
 ---@field selected_entry_idx number Currently selected entry index
 ---@field search_term string Committed search term
@@ -19,6 +33,9 @@ local KeymapManager = require('ssns.keymap_manager')
 ---@field search_case_sensitive boolean Case sensitive search
 ---@field search_use_regex boolean Use regex for search (vs literal)
 ---@field search_whole_word boolean Match whole words only
+---@field search_in_progress boolean Whether async search is running
+---@field search_progress number Search progress 0-100
+---@field search_cancel_token CancellationToken? Token to cancel current search
 
 ---@type MultiPanelState?
 local multi_panel = nil
@@ -29,16 +46,14 @@ local search_augroup = nil
 ---Namespace for search virtual text
 local search_virt_ns = vim.api.nvim_create_namespace("ssns_search_virt")
 
----@type number? Timer handle for search input debounce
-local search_debounce_timer = nil
-
--- Debounce delay in ms for live search filtering (prevents excessive updates on rapid typing)
-local SEARCH_DEBOUNCE_MS = 150
+---@type Spinner?
+local search_spinner = nil
 
 ---@type HistoryUIState
 local ui_state = {
   all_buffer_histories = {},
   buffer_histories = {},
+  entry_matches = {},
   selected_buffer_idx = 1,
   selected_entry_idx = 1,
   search_term = "",
@@ -47,6 +62,9 @@ local ui_state = {
   search_case_sensitive = false,
   search_use_regex = true,
   search_whole_word = false,
+  search_in_progress = false,
+  search_progress = 0,
+  search_cancel_token = nil,
 }
 
 ---Close the history window
@@ -57,10 +75,22 @@ function UiHistory.close()
     search_augroup = nil
   end
 
-  -- Cancel any pending search debounce timer
-  if search_debounce_timer then
-    vim.fn.timer_stop(search_debounce_timer)
-    search_debounce_timer = nil
+  -- Cancel any in-progress search
+  if ui_state.search_cancel_token then
+    ui_state.search_cancel_token:cancel()
+    ui_state.search_cancel_token = nil
+  end
+
+  -- Stop search thread
+  if search_thread then
+    search_thread:stop()
+    search_thread = nil
+  end
+
+  -- Stop search spinner
+  if search_spinner then
+    search_spinner:stop()
+    search_spinner = nil
   end
 
   if multi_panel then
@@ -71,6 +101,7 @@ function UiHistory.close()
   ui_state = {
     all_buffer_histories = {},
     buffer_histories = {},
+    entry_matches = {},
     selected_buffer_idx = 1,
     selected_entry_idx = 1,
     search_term = "",
@@ -79,6 +110,9 @@ function UiHistory.close()
     search_case_sensitive = false,
     search_use_regex = true,
     search_whole_word = false,
+    search_in_progress = false,
+    search_progress = 0,
+    search_cancel_token = nil,
   }
 end
 
@@ -137,19 +171,48 @@ local function render_history(state)
   local lines = {}
   local highlights = {}
 
-  if ui_state.selected_buffer_idx < 1 or ui_state.selected_buffer_idx > #ui_state.buffer_histories then
+  -- Show search progress if searching
+  if ui_state.search_in_progress then
+    local spinner_char = get_search_spinner_frame()
+    if spinner_char == "" then spinner_char = "⠋" end
+
     table.insert(lines, "")
-    table.insert(lines, " No buffer selected")
+    table.insert(lines, string.format(" %s Searching... %d%%", spinner_char, ui_state.search_progress))
     table.insert(highlights, {1, 0, -1, "SsnsUiHint"})
+
+    if #ui_state.buffer_histories > 0 then
+      table.insert(lines, string.format(" %d matches so far", #ui_state.buffer_histories))
+      table.insert(highlights, {2, 0, -1, "SsnsStatusConnected"})
+    end
+    table.insert(lines, "")
+  end
+
+  if ui_state.selected_buffer_idx < 1 or ui_state.selected_buffer_idx > #ui_state.buffer_histories then
+    if not ui_state.search_in_progress then
+      table.insert(lines, "")
+      table.insert(lines, " No buffer selected")
+      table.insert(highlights, {1, 0, -1, "SsnsUiHint"})
+    end
     return lines, highlights
   end
 
   local buffer_history = ui_state.buffer_histories[ui_state.selected_buffer_idx]
 
+  -- Find the original buffer index in all_buffer_histories for match lookup
+  local orig_buf_idx = nil
+  for idx, bh in ipairs(ui_state.all_buffer_histories) do
+    if bh == buffer_history then
+      orig_buf_idx = idx
+      break
+    end
+  end
+
   -- Header
-  table.insert(lines, "")
+  if not ui_state.search_in_progress then
+    table.insert(lines, "")
+  end
   table.insert(lines, string.format(" %s", buffer_history.buffer_name))
-  table.insert(highlights, {1, 0, -1, "SsnsUiTitle"})
+  table.insert(highlights, {#lines - 1, 0, -1, "SsnsUiTitle"})
   table.insert(lines, "")
 
   for i, entry in ipairs(buffer_history.entries) do
@@ -174,19 +237,25 @@ local function render_history(state)
       icon_len = 3  -- UTF-8 cross is 3 bytes
     end
 
-    local query_preview = entry.query:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
-    if #query_preview > 35 then
-      query_preview = query_preview:sub(1, 35) .. "..."
+    -- Get first line of query (no normalization - display exactly as saved)
+    local first_newline = entry.query:find("\n")
+    local query_preview = first_newline and entry.query:sub(1, first_newline - 1) or entry.query
+    local was_truncated = false
+    if #query_preview > 50 then
+      query_preview = query_preview:sub(1, 50)
+      was_truncated = true
     end
 
-    local line = string.format(
-      "%s%s %s | %dms | %s",
+    -- Build the metadata prefix
+    local meta_prefix = string.format(
+      "%s%s %s | %dms | ",
       prefix,
       status_icon,
       entry.timestamp:sub(12, 19),  -- HH:MM:SS
-      entry.execution_time_ms or 0,
-      query_preview
+      entry.execution_time_ms or 0
     )
+
+    local line = meta_prefix .. query_preview .. (was_truncated and "..." or "")
     table.insert(lines, line)
 
     local line_idx = #lines - 1
@@ -197,6 +266,23 @@ local function render_history(state)
     -- Highlight status icon
     local icon_col = i == ui_state.selected_entry_idx and 4 or 3
     table.insert(highlights, {line_idx, icon_col, icon_col + icon_len, icon_hl})
+
+    -- Highlight search matches in query_preview (skip if selected row)
+    if orig_buf_idx and i ~= ui_state.selected_entry_idx then
+      local match_key = string.format("%d:%d", orig_buf_idx, i)
+      local positions = ui_state.entry_matches[match_key]
+      if positions and #positions > 0 then
+        local query_start_col = #meta_prefix
+        for _, pos in ipairs(positions) do
+          -- Only highlight if position is within the visible preview
+          if pos.start <= #query_preview then
+            local col_start = query_start_col + pos.start - 1
+            local col_end = query_start_col + math.min(pos.end_, #query_preview)
+            table.insert(highlights, {line_idx, col_start, col_end, "SsnsSearchMatch"})
+          end
+        end
+      end
+    end
   end
 
   if #buffer_history.entries == 0 then
@@ -251,8 +337,12 @@ local function render_preview(state)
   table.insert(lines, "-- " .. string.rep("─", 40))
   table.insert(lines, "")
 
-  -- Add query
-  for _, query_line in ipairs(vim.split(entry.query, "\n")) do
+  -- Track where query content starts (for match position offsets)
+  local query_start_line = #lines
+
+  -- Add query lines
+  local query_lines = vim.split(entry.query, "\n")
+  for _, query_line in ipairs(query_lines) do
     table.insert(lines, query_line)
   end
 
@@ -260,6 +350,44 @@ local function render_preview(state)
   for i = 0, 6 do
     if lines[i + 1] and lines[i + 1]:match("^%-%-") then
       table.insert(highlights, {i, 0, -1, "Comment"})
+    end
+  end
+
+  -- Get match positions for overlay highlighting
+  local orig_buf_idx = nil
+  for idx, bh in ipairs(ui_state.all_buffer_histories) do
+    if bh == buffer_history then
+      orig_buf_idx = idx
+      break
+    end
+  end
+
+  if orig_buf_idx then
+    local match_key = string.format("%d:%d", orig_buf_idx, ui_state.selected_entry_idx)
+    local positions = ui_state.entry_matches[match_key]
+
+    if positions and #positions > 0 then
+      -- Track character position in the full query text
+      local current_pos = 1
+
+      for line_idx, query_line in ipairs(query_lines) do
+        local line_start = current_pos
+        local line_end = current_pos + #query_line - 1
+        local display_line_idx = query_start_line + line_idx - 1  -- 0-indexed
+
+        -- Find positions overlapping this line
+        for _, pos in ipairs(positions) do
+          if pos.end_ >= line_start and pos.start <= line_end then
+            -- Calculate column positions (0-indexed for nvim API)
+            local col_start = math.max(0, pos.start - line_start)
+            local col_end = math.min(#query_line, pos.end_ - line_start + 1)
+            table.insert(highlights, {display_line_idx, col_start, col_end, "SsnsSearchMatch"})
+          end
+        end
+
+        -- Move position past this line plus newline character
+        current_pos = line_end + 2
+      end
     end
   end
 
@@ -318,129 +446,197 @@ local function render_search(state)
   return lines, highlights
 end
 
----Check if a query matches the search pattern
----@param query string The query text to search in
----Check if character is a word character (alphanumeric or underscore)
----@param char string Single character
----@return boolean
-local function is_word_char(char)
-  if not char or char == "" then return false end
-  return char:match("[%w_]") ~= nil
+---Get the current spinner frame for search progress display
+---@return string spinner_char
+local function get_search_spinner_frame()
+  if search_spinner then
+    return search_spinner:get_frame()
+  end
+  return ""
 end
 
----Check if a match at position is a whole word match
----@param text string The text being searched
----@param match_start number 1-indexed start position of match
----@param match_end number 1-indexed end position of match
----@return boolean
-local function is_whole_word_match(text, match_start, match_end)
-  -- Check character before match
-  if match_start > 1 then
-    local char_before = text:sub(match_start - 1, match_start - 1)
-    if is_word_char(char_before) then
-      return false
-    end
-  end
-  -- Check character after match
-  if match_end < #text then
-    local char_after = text:sub(match_end + 1, match_end + 1)
-    if is_word_char(char_after) then
-      return false
-    end
-  end
-  return true
-end
+---@type Thread? Current search thread
+local search_thread = nil
 
----@param query string The query text to search in
----@param pattern string The search pattern
----@param regex table? Compiled regex (if using regex mode)
----@return boolean
-local function query_matches_pattern(query, pattern, regex)
-  if ui_state.search_use_regex and regex then
-    -- Regex mode (whole word is handled in regex pattern)
-    return regex:match_str(query) ~= nil
-  else
-    -- Plain text mode
-    local search_in = query
-    local search_for = pattern
-    if not ui_state.search_case_sensitive then
-      search_in = query:lower()
-      search_for = pattern:lower()
-    end
-
-    if ui_state.search_whole_word then
-      -- Find all occurrences and check if any is a whole word match
-      local start_pos = 1
-      while true do
-        local match_start, match_end = search_in:find(search_for, start_pos, true)
-        if not match_start then
-          return false
-        end
-        if is_whole_word_match(search_in, match_start, match_end) then
-          return true
-        end
-        start_pos = match_start + 1
-      end
-    else
-      return search_in:find(search_for, 1, true) ~= nil
-    end
-  end
-end
-
----Apply search filter to buffer histories
+---Apply search filter to buffer histories (threaded async)
 ---@param pattern string Search pattern (regex or plain text)
 local function apply_search_filter(pattern)
+  -- Cancel any existing search
+  if ui_state.search_cancel_token then
+    ui_state.search_cancel_token:cancel()
+    ui_state.search_cancel_token = nil
+  end
+
+  -- Stop existing thread
+  if search_thread then
+    search_thread:stop()
+    search_thread = nil
+  end
+
+  -- Stop existing spinner
+  if search_spinner then
+    search_spinner:stop()
+    search_spinner = nil
+  end
+
+  -- Clear previous matches
+  ui_state.entry_matches = {}
+
   if not pattern or pattern == "" then
     ui_state.buffer_histories = ui_state.all_buffer_histories
+    ui_state.search_in_progress = false
+    ui_state.search_progress = 0
+    if multi_panel then
+      multi_panel:render()
+    end
     return
   end
 
-  local filtered = {}
-  local regex = nil
-
-  -- Compile regex if in regex mode
-  if ui_state.search_use_regex then
-    local regex_pattern = pattern
-
-    -- Add word boundary for whole word search
-    if ui_state.search_whole_word then
-      regex_pattern = "\\<" .. regex_pattern .. "\\>"
-    end
-
-    -- Add case insensitivity flag if needed
-    if not ui_state.search_case_sensitive then
-      regex_pattern = "\\c" .. regex_pattern
-    end
-
-    local ok, compiled = pcall(vim.regex, regex_pattern)
-    if ok then
-      regex = compiled
-    else
-      -- Invalid regex - fall back to literal match for this search
-      regex = nil
+  -- Flatten all entries for the worker
+  local worker_entries = {}
+  for buf_idx, buffer_history in ipairs(ui_state.all_buffer_histories) do
+    for entry_idx, entry in ipairs(buffer_history.entries) do
+      table.insert(worker_entries, {
+        buf_idx = buf_idx,
+        entry_idx = entry_idx,
+        query = entry.query,
+      })
     end
   end
 
-  for _, buffer_history in ipairs(ui_state.all_buffer_histories) do
-    local matches = false
-    for _, entry in ipairs(buffer_history.entries) do
-      if query_matches_pattern(entry.query, pattern, regex) then
-        matches = true
-        break
+  if #worker_entries == 0 then
+    ui_state.buffer_histories = {}
+    ui_state.search_in_progress = false
+    if multi_panel then
+      multi_panel:render()
+    end
+    return
+  end
+
+  -- Set up search state
+  ui_state.search_in_progress = true
+  ui_state.search_progress = 0
+  ui_state.search_cancel_token = Cancellation.create()
+
+  -- Track matching buffers
+  local matching_buffers = {}
+  local seen_buffers = {}
+
+  -- Start spinner
+  search_spinner = Spinner.new({
+    on_frame = function()
+      if multi_panel then
+        multi_panel:render()
+      end
+    end,
+  })
+  search_spinner:start()
+
+  -- Message handler for worker results
+  local function on_message(msg)
+    if ui_state.search_cancel_token and ui_state.search_cancel_token:is_cancelled() then
+      return
+    end
+
+    if msg.type == "batch" then
+      -- Process batch of matches
+      for _, item in ipairs(msg.items or {}) do
+        local key = string.format("%d:%d", item.buf_idx, item.entry_idx)
+        ui_state.entry_matches[key] = item.positions
+
+        -- Track matching buffer
+        if not seen_buffers[item.buf_idx] then
+          seen_buffers[item.buf_idx] = true
+          local buffer_history = ui_state.all_buffer_histories[item.buf_idx]
+          if buffer_history then
+            table.insert(matching_buffers, buffer_history)
+          end
+        end
+      end
+
+      -- Update filtered results
+      ui_state.buffer_histories = matching_buffers
+      ui_state.search_progress = msg.progress or 0
+
+      -- Reset selection if needed
+      if ui_state.selected_buffer_idx > #ui_state.buffer_histories then
+        ui_state.selected_buffer_idx = math.max(1, #ui_state.buffer_histories)
+      end
+      ui_state.selected_entry_idx = 1
+
+      if multi_panel then
+        multi_panel:render()
+      end
+
+    elseif msg.type == "progress" then
+      ui_state.search_progress = msg.pct or 0
+      if multi_panel then
+        multi_panel:render()
+      end
+
+    elseif msg.type == "complete" then
+      ui_state.search_in_progress = false
+      ui_state.search_progress = 100
+      ui_state.search_cancel_token = nil
+
+      if search_spinner then
+        search_spinner:stop()
+        search_spinner = nil
+      end
+
+      if search_thread then
+        search_thread = nil
+      end
+
+      if multi_panel then
+        multi_panel:render()
+      end
+
+    elseif msg.type == "error" then
+      ui_state.search_in_progress = false
+      ui_state.search_cancel_token = nil
+
+      if search_spinner then
+        search_spinner:stop()
+        search_spinner = nil
+      end
+
+      if search_thread then
+        search_thread = nil
+      end
+
+      vim.notify("History search error: " .. (msg.error or "unknown"), vim.log.levels.ERROR)
+
+      if multi_panel then
+        multi_panel:render()
       end
     end
-    if matches then
-      table.insert(filtered, buffer_history)
+  end
+
+  -- Start threaded search
+  search_thread = Thread.start("history_search", {
+    entries = worker_entries,
+    pattern = pattern,
+    options = {
+      case_sensitive = ui_state.search_case_sensitive,
+      use_regex = ui_state.search_use_regex,
+      whole_word = ui_state.search_whole_word,
+      batch_interval_ms = 100,
+    },
+  }, on_message)
+
+  if not search_thread then
+    -- Thread failed to start
+    ui_state.search_in_progress = false
+    ui_state.search_cancel_token = nil
+
+    if search_spinner then
+      search_spinner:stop()
+      search_spinner = nil
     end
-  end
 
-  ui_state.buffer_histories = filtered
-
-  -- Reset selection if current selection is now invalid
-  if ui_state.selected_buffer_idx > #ui_state.buffer_histories then
-    ui_state.selected_buffer_idx = math.max(1, #ui_state.buffer_histories)
+    vim.notify("Failed to start history search thread", vim.log.levels.WARN)
   end
-  ui_state.selected_entry_idx = 1
 end
 
 ---Finalize search exit (called after insert mode exits)
@@ -479,16 +675,23 @@ end
 ---Cancel search and revert to previous state
 local function cancel_search()
   ui_state.search_term = ui_state.search_term_before_edit
-  apply_search_filter(ui_state.search_term)
+  -- Apply the previous search (or clear if empty)
+  if multi_panel then
+    apply_search_filter(ui_state.search_term)
+  end
   vim.cmd('stopinsert')
 end
 
----Commit current search text
+---Commit current search text and apply the filter
 local function commit_search()
   local search_buf = multi_panel and multi_panel:get_panel_buffer("search")
   if search_buf and vim.api.nvim_buf_is_valid(search_buf) then
     local lines = vim.api.nvim_buf_get_lines(search_buf, 0, 1, false)
     ui_state.search_term = (lines[1] or ""):gsub("^%s+", "")  -- Trim leading space
+  end
+  -- Apply the search filter
+  if multi_panel then
+    apply_search_filter(ui_state.search_term)
   end
   vim.cmd('stopinsert')
 end
@@ -513,72 +716,42 @@ local function update_search_settings_virt_text()
   })
 end
 
----Toggle case sensitivity and re-filter
+---Toggle case sensitivity (will apply on next commit)
 local function toggle_case_sensitive()
   ui_state.search_case_sensitive = not ui_state.search_case_sensitive
 
-  -- Re-apply filter with current search text
-  local search_buf = multi_panel and multi_panel:get_panel_buffer("search")
-  if search_buf and vim.api.nvim_buf_is_valid(search_buf) then
-    local lines = vim.api.nvim_buf_get_lines(search_buf, 0, 1, false)
-    local text = (lines[1] or ""):gsub("^%s+", "")
-    apply_search_filter(text)
-  end
-
   -- Update virtual text to show new state
   update_search_settings_virt_text()
 
-  -- Re-render panels
+  -- Re-render search panel to show updated state
   if multi_panel then
-    multi_panel:render_panel("buffers")
-    multi_panel:render_panel("history")
-    multi_panel:render_panel("preview")
+    multi_panel:render_panel("search")
   end
 end
 
----Toggle regex mode and re-filter
+---Toggle regex mode (will apply on next commit)
 local function toggle_regex_mode()
   ui_state.search_use_regex = not ui_state.search_use_regex
 
-  -- Re-apply filter with current search text
-  local search_buf = multi_panel and multi_panel:get_panel_buffer("search")
-  if search_buf and vim.api.nvim_buf_is_valid(search_buf) then
-    local lines = vim.api.nvim_buf_get_lines(search_buf, 0, 1, false)
-    local text = (lines[1] or ""):gsub("^%s+", "")
-    apply_search_filter(text)
-  end
-
   -- Update virtual text to show new state
   update_search_settings_virt_text()
 
-  -- Re-render panels
+  -- Re-render search panel to show updated state
   if multi_panel then
-    multi_panel:render_panel("buffers")
-    multi_panel:render_panel("history")
-    multi_panel:render_panel("preview")
+    multi_panel:render_panel("search")
   end
 end
 
----Toggle whole word mode and re-filter
+---Toggle whole word mode (will apply on next commit)
 local function toggle_whole_word()
   ui_state.search_whole_word = not ui_state.search_whole_word
-
-  -- Re-apply filter with current search text
-  local search_buf = multi_panel and multi_panel:get_panel_buffer("search")
-  if search_buf and vim.api.nvim_buf_is_valid(search_buf) then
-    local lines = vim.api.nvim_buf_get_lines(search_buf, 0, 1, false)
-    local text = (lines[1] or ""):gsub("^%s+", "")
-    apply_search_filter(text)
-  end
 
   -- Update virtual text to show new state
   update_search_settings_virt_text()
 
-  -- Re-render panels
+  -- Re-render search panel to show updated state
   if multi_panel then
-    multi_panel:render_panel("buffers")
-    multi_panel:render_panel("history")
-    multi_panel:render_panel("preview")
+    multi_panel:render_panel("search")
   end
 end
 
@@ -594,39 +767,7 @@ local function setup_search_autocmds()
 
   search_augroup = vim.api.nvim_create_augroup("SSNSHistorySearch", { clear = true })
 
-  -- Live filtering on text change (debounced to prevent excessive updates)
-  vim.api.nvim_create_autocmd({"TextChangedI", "TextChanged"}, {
-    group = search_augroup,
-    buffer = search_buf,
-    callback = function()
-      -- Cancel existing debounce timer
-      if search_debounce_timer then
-        vim.fn.timer_stop(search_debounce_timer)
-        search_debounce_timer = nil
-      end
-
-      -- Start new debounce timer
-      search_debounce_timer = vim.fn.timer_start(SEARCH_DEBOUNCE_MS, function()
-        search_debounce_timer = nil
-        vim.schedule(function()
-          -- Verify buffer is still valid before processing
-          if not search_buf or not vim.api.nvim_buf_is_valid(search_buf) then
-            return
-          end
-          local lines = vim.api.nvim_buf_get_lines(search_buf, 0, 1, false)
-          local text = (lines[1] or ""):gsub("^%s+", "")  -- Trim leading space
-          apply_search_filter(text)
-          if multi_panel then
-            multi_panel:render_panel("buffers")
-            multi_panel:render_panel("history")
-            multi_panel:render_panel("preview")
-          end
-        end)
-      end)
-    end,
-  })
-
-  -- Handle insert mode exit
+  -- Handle insert mode exit (search is applied on <CR>/<Tab>, cancelled on <Esc>)
   vim.api.nvim_create_autocmd("InsertLeave", {
     group = search_augroup,
     buffer = search_buf,
@@ -1020,6 +1161,7 @@ function UiHistory.show_history(options)
   ui_state = {
     all_buffer_histories = buffer_histories,
     buffer_histories = buffer_histories,  -- Initially unfiltered
+    entry_matches = {},
     selected_buffer_idx = 1,
     selected_entry_idx = 1,
     search_term = "",
@@ -1028,6 +1170,9 @@ function UiHistory.show_history(options)
     search_case_sensitive = false,
     search_use_regex = true,
     search_whole_word = false,
+    search_in_progress = false,
+    search_progress = 0,
+    search_cancel_token = nil,
   }
 
   -- Get keymaps from config
@@ -1148,6 +1293,7 @@ function UiHistory.show_history(options)
       ui_state = {
         all_buffer_histories = {},
         buffer_histories = {},
+        entry_matches = {},
         selected_buffer_idx = 1,
         selected_entry_idx = 1,
         search_term = "",
@@ -1156,6 +1302,9 @@ function UiHistory.show_history(options)
         search_case_sensitive = false,
         search_use_regex = true,
         search_whole_word = false,
+        search_in_progress = false,
+        search_progress = 0,
+        search_cancel_token = nil,
       }
     end,
   })
