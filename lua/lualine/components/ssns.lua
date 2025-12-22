@@ -187,6 +187,17 @@ function M.ssns()
     return ''
   end
 
+  -- Check if buffer is connecting (show spinner)
+  local connecting_info = UiQuery.get_connecting_info(bufnr)
+  if connecting_info and connecting_info.connecting then
+    local spinner = connecting_info.spinner_frame or "⠋"
+    local target = connecting_info.server_name or "server"
+    if connecting_info.database_name then
+      target = target .. " | " .. connecting_info.database_name
+    end
+    return spinner .. " Connecting to " .. target .. "..."
+  end
+
   -- Get server and database from buffer
   local server = UiQuery.get_server(bufnr)
   local database = UiQuery.get_database(bufnr)
@@ -253,6 +264,13 @@ function M.ssns_color()
 
   if not UiQuery.is_query_buffer(bufnr) then
     return nil
+  end
+
+  -- Check if buffer is connecting (show connecting color)
+  local connecting_info = UiQuery.get_connecting_info(bufnr)
+  if connecting_info and connecting_info.connecting then
+    -- Orange/amber color for connecting state
+    return { fg = '#000000', bg = '#ff9900', gui = 'bold' }
   end
 
   -- Get server and database from buffer
