@@ -383,7 +383,14 @@ function Coordinator.cleanup(task_id)
   -- Close channel
   if handle.channel then
     handle.channel:close()
+    handle.channel = nil
   end
+
+  -- Clear callback references to allow garbage collection
+  handle.on_batch = nil
+  handle.on_progress = nil
+  handle.on_complete = nil
+  handle.cancel_token = nil
 
   -- Wait for thread to finish (non-blocking check)
   -- We use a deferred cleanup to allow thread to complete

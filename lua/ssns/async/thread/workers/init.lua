@@ -40,6 +40,7 @@ function Workers.register_all(coordinator)
     { name = "sort", file = "sort.lua" },
     { name = "dedupe_sort", file = "dedupe_sort.lua" },
     { name = "fk_graph", file = "fk_graph.lua" },
+    { name = "history_search", file = "history_search.lua" },
   }
 
   for _, worker in ipairs(worker_files) do
@@ -58,7 +59,7 @@ end
 ---Get a list of available worker names
 ---@return string[]
 function Workers.get_available()
-  return { "search", "sort", "dedupe_sort", "fk_graph" }
+  return { "search", "sort", "dedupe_sort", "fk_graph", "history_search" }
 end
 
 return Workers

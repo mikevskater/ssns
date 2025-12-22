@@ -81,10 +81,10 @@ function UiHistory.close()
     ui_state.search_cancel_token = nil
   end
 
-  -- Stop search thread
-  if search_thread then
-    search_thread:stop()
-    search_thread = nil
+  -- Cancel search thread
+  if search_thread_id then
+    Thread.cancel(search_thread_id, "Panel closed")
+    search_thread_id = nil
   end
 
   -- Stop search spinner
@@ -455,8 +455,8 @@ local function get_search_spinner_frame()
   return ""
 end
 
----@type Thread? Current search thread
-local search_thread = nil
+---@type string? Current search thread task ID
+local search_thread_id = nil
 
 ---Apply search filter to buffer histories (threaded async)
 ---@param pattern string Search pattern (regex or plain text)
@@ -468,9 +468,9 @@ local function apply_search_filter(pattern)
   end
 
   -- Stop existing thread
-  if search_thread then
-    search_thread:stop()
-    search_thread = nil
+  if search_thread_id then
+    Thread.cancel(search_thread_id, "New search started")
+    search_thread_id = nil
   end
 
   -- Stop existing spinner
@@ -532,15 +532,25 @@ local function apply_search_filter(pattern)
   })
   search_spinner:start()
 
-  -- Message handler for worker results
-  local function on_message(msg)
-    if ui_state.search_cancel_token and ui_state.search_cancel_token:is_cancelled() then
-      return
-    end
-
-    if msg.type == "batch" then
+  -- Start threaded search
+  local task_id, err = Thread.start({
+    worker = "history_search",
+    input = {
+      entries = worker_entries,
+      pattern = pattern,
+      options = {
+        case_sensitive = ui_state.search_case_sensitive,
+        use_regex = ui_state.search_use_regex,
+        whole_word = ui_state.search_whole_word,
+        batch_interval_ms = 100,
+      },
+    },
+    on_batch = function(batch)
+      if ui_state.search_cancel_token and ui_state.search_cancel_token:is_cancelled() then
+        return
+      end
       -- Process batch of matches
-      for _, item in ipairs(msg.items or {}) do
+      for _, item in ipairs(batch.items or {}) do
         local key = string.format("%d:%d", item.buf_idx, item.entry_idx)
         ui_state.entry_matches[key] = item.positions
 
@@ -556,7 +566,7 @@ local function apply_search_filter(pattern)
 
       -- Update filtered results
       ui_state.buffer_histories = matching_buffers
-      ui_state.search_progress = msg.progress or 0
+      ui_state.search_progress = batch.progress or 0
 
       -- Reset selection if needed
       if ui_state.selected_buffer_idx > #ui_state.buffer_histories then
@@ -567,32 +577,25 @@ local function apply_search_filter(pattern)
       if multi_panel then
         multi_panel:render()
       end
-
-    elseif msg.type == "progress" then
-      ui_state.search_progress = msg.pct or 0
+    end,
+    on_progress = function(pct, message)
+      ui_state.search_progress = pct or 0
       if multi_panel then
         multi_panel:render()
       end
+    end,
+    on_complete = function(result, error_msg)
+      search_thread_id = nil
 
-    elseif msg.type == "complete" then
-      ui_state.search_in_progress = false
-      ui_state.search_progress = 100
-      ui_state.search_cancel_token = nil
-
-      if search_spinner then
-        search_spinner:stop()
-        search_spinner = nil
+      if error_msg then
+        vim.notify(string.format("[SSNS] History search error: %s", error_msg), vim.log.levels.ERROR)
       end
 
-      if search_thread then
-        search_thread = nil
+      if result and result.cancelled then
+        ui_state.search_progress = 0
       end
 
-      if multi_panel then
-        multi_panel:render()
-      end
-
-    elseif msg.type == "error" then
+      -- Search complete
       ui_state.search_in_progress = false
       ui_state.search_cancel_token = nil
 
@@ -601,42 +604,29 @@ local function apply_search_filter(pattern)
         search_spinner = nil
       end
 
-      if search_thread then
-        search_thread = nil
-      end
-
-      vim.notify("History search error: " .. (msg.error or "unknown"), vim.log.levels.ERROR)
-
       if multi_panel then
         multi_panel:render()
       end
-    end
-  end
+    end,
+    timeout_ms = 30000,
+  })
 
-  -- Start threaded search
-  search_thread = Thread.start("history_search", {
-    entries = worker_entries,
-    pattern = pattern,
-    options = {
-      case_sensitive = ui_state.search_case_sensitive,
-      use_regex = ui_state.search_use_regex,
-      whole_word = ui_state.search_whole_word,
-      batch_interval_ms = 100,
-    },
-  }, on_message)
-
-  if not search_thread then
+  if not task_id then
     -- Thread failed to start
+    vim.notify(string.format("[SSNS] Failed to start history search: %s", err or "unknown"), vim.log.levels.ERROR)
     ui_state.search_in_progress = false
     ui_state.search_cancel_token = nil
-
     if search_spinner then
       search_spinner:stop()
       search_spinner = nil
     end
-
-    vim.notify("Failed to start history search thread", vim.log.levels.WARN)
+    if multi_panel then
+      multi_panel:render()
+    end
+    return
   end
+
+  search_thread_id = task_id
 end
 
 ---Finalize search exit (called after insert mode exits)

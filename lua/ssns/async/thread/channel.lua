@@ -247,6 +247,10 @@ function ThreadChannel:close()
     self.client = nil
   end
 
+  -- Clear buffer and callback references for garbage collection
+  self.buffer = ""
+  self.on_message = nil
+
   -- Clean up socket file on Unix
   if vim.fn.has('win32') ~= 1 then
     pcall(os.remove, self.socket_path)
