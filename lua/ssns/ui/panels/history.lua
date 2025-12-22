@@ -116,6 +116,15 @@ function UiHistory.close()
   }
 end
 
+---Get the current spinner frame for search progress display
+---@return string spinner_char
+local function get_search_spinner_frame()
+  if search_spinner then
+    return search_spinner:get_frame()
+  end
+  return ""
+end
+
 ---Render the buffer list panel
 ---@param state MultiPanelState
 ---@return string[] lines, table[] highlights
@@ -446,15 +455,6 @@ local function render_search(state)
   return lines, highlights
 end
 
----Get the current spinner frame for search progress display
----@return string spinner_char
-local function get_search_spinner_frame()
-  if search_spinner then
-    return search_spinner:get_frame()
-  end
-  return ""
-end
-
 ---@type string? Current search thread task ID
 local search_thread_id = nil
 
@@ -487,7 +487,7 @@ local function apply_search_filter(pattern)
     ui_state.search_in_progress = false
     ui_state.search_progress = 0
     if multi_panel then
-      multi_panel:render()
+      multi_panel:render_all()
     end
     return
   end
@@ -508,7 +508,7 @@ local function apply_search_filter(pattern)
     ui_state.buffer_histories = {}
     ui_state.search_in_progress = false
     if multi_panel then
-      multi_panel:render()
+      multi_panel:render_all()
     end
     return
   end
@@ -516,17 +516,17 @@ local function apply_search_filter(pattern)
   -- Set up search state
   ui_state.search_in_progress = true
   ui_state.search_progress = 0
-  ui_state.search_cancel_token = Cancellation.create()
+  ui_state.search_cancel_token = Cancellation.create_token()
 
   -- Track matching buffers
   local matching_buffers = {}
   local seen_buffers = {}
 
   -- Start spinner
-  search_spinner = Spinner.new({
-    on_frame = function()
+  search_spinner = Spinner.create_text_spinner({
+    on_tick = function()
       if multi_panel then
-        multi_panel:render()
+        multi_panel:render_all()
       end
     end,
   })
@@ -546,7 +546,7 @@ local function apply_search_filter(pattern)
       },
     },
     on_batch = function(batch)
-      if ui_state.search_cancel_token and ui_state.search_cancel_token:is_cancelled() then
+      if ui_state.search_cancel_token and ui_state.search_cancel_token.is_cancelled then
         return
       end
       -- Process batch of matches
@@ -575,13 +575,13 @@ local function apply_search_filter(pattern)
       ui_state.selected_entry_idx = 1
 
       if multi_panel then
-        multi_panel:render()
+        multi_panel:render_all()
       end
     end,
     on_progress = function(pct, message)
       ui_state.search_progress = pct or 0
       if multi_panel then
-        multi_panel:render()
+        multi_panel:render_all()
       end
     end,
     on_complete = function(result, error_msg)
@@ -605,7 +605,7 @@ local function apply_search_filter(pattern)
       end
 
       if multi_panel then
-        multi_panel:render()
+        multi_panel:render_all()
       end
     end,
     timeout_ms = 30000,
@@ -621,7 +621,7 @@ local function apply_search_filter(pattern)
       search_spinner = nil
     end
     if multi_panel then
-      multi_panel:render()
+      multi_panel:render_all()
     end
     return
   end
