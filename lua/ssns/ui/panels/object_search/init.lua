@@ -444,8 +444,10 @@ function M.show(options)
           -- Reset state for new server
           ui_state.selected_databases = {}
           ui_state.all_databases_selected = false
+          ui_state.search_term = ""
           ui_state.loaded_objects = {}
           ui_state.filtered_results = {}
+          ui_state.search_ready = false
 
           -- Show loading state in database dropdown
           ui_state.server_loading = true
@@ -497,6 +499,11 @@ function M.show(options)
 
         -- Reload objects with new database selection
         if next(ui_state.selected_databases) then
+          -- Reset state before loading
+          ui_state.search_term = ""
+          ui_state.loaded_objects = {}
+          ui_state.filtered_results = {}
+          ui_state.search_ready = false
           Loader.load_objects_for_databases()
         else
           -- Clear results if no databases selected
