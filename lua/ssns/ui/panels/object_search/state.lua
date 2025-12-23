@@ -172,6 +172,13 @@ local ui_state = {
   _visible_count_cache = nil,
   -- Cached server options (loaded async)
   _cached_saved_connections = nil,
+  -- Pre-filtered objects cache (filtered by system + object type)
+  -- Structure: { key: string, objects: SearchableObject[] }
+  _pre_filtered_cache = nil,
+  -- Serializable objects cache for threaded search
+  -- Structure: { key: string, objects: table[] }
+  -- Cleared when UI closes to save memory
+  _serializable_cache = nil,
 }
 
 ---Saved state that persists between open/close cycles
@@ -316,6 +323,134 @@ end
 ---@param fn fun(state: MultiPanelState): ContentBuilder
 function M.set_render_settings_fn(fn)
   render_settings_fn = fn
+end
+
+-- ============================================================================
+-- Pre-Filtered & Serializable Object Caches
+-- ============================================================================
+
+-- Forward declaration for Helpers (to avoid circular dependency)
+local Helpers = nil
+
+---Lazily load Helpers module (breaks circular dependency)
+---@return table
+local function get_helpers()
+  if not Helpers then
+    Helpers = require('ssns.ui.panels.object_search.helpers')
+  end
+  return Helpers
+end
+
+---Generate cache key based on current filter settings
+---@return string
+function M.get_filter_cache_key()
+  return string.format("%s|%s|%s|%s|%s|%s|%s",
+    tostring(ui_state.show_system),
+    tostring(ui_state.show_tables),
+    tostring(ui_state.show_views),
+    tostring(ui_state.show_procedures),
+    tostring(ui_state.show_functions),
+    tostring(ui_state.show_synonyms),
+    tostring(ui_state.show_schemas)
+  )
+end
+
+---Generate cache key for serializable objects (includes search target settings)
+---@return string
+function M.get_serializable_cache_key()
+  return string.format("%s|%s|%s|%s",
+    M.get_filter_cache_key(),
+    tostring(ui_state.search_names),
+    tostring(ui_state.search_definitions),
+    tostring(ui_state.search_metadata)
+  )
+end
+
+---Get pre-filtered objects (builds cache if needed)
+---Returns objects already filtered by system + object type filters
+---@return SearchableObject[]
+function M.get_pre_filtered_objects()
+  local cache_key = M.get_filter_cache_key()
+
+  -- Return cached if valid
+  if ui_state._pre_filtered_cache and ui_state._pre_filtered_cache.key == cache_key then
+    return ui_state._pre_filtered_cache.objects
+  end
+
+  -- Build filtered list
+  local helpers = get_helpers()
+  local filtered = {}
+  for _, obj in ipairs(ui_state.loaded_objects) do
+    if ui_state.show_system or not helpers.is_system_object(obj) then
+      if helpers.should_show_object_type(obj) then
+        table.insert(filtered, obj)
+      end
+    end
+  end
+
+  ui_state._pre_filtered_cache = { key = cache_key, objects = filtered }
+  return filtered
+end
+
+---Get serializable objects for threaded search (builds cache if needed)
+---Returns pre-filtered objects converted to serializable format for thread worker
+---@return table[] serializable_objects
+function M.get_serializable_objects()
+  local cache_key = M.get_serializable_cache_key()
+
+  -- Return cached if valid
+  if ui_state._serializable_cache and ui_state._serializable_cache.key == cache_key then
+    return ui_state._serializable_cache.objects
+  end
+
+  -- Get pre-filtered objects first (uses its own cache)
+  local pre_filtered = M.get_pre_filtered_objects()
+  local helpers = get_helpers()
+
+  -- Build index map for O(1) lookup: unique_id -> original index
+  local idx_map = {}
+  for j, loaded_obj in ipairs(ui_state.loaded_objects) do
+    idx_map[loaded_obj.unique_id] = j
+  end
+
+  -- Build serializable list
+  local serializable = {}
+  for i, obj in ipairs(pre_filtered) do
+    table.insert(serializable, {
+      idx = idx_map[obj.unique_id] or i,
+      name = obj.name,
+      schema_name = obj.schema_name,
+      database_name = obj.database_name,
+      server_name = obj.server_name,
+      object_type = obj.object_type,
+      display_name = helpers.build_display_name(obj),
+      unique_id = obj.unique_id,
+      -- Include preloaded data based on search target settings
+      definition = ui_state.search_definitions and obj.definition or nil,
+      metadata_text = ui_state.search_metadata and obj.metadata_text or nil,
+    })
+  end
+
+  ui_state._serializable_cache = { key = cache_key, objects = serializable }
+  return serializable
+end
+
+---Invalidate pre-filtered cache (call when filters or loaded_objects change)
+---Also invalidates serializable cache since it depends on pre-filtered
+function M.invalidate_pre_filtered_cache()
+  ui_state._pre_filtered_cache = nil
+  ui_state._serializable_cache = nil
+  ui_state._visible_count_cache = nil
+end
+
+---Invalidate serializable cache only (call when search targets change)
+function M.invalidate_serializable_cache()
+  ui_state._serializable_cache = nil
+end
+
+---Clear serializable cache to free memory (call when UI closes)
+function M.clear_serializable_cache()
+  ui_state._serializable_cache = nil
 end
 
 -- ============================================================================
@@ -493,6 +628,9 @@ function M.reset_state(clear_saved)
     _visible_count_cache = nil,
     -- Cached saved connections (loaded async)
     _cached_saved_connections = nil,
+    -- Pre-filtered and serializable caches
+    _pre_filtered_cache = nil,
+    _serializable_cache = nil,
   }
 
   if clear_saved then

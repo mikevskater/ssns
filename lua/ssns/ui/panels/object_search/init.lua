@@ -103,6 +103,9 @@ function M.close()
     State.set_multi_panel(nil)
   end
 
+  -- Clear serializable cache to free memory (will be rebuilt on reopen if needed)
+  State.clear_serializable_cache()
+
   -- Save state for next open (don't reset - preserve user's work)
   State.save_current_state()
 end
@@ -404,6 +407,8 @@ function M.show(options)
         pcall(vim.api.nvim_del_augroup_by_id, search_augroup)
         State.set_search_augroup(nil)
       end
+      -- Clear serializable cache to free memory (will be rebuilt on reopen if needed)
+      State.clear_serializable_cache()
       -- Save state before closing (preserve user's work)
       State.save_current_state()
       State.set_multi_panel(nil)
@@ -504,7 +509,12 @@ function M.show(options)
         ui_state.case_sensitive = vim.tbl_contains(values, "case")
         ui_state.use_regex = vim.tbl_contains(values, "regex")
         ui_state.whole_word = vim.tbl_contains(values, "word")
+        local old_show_system = ui_state.show_system
         ui_state.show_system = vim.tbl_contains(values, "system")
+        -- Invalidate caches if show_system changed
+        if old_show_system ~= ui_state.show_system then
+          State.invalidate_pre_filtered_cache()
+        end
         Input.apply_current_search()
         Input.sync_filter_dropdowns()  -- Show system affects object count in filters
         State.refresh_panels()
@@ -551,6 +561,8 @@ function M.show(options)
         ui_state.search_names = vim.tbl_contains(values, "names")
         ui_state.search_definitions = vim.tbl_contains(values, "defs")
         ui_state.search_metadata = vim.tbl_contains(values, "meta")
+        -- Invalidate serializable cache since it includes/excludes definition/metadata
+        State.invalidate_serializable_cache()
         Input.apply_current_search()
         State.refresh_panels()
       elseif key == "object_types" then
@@ -561,6 +573,8 @@ function M.show(options)
         ui_state.show_functions = vim.tbl_contains(values, "function")
         ui_state.show_synonyms = vim.tbl_contains(values, "synonym")
         ui_state.show_schemas = vim.tbl_contains(values, "schema")
+        -- Invalidate caches since object type filters changed
+        State.invalidate_pre_filtered_cache()
         Input.apply_current_search()
         State.refresh_panels()
       end

@@ -571,6 +571,9 @@ function M.load_objects_for_databases(callback)
   ui_state.selected_result_idx = 1
   ui_state.loaded_objects = {}
 
+  -- Invalidate caches since loaded_objects is being reset
+  State.invalidate_pre_filtered_cache()
+
   -- Start spinner animation
   State.start_spinner_animation()
   State.refresh_panels()
@@ -692,6 +695,9 @@ function M.load_objects_for_databases(callback)
       for _, obj in ipairs(db_objects) do
         table.insert(ui_state.loaded_objects, obj)
       end
+
+      -- Invalidate caches since loaded_objects has changed
+      State.invalidate_pre_filtered_cache()
 
       -- Apply search filter incrementally to show results as they load (async handles rendering)
       if apply_search_async_fn then

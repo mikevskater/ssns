@@ -215,36 +215,24 @@ function M._apply_search_chunked(pattern, callback)
 
   local max_results = 500
 
-  -- Pre-count objects that will be searched (after system/type filtering)
-  local total_objects = 0
-  for _, obj in ipairs(ui_state.loaded_objects) do
-    if ui_state.show_system or not Helpers.is_system_object(obj) then
-      if Helpers.should_show_object_type(obj) then
-        total_objects = total_objects + 1
-      end
-    end
-  end
+  -- Get pre-filtered objects (uses cache if available)
+  local pre_filtered = State.get_pre_filtered_objects()
+  local total_objects = #pre_filtered
 
   -- Handle empty pattern case: show all objects (no pattern matching)
   if not pattern or pattern == "" then
     ui_state.filtered_results = {}
     local count = 0
-    for _, obj in ipairs(ui_state.loaded_objects) do
+    for _, obj in ipairs(pre_filtered) do
       if count >= max_results then break end
-      -- Filter system objects unless show_system is enabled
-      if ui_state.show_system or not Helpers.is_system_object(obj) then
-        -- Filter by object type
-        if Helpers.should_show_object_type(obj) then
-          table.insert(ui_state.filtered_results, {
-            searchable = obj,
-            match_type = "none",
-            match_details = {},
-            display_name = Helpers.build_display_name(obj),
-            sort_priority = 0,
-          })
-          count = count + 1
-        end
-      end
+      table.insert(ui_state.filtered_results, {
+        searchable = obj,
+        match_type = "none",
+        match_details = {},
+        display_name = Helpers.build_display_name(obj),
+        sort_priority = 0,
+      })
+      count = count + 1
     end
     State.set_search_cancel_token(nil)
     State.set_search_in_progress(false)
@@ -316,17 +304,10 @@ function M._apply_search_chunked(pattern, callback)
     for i = idx, end_idx do
       if #filtered >= max_results then break end
 
-      local searchable = ui_state.loaded_objects[i]
+      local searchable = pre_filtered[i]
+      if not searchable then break end  -- Safety check
 
-      -- Filter system objects unless show_system is enabled
-      if not ui_state.show_system and Helpers.is_system_object(searchable) then
-        goto continue_chunk
-      end
-
-      -- Filter by object type
-      if not Helpers.should_show_object_type(searchable) then
-        goto continue_chunk
-      end
+      -- Objects are already filtered by system + type via pre_filtered cache
 
       local match_details = {}
       local matched_name = false
@@ -406,8 +387,6 @@ function M._apply_search_chunked(pattern, callback)
           sort_priority = sort_priority,
         })
       end
-
-      ::continue_chunk::
     end
 
     idx = end_idx + 1
@@ -519,27 +498,26 @@ function M._apply_search_threaded(pattern, callback)
     State.set_search_thread_task_id(nil)
   end
 
-  local total_objects = #ui_state.loaded_objects
   local max_results = 500
+
+  -- Get pre-filtered objects for empty pattern case
+  local pre_filtered = State.get_pre_filtered_objects()
+  local total_objects = #pre_filtered
 
   -- Handle empty pattern case: show all objects (no pattern matching needed)
   if not pattern or pattern == "" then
     ui_state.filtered_results = {}
     local count = 0
-    for _, obj in ipairs(ui_state.loaded_objects) do
+    for _, obj in ipairs(pre_filtered) do
       if count >= max_results then break end
-      if ui_state.show_system or not Helpers.is_system_object(obj) then
-        if Helpers.should_show_object_type(obj) then
-          table.insert(ui_state.filtered_results, {
-            searchable = obj,
-            match_type = "none",
-            match_details = {},
-            display_name = Helpers.build_display_name(obj),
-            sort_priority = 0,
-          })
-          count = count + 1
-        end
-      end
+      table.insert(ui_state.filtered_results, {
+        searchable = obj,
+        match_type = "none",
+        match_details = {},
+        display_name = Helpers.build_display_name(obj),
+        sort_priority = 0,
+      })
+      count = count + 1
     end
     State.set_search_in_progress(false)
     State.set_search_progress(0)
@@ -559,31 +537,9 @@ function M._apply_search_threaded(pattern, callback)
   ui_state.filtered_results = {}
   State.refresh_panels()
 
-  -- Prepare serializable objects for thread
-  -- Extract only the data needed for searching (no class instances)
-  -- Note: Metadata/definitions are preloaded asynchronously before search is enabled,
-  -- so definition_loaded and metadata_loaded should be true for all objects
-  local serializable_objects = {}
-  for i, obj in ipairs(ui_state.loaded_objects) do
-    -- Pre-filter system objects and object types to reduce thread work
-    if ui_state.show_system or not Helpers.is_system_object(obj) then
-      if Helpers.should_show_object_type(obj) then
-        table.insert(serializable_objects, {
-          idx = i,
-          name = obj.name,
-          schema_name = obj.schema_name,
-          database_name = obj.database_name,
-          server_name = obj.server_name,
-          object_type = obj.object_type,
-          display_name = Helpers.build_display_name(obj),
-          unique_id = obj.unique_id,
-          -- Include preloaded data (loaded asynchronously before search was enabled)
-          definition = ui_state.search_definitions and obj.definition or nil,
-          metadata_text = ui_state.search_metadata and obj.metadata_text or nil,
-        })
-      end
-    end
-  end
+  -- Get serializable objects from cache (builds if needed)
+  -- This is pre-filtered by system + object type, with display_name pre-computed
+  local serializable_objects = State.get_serializable_objects()
 
   -- Initialize search progress tracking
   State.set_search_in_progress(true)
