@@ -31,8 +31,12 @@ function TreeActions.toggle_node(UiTree)
   -- Check if we're expanding or collapsing
   local was_expanded = obj.ui_state.expanded
 
-  -- Toggle expansion
-  obj:toggle_expand()
+  -- Determine if this object needs async loading when expanded
+  -- Objects with load_async method should use async loading to avoid UI freeze
+  local needs_async_load = not was_expanded and not obj.is_loaded and obj.load_async
+
+  -- Toggle expansion - skip sync loading if we'll handle it async
+  obj:toggle_expand({ skip_load = needs_async_load })
 
   -- Special handling for object groups: Load data when expanding
   if obj.ui_state.expanded and obj._is_ephemeral and obj.parent and obj.parent.object_type == "database" then
@@ -110,32 +114,36 @@ function TreeActions.toggle_node(UiTree)
           vim.notify(string.format("SSNS: Failed to load %s: %s", obj.object_type, err), vim.log.levels.ERROR)
         end
 
-        UiTree.render()
-
-        -- Now position cursor on first child after load completes
-        if obj:has_children() then
-          local child_line = line_number + 1
-          local child_col = smart_positioning and Buffer.get_name_column(child_line) or 0
-          Buffer.set_cursor(child_line, child_col)
-          if smart_positioning then
-            Buffer.last_indent_info = {
-              line = child_line,
-              indent_level = Buffer.get_indent_level(child_line),
-              column = child_col,
-            }
-          end
-        else
-          -- No children loaded (error case or empty), stay on group
-          local group_col = smart_positioning and Buffer.get_name_column(line_number) or 0
-          Buffer.set_cursor(line_number, group_col)
-          if smart_positioning then
-            Buffer.last_indent_info = {
-              line = line_number,
-              indent_level = Buffer.get_indent_level(line_number),
-              column = group_col,
-            }
-          end
-        end
+        -- Render with on_complete callback to defer cursor positioning until after
+        -- all lines are written to the buffer (handles chunked rendering)
+        UiTree.render({
+          on_complete = function()
+            -- Now position cursor on first child after render completes
+            if obj:has_children() then
+              local child_line = line_number + 1
+              local child_col = smart_positioning and Buffer.get_name_column(child_line) or 0
+              Buffer.set_cursor(child_line, child_col)
+              if smart_positioning then
+                Buffer.last_indent_info = {
+                  line = child_line,
+                  indent_level = Buffer.get_indent_level(child_line),
+                  column = child_col,
+                }
+              end
+            else
+              -- No children loaded (error case or empty), stay on group
+              local group_col = smart_positioning and Buffer.get_name_column(line_number) or 0
+              Buffer.set_cursor(line_number, group_col)
+              if smart_positioning then
+                Buffer.last_indent_info = {
+                  line = line_number,
+                  indent_level = Buffer.get_indent_level(line_number),
+                  column = group_col,
+                }
+              end
+            end
+          end,
+        })
       end)
 
       -- Return early - cursor positioning is handled in the callback
@@ -151,54 +159,57 @@ function TreeActions.toggle_node(UiTree)
   if should_load then
     TreeActions.load_node_async(UiTree, obj, line_number)
   else
-    -- Re-render tree immediately
-    UiTree.render()
-
     -- Check if smart cursor positioning is enabled
     local Config = require('ssns.config')
     local smart_positioning = Config.get_ui().smart_cursor_positioning
 
-    -- Position cursor appropriately
-    if obj.ui_state.expanded and not was_expanded then
-      -- Just expanded - move to first child if exists
-      if obj:has_children() or obj.ui_state.loading or obj.ui_state.error then
-        local child_line = line_number + 1
-        local col = smart_positioning and Buffer.get_name_column(child_line) or 0
-        Buffer.set_cursor(child_line, col)
-        -- Update indent tracking
-        if smart_positioning then
-          Buffer.last_indent_info = {
-            line = child_line,
-            indent_level = Buffer.get_indent_level(child_line),
-            column = col,
-          }
+    -- Re-render tree with on_complete callback to defer cursor positioning
+    -- until after all lines are written (handles chunked rendering for large trees)
+    UiTree.render({
+      on_complete = function()
+        -- Position cursor appropriately
+        if obj.ui_state.expanded and not was_expanded then
+          -- Just expanded - move to first child if exists
+          if obj:has_children() or obj.ui_state.loading or obj.ui_state.error then
+            local child_line = line_number + 1
+            local col = smart_positioning and Buffer.get_name_column(child_line) or 0
+            Buffer.set_cursor(child_line, col)
+            -- Update indent tracking
+            if smart_positioning then
+              Buffer.last_indent_info = {
+                line = child_line,
+                indent_level = Buffer.get_indent_level(child_line),
+                column = col,
+              }
+            end
+          else
+            -- No children, stay on current line
+            local col = smart_positioning and Buffer.get_name_column(line_number) or 0
+            Buffer.set_cursor(line_number, col)
+            -- Update indent tracking
+            if smart_positioning then
+              Buffer.last_indent_info = {
+                line = line_number,
+                indent_level = Buffer.get_indent_level(line_number),
+                column = col,
+              }
+            end
+          end
+        else
+          -- Collapsed or stayed same - restore cursor position
+          local col = smart_positioning and Buffer.get_name_column(line_number) or 0
+          Buffer.set_cursor(line_number, col)
+          -- Update indent tracking
+          if smart_positioning then
+            Buffer.last_indent_info = {
+              line = line_number,
+              indent_level = Buffer.get_indent_level(line_number),
+              column = col,
+            }
+          end
         end
-      else
-        -- No children, stay on current line
-        local col = smart_positioning and Buffer.get_name_column(line_number) or 0
-        Buffer.set_cursor(line_number, col)
-        -- Update indent tracking
-        if smart_positioning then
-          Buffer.last_indent_info = {
-            line = line_number,
-            indent_level = Buffer.get_indent_level(line_number),
-            column = col,
-          }
-        end
-      end
-    else
-      -- Collapsed or stayed same - restore cursor position
-      local col = smart_positioning and Buffer.get_name_column(line_number) or 0
-      Buffer.set_cursor(line_number, col)
-      -- Update indent tracking
-      if smart_positioning then
-        Buffer.last_indent_info = {
-          line = line_number,
-          indent_level = Buffer.get_indent_level(line_number),
-          column = col,
-        }
-      end
-    end
+      end,
+    })
   end
 end
 
@@ -281,34 +292,37 @@ function TreeActions.load_node_async(UiTree, obj, line_number)
     end
 
     -- Re-render tree with results or error
-    UiTree.render()
-
-    -- Position cursor at first child if loaded successfully
-    if success and obj:has_children() then
-      local child_line = line_number + 1
-      local child_col = smart_positioning and Buffer.get_name_column(child_line) or 0
-      Buffer.set_cursor(child_line, child_col)
-      -- Update indent tracking
-      if smart_positioning then
-        Buffer.last_indent_info = {
-          line = child_line,
-          indent_level = Buffer.get_indent_level(child_line),
-          column = child_col,
-        }
-      end
-    else
-      -- Error or no children, stay on current line
-      local current_col = smart_positioning and Buffer.get_name_column(line_number) or 0
-      Buffer.set_cursor(line_number, current_col)
-      -- Update indent tracking
-      if smart_positioning then
-        Buffer.last_indent_info = {
-          line = line_number,
-          indent_level = Buffer.get_indent_level(line_number),
-          column = current_col,
-        }
-      end
-    end
+    -- Defer cursor positioning until after render completes (handles chunked rendering)
+    UiTree.render({
+      on_complete = function()
+        -- Position cursor at first child if loaded successfully
+        if success and obj:has_children() then
+          local child_line = line_number + 1
+          local child_col = smart_positioning and Buffer.get_name_column(child_line) or 0
+          Buffer.set_cursor(child_line, child_col)
+          -- Update indent tracking
+          if smart_positioning then
+            Buffer.last_indent_info = {
+              line = child_line,
+              indent_level = Buffer.get_indent_level(child_line),
+              column = child_col,
+            }
+          end
+        else
+          -- Error or no children, stay on current line
+          local current_col = smart_positioning and Buffer.get_name_column(line_number) or 0
+          Buffer.set_cursor(line_number, current_col)
+          -- Update indent tracking
+          if smart_positioning then
+            Buffer.last_indent_info = {
+              line = line_number,
+              indent_level = Buffer.get_indent_level(line_number),
+              column = current_col,
+            }
+          end
+        end
+      end,
+    })
   end
 
   -- Check if object supports true async RPC (ServerClass)
@@ -651,17 +665,21 @@ function TreeActions.refresh_node(UiTree)
       end
 
       -- Re-render tree with results or error
-      UiTree.render()
-      local col = smart_positioning and Buffer.get_name_column(line_number) or 0
-      Buffer.set_cursor(line_number, col)
-      -- Update indent tracking
-      if smart_positioning then
-        Buffer.last_indent_info = {
-          line = line_number,
-          indent_level = Buffer.get_indent_level(line_number),
-          column = col,
-        }
-      end
+      -- Defer cursor positioning until after render completes
+      UiTree.render({
+        on_complete = function()
+          local col = smart_positioning and Buffer.get_name_column(line_number) or 0
+          Buffer.set_cursor(line_number, col)
+          -- Update indent tracking
+          if smart_positioning then
+            Buffer.last_indent_info = {
+              line = line_number,
+              indent_level = Buffer.get_indent_level(line_number),
+              column = col,
+            }
+          end
+        end,
+      })
     end)
   end
 end
@@ -700,19 +718,22 @@ function TreeActions.toggle_connection(UiTree)
       end
 
       -- Re-render tree after connection state changes
-      UiTree.render()
-
-      -- Restore cursor position with smart column
-      local col = smart_positioning and Buffer.get_name_column(line_number) or 0
-      Buffer.set_cursor(line_number, col)
-      -- Update indent tracking
-      if smart_positioning then
-        Buffer.last_indent_info = {
-          line = line_number,
-          indent_level = Buffer.get_indent_level(line_number),
-          column = col,
-        }
-      end
+      -- Defer cursor positioning until after render completes
+      UiTree.render({
+        on_complete = function()
+          -- Restore cursor position with smart column
+          local col = smart_positioning and Buffer.get_name_column(line_number) or 0
+          Buffer.set_cursor(line_number, col)
+          -- Update indent tracking
+          if smart_positioning then
+            Buffer.last_indent_info = {
+              line = line_number,
+              indent_level = Buffer.get_indent_level(line_number),
+              column = col,
+            }
+          end
+        end,
+      })
     end)
   else
     vim.notify("Can only toggle connection on servers/databases", vim.log.levels.WARN)
@@ -755,18 +776,21 @@ function TreeActions.toggle_favorite(UiTree)
         vim.notify(string.format("'%s' %s favorites", obj.name, status), vim.log.levels.INFO)
 
         -- Re-render tree to show updated star icon
-        UiTree.render()
-
-        -- Restore cursor position with smart column
-        local col = smart_positioning and Buffer.get_name_column(line_number) or 0
-        Buffer.set_cursor(line_number, col)
-        if smart_positioning then
-          Buffer.last_indent_info = {
-            line = line_number,
-            indent_level = Buffer.get_indent_level(line_number),
-            column = col,
-          }
-        end
+        -- Defer cursor positioning until after render completes
+        UiTree.render({
+          on_complete = function()
+            -- Restore cursor position with smart column
+            local col = smart_positioning and Buffer.get_name_column(line_number) or 0
+            Buffer.set_cursor(line_number, col)
+            if smart_positioning then
+              Buffer.last_indent_info = {
+                line = line_number,
+                indent_level = Buffer.get_indent_level(line_number),
+                column = col,
+              }
+            end
+          end,
+        })
       end
     end)
   end)

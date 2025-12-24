@@ -264,7 +264,8 @@ end
 
 ---Render the entire tree
 ---@param UiTree table The main UiTree module (for line_map/object_map access)
-function TreeRender.render(UiTree)
+---@param opts { on_complete: function? }? Optional options with completion callback
+function TreeRender.render(UiTree, opts)
   local Cache = require('ssns').get_cache()
   local Buffer = require('ssns.ui.core.buffer')
   local Config = require('ssns.config')
@@ -358,6 +359,10 @@ function TreeRender.render(UiTree)
             if saved_object and Buffer.is_open() then
               UiTree.restore_cursor_to_object(saved_object, saved_column)
             end
+            -- Call external completion callback after all rendering is done
+            if opts and opts.on_complete then
+              opts.on_complete()
+            end
           end,
         })
       end,
@@ -370,6 +375,10 @@ function TreeRender.render(UiTree)
     -- Restore cursor position if we have a saved object
     if saved_object and Buffer.is_open() then
       UiTree.restore_cursor_to_object(saved_object, saved_column)
+    end
+    -- Call external completion callback after sync rendering is done
+    if opts and opts.on_complete then
+      opts.on_complete()
     end
   end
 end

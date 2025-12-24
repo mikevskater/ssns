@@ -183,11 +183,14 @@ function BaseDbObject:load()
 end
 
 ---Toggle the expanded state in the UI
-function BaseDbObject:toggle_expand()
+---@param opts { skip_load: boolean? }? Options - skip_load prevents sync loading (for async loading by caller)
+function BaseDbObject:toggle_expand(opts)
+  opts = opts or {}
   self.ui_state.expanded = not self.ui_state.expanded
 
   -- Lazy load children when expanding for the first time
-  if self.ui_state.expanded and not self.is_loaded then
+  -- Skip if caller will handle loading asynchronously
+  if self.ui_state.expanded and not self.is_loaded and not opts.skip_load then
     self:load()
   end
 end
