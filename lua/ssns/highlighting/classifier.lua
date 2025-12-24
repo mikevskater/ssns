@@ -148,6 +148,11 @@ function Classifier.classify(tokens, chunks, connection, config)
   local create_table_paren_depth = 0  -- Paren depth within CREATE TABLE definition
   local expect_column_name = false   -- True when next identifier should be a column name
 
+  -- Track constraint column list context (PRIMARY KEY, FOREIGN KEY, UNIQUE, REFERENCES)
+  local expect_constraint_columns = false  -- True after seeing PRIMARY KEY, FOREIGN KEY, UNIQUE, REFERENCES
+  local in_constraint_column_list = false  -- True when inside (...) after constraint keywords
+  local constraint_paren_depth = 0         -- Paren depth within constraint column list
+
   -- Track previous token for parameter detection (identifier following @)
   local prev_token = nil
 
@@ -177,6 +182,25 @@ function Classifier.classify(tokens, chunks, connection, config)
           in_create_alter = false
           create_object_type = nil
         end
+      end
+
+      -- Track constraint column list context (for PRIMARY KEY, FOREIGN KEY, UNIQUE, REFERENCES)
+      if keyword_upper == "CONSTRAINT" then
+        -- After CONSTRAINT, next identifier is constraint name, not column
+        expect_column_name = false
+        expect_constraint_columns = false
+      elseif keyword_upper == "KEY" then
+        -- PRIMARY KEY or FOREIGN KEY - expect column list in next parens
+        local prev_upper = prev_token and prev_token.text and prev_token.text:upper()
+        if prev_upper == "PRIMARY" or prev_upper == "FOREIGN" then
+          expect_constraint_columns = true
+        end
+      elseif keyword_upper == "UNIQUE" or keyword_upper == "REFERENCES" then
+        -- UNIQUE constraint or REFERENCES - expect column list in next parens
+        expect_constraint_columns = true
+      elseif keyword_upper == "INDEX" then
+        -- INDEX - expect column list in next parens (for CREATE INDEX or inline)
+        expect_constraint_columns = true
       end
 
       if config.highlight_keywords then
@@ -235,6 +259,15 @@ function Classifier.classify(tokens, chunks, connection, config)
             highlight_group = HIGHLIGHT_MAP.parameter,
           }
         end
+        prev_token = token
+        i = i + 1
+      elseif in_constraint_column_list and constraint_paren_depth == 1 then
+        -- This is a column reference in constraint column list (PRIMARY KEY, FOREIGN KEY, etc.)
+        result = {
+          token = token,
+          semantic_type = "column",
+          highlight_group = HIGHLIGHT_MAP.column,
+        }
         prev_token = token
         i = i + 1
       elseif expect_column_name and in_create_table_def then
@@ -368,27 +401,46 @@ function Classifier.classify(tokens, chunks, connection, config)
       i = i + 1
 
     elseif token.type == TOKEN_TYPES.PAREN_OPEN then
+      -- Track constraint column list context (PRIMARY KEY, FOREIGN KEY, UNIQUE, REFERENCES)
+      if expect_constraint_columns then
+        -- Entering constraint column list (e.g., PRIMARY KEY ([col1], [col2]))
+        in_constraint_column_list = true
+        constraint_paren_depth = 1
+        expect_constraint_columns = false
+      elseif in_constraint_column_list then
+        -- Nested paren within constraint (rare but possible)
+        constraint_paren_depth = constraint_paren_depth + 1
+      end
+
       -- Track CREATE TABLE column definition context
-      if create_object_type == "table" then
-        -- Entering CREATE TABLE (...) definition
-        if not in_create_table_def then
-          in_create_table_def = true
-          create_table_paren_depth = 1
-          expect_column_name = true
-        else
-          -- Nested paren within CREATE TABLE (e.g., CHECK constraint)
-          create_table_paren_depth = create_table_paren_depth + 1
-        end
+      if create_object_type == "table" and not in_create_table_def then
+        -- Entering CREATE TABLE (...) definition for the first time
+        in_create_table_def = true
+        create_table_paren_depth = 1
+        expect_column_name = true
+      elseif in_create_table_def then
+        -- Already inside CREATE TABLE - track nested parens (e.g., IDENTITY(1,1), CHECK(...))
+        create_table_paren_depth = create_table_paren_depth + 1
       end
       prev_token = token
       i = i + 1
 
     elseif token.type == TOKEN_TYPES.PAREN_CLOSE then
+      -- Track constraint column list context
+      if in_constraint_column_list then
+        constraint_paren_depth = constraint_paren_depth - 1
+        if constraint_paren_depth <= 0 then
+          -- Exiting constraint column list
+          in_constraint_column_list = false
+          constraint_paren_depth = 0
+        end
+      end
+
       -- Track CREATE TABLE column definition context
       if in_create_table_def then
         create_table_paren_depth = create_table_paren_depth - 1
         if create_table_paren_depth <= 0 then
-          -- Exiting CREATE TABLE definition
+          -- Exiting CREATE TABLE definition (closing the main paren)
           in_create_table_def = false
           create_table_paren_depth = 0
           expect_column_name = false

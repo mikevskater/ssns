@@ -154,8 +154,8 @@ function TreeActions.toggle_node(UiTree)
     end
   end
 
-  -- Don't auto-load databases on expansion - groups will trigger loading when needed
-  local should_load = obj.ui_state.expanded and not obj.is_loaded and obj.load and obj.object_type ~= "database"
+  -- Load objects asynchronously when expanding for the first time
+  local should_load = obj.ui_state.expanded and not obj.is_loaded and obj.load
   if should_load then
     TreeActions.load_node_async(UiTree, obj, line_number)
   else
@@ -327,8 +327,16 @@ function TreeActions.load_node_async(UiTree, obj, line_number)
 
   -- Check if object supports true async RPC (ServerClass)
   if obj.load_async then
+    -- For servers, use connect_and_load_async if not connected
+    -- This handles the connection step automatically
+    local async_method = obj.load_async
+    if obj.object_type == "server" and obj.connect_and_load_async then
+      -- connect_and_load_async handles: already connected -> load, not connected -> connect then load
+      async_method = obj.connect_and_load_async
+    end
+
     -- Use true non-blocking RPC async - UI stays responsive
-    local callback_id = obj:load_async({
+    local callback_id = async_method(obj, {
       timeout_ms = 60000, -- 60 seconds for metadata loads
       on_complete = handle_load_complete,
     })

@@ -1,5 +1,6 @@
 ---@class ThreadedHighlighting
----Async highlighting coordinator that offloads tokenization/classification to worker threads
+---Async highlighting coordinator that offloads tokenization to worker threads
+---Tokenization runs in worker thread, semantic classification (with DB lookups) runs on main thread
 ---Prevents UI blocking on large SQL files
 ---Falls back to sync highlighting if threading unavailable
 local ThreadedHighlighting = {}
@@ -26,10 +27,10 @@ function ThreadedHighlighting.cancel(bufnr)
   end
 end
 
----Get classified tokens asynchronously using worker thread
+---Get tokens asynchronously using worker thread
 ---@param bufnr number Buffer number
----@param text string SQL text to tokenize and classify
----@param on_complete fun(tokens: table[]?, error: string?) Callback with classified tokens
+---@param text string SQL text to tokenize
+---@param on_complete fun(tokens: table[]?, error: string?) Callback with tokens
 ---@param on_progress fun(pct: number, message: string?)? Optional progress callback
 ---@return boolean started True if threaded tokenization was started
 function ThreadedHighlighting.tokenize_async(bufnr, text, on_complete, on_progress)
@@ -41,9 +42,9 @@ function ThreadedHighlighting.tokenize_async(bufnr, text, on_complete, on_progre
     return false
   end
 
-  -- Start threaded tokenization
+  -- Start threaded tokenization using the tokenize worker (not sql_highlighting)
   local task_id, err = Coordinator.start({
-    worker = "sql_highlighting",
+    worker = "tokenize",
     input = {
       text = text,
       options = {
@@ -82,6 +83,7 @@ function ThreadedHighlighting.tokenize_async(bufnr, text, on_complete, on_progre
 end
 
 ---Perform threaded highlighting update
+---Tokenizes in worker thread, then does semantic classification on main thread
 ---@param bufnr number Buffer number
 ---@param on_complete fun(success: boolean, error: string?)? Optional callback on completion
 function ThreadedHighlighting.update(bufnr, on_complete)
@@ -119,7 +121,8 @@ function ThreadedHighlighting.update(bufnr, on_complete)
       return
     end
 
-    -- Apply highlights on main thread
+    -- Do semantic classification and apply highlights on main thread
+    -- This is where database lookups happen (requires vim.* APIs and cache access)
     vim.schedule(function()
       if not vim.api.nvim_buf_is_valid(bufnr) then
         if on_complete then on_complete(false, "Buffer became invalid") end
@@ -127,7 +130,45 @@ function ThreadedHighlighting.update(bufnr, on_complete)
       end
 
       local SemanticHighlighter = require('ssns.highlighting.semantic')
-      SemanticHighlighter._apply_highlights(bufnr, tokens, lines)
+
+      -- Get connection context for semantic classification
+      local connection = SemanticHighlighter._get_connection(bufnr)
+
+      -- Get statement cache for chunk information (needed by classifier)
+      local StatementCache = require('ssns.completion.statement_cache')
+      local cache = StatementCache.get_or_build_cache(bufnr)
+      local chunks = cache and cache.chunks or {}
+
+      -- Classify tokens with database object lookups
+      local Classifier = require('ssns.highlighting.classifier')
+      local classified = Classifier.classify(tokens, chunks, connection, config)
+
+      -- Apply highlights
+      local ns_id = SemanticHighlighter.get_namespace()
+      if not ns_id then
+        ns_id = vim.api.nvim_create_namespace("ssns_semantic")
+      end
+
+      -- Clear existing highlights
+      vim.api.nvim_buf_clear_namespace(bufnr, ns_id, 0, -1)
+
+      -- Apply token highlights
+      for _, item in ipairs(classified) do
+        if item.highlight_group then
+          -- Convert 1-indexed (tokenizer) to 0-indexed (nvim API)
+          local line = item.token.line - 1
+          local col_start = item.token.col - 1
+          local col_end = col_start + #item.token.text
+
+          -- Ensure we don't go past buffer bounds
+          if line >= 0 and line < #lines then
+            local line_len = #lines[line + 1]
+            if col_start >= 0 and col_end <= line_len then
+              vim.api.nvim_buf_add_highlight(bufnr, ns_id, item.highlight_group, line, col_start, col_end)
+            end
+          end
+        end
+      end
 
       if on_complete then on_complete(true, nil) end
     end)
