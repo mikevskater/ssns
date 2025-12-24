@@ -6,96 +6,143 @@ local M = {}
 -- Import loaders module
 local Loaders = require('ssns.highlighting.classifier_loaders')
 
----Scan the UI tree cache for an object by name
+---Search a single database for an object by name
+---@param db DbClass Database to search
+---@param server ServerClass Server containing the database
+---@param name_lower string Lowercase object name
+---@param skip_opts table Skip load options
+---@return string? object_type, table? object, table? parent
+local function search_database_for_object(db, server, name_lower, skip_opts)
+  -- Check schemas (for schema-based servers)
+  for _, schema in ipairs(db:get_schemas(skip_opts)) do
+    local schema_name = schema.schema_name or schema.name
+    if schema_name and schema_name:lower() == name_lower then
+      return "schema", db, server
+    end
+  end
+
+  -- Check tables
+  for _, tbl in ipairs(db:get_tables(nil, skip_opts)) do
+    local tbl_name = tbl.table_name or tbl.name
+    if tbl_name and tbl_name:lower() == name_lower then
+      return "table", tbl, db
+    end
+    -- Also check if name matches a schema_name
+    local schema_name = tbl.schema_name or tbl.schema
+    if schema_name and schema_name:lower() == name_lower then
+      return "schema", db, server
+    end
+  end
+
+  -- Check views
+  for _, view in ipairs(db:get_views(nil, skip_opts)) do
+    local view_name = view.view_name or view.name
+    if view_name and view_name:lower() == name_lower then
+      return "view", view, db
+    end
+    local schema_name = view.schema_name or view.schema
+    if schema_name and schema_name:lower() == name_lower then
+      return "schema", db, server
+    end
+  end
+
+  -- Check procedures
+  for _, proc in ipairs(db:get_procedures(nil, skip_opts)) do
+    local proc_name = proc.procedure_name or proc.name
+    if proc_name and proc_name:lower() == name_lower then
+      return "procedure", proc, db
+    end
+    local schema_name = proc.schema_name or proc.schema
+    if schema_name and schema_name:lower() == name_lower then
+      return "schema", db, server
+    end
+  end
+
+  -- Check functions
+  for _, func in ipairs(db:get_functions(nil, skip_opts)) do
+    local func_name = func.function_name or func.name
+    if func_name and func_name:lower() == name_lower then
+      return "function", func, db
+    end
+    local schema_name = func.schema_name or func.schema
+    if schema_name and schema_name:lower() == name_lower then
+      return "schema", db, server
+    end
+  end
+
+  -- Check synonyms
+  for _, syn in ipairs(db:get_synonyms(nil, skip_opts)) do
+    local syn_name = syn.synonym_name or syn.name
+    if syn_name and syn_name:lower() == name_lower then
+      return "synonym", syn, db
+    end
+    local schema_name = syn.schema_name or syn.schema
+    if schema_name and schema_name:lower() == name_lower then
+      return "schema", db, server
+    end
+  end
+
+  return nil, nil, nil
+end
+
+---Scan the UI tree cache for an object by name, prioritizing the connected database
 ---Returns the object type if found: "database", "schema", "table", "view", "procedure", "function"
 ---NOTE: Uses skip_load=true to prevent triggering database loads during highlighting
 ---@param name string Object name to search for (case-insensitive)
+---@param connection table? Connection context - searched first if provided
 ---@return string? object_type The type if found, nil otherwise
 ---@return table? object The found object (for database/table/view/etc) or parent database (for schema)
 ---@return table? parent The parent object
-function M.find_in_tree_cache(name)
+function M.find_in_tree_cache(name, connection)
   local Cache = require('ssns.cache')
   local name_lower = name:lower()
 
   -- Use skip_load to prevent triggering database loads during semantic highlighting
-  -- This ensures we only search already-loaded data and don't cause RPC calls
   local skip_opts = { skip_load = true }
 
-  -- Scan all servers using accessor methods
-  for _, server in ipairs(Cache.servers or {}) do
-    -- Check each database
-    for _, db in ipairs(server:get_databases()) do
+  -- Priority 1: Search the connected database first (most common case)
+  if connection and connection.database then
+    local db = connection.database
+    local server = connection.server
+
+    -- Check if name matches the connected database name
+    local db_name = db.db_name or db.name
+    if db_name and db_name:lower() == name_lower then
+      return "database", db, server
+    end
+
+    -- Search within the connected database
+    local obj_type, obj, parent = search_database_for_object(db, server, name_lower, skip_opts)
+    if obj_type then
+      return obj_type, obj, parent
+    end
+  end
+
+  -- Priority 2: Check if name is a database name on the connected server
+  -- (for cross-database queries like "USE OtherDb" or "OtherDb.dbo.Table")
+  if connection and connection.server then
+    local server = connection.server
+    for _, db in ipairs(server:get_databases(skip_opts)) do
       local db_name = db.db_name or db.name
       if db_name and db_name:lower() == name_lower then
         return "database", db, server
       end
+    end
+  end
 
-      -- Check schemas (for schema-based servers)
-      for _, schema in ipairs(db:get_schemas()) do
-        local schema_name = schema.schema_name or schema.name
-        if schema_name and schema_name:lower() == name_lower then
-          return "schema", db, server
+  -- Priority 3: If no connection, fall back to scanning all servers (legacy behavior)
+  -- This is only used when buffer has no connection context
+  if not connection then
+    for _, server in ipairs(Cache.servers or {}) do
+      for _, db in ipairs(server:get_databases(skip_opts)) do
+        local db_name = db.db_name or db.name
+        if db_name and db_name:lower() == name_lower then
+          return "database", db, server
         end
-      end
 
-      -- Check tables (skip_load prevents triggering load)
-      for _, tbl in ipairs(db:get_tables(nil, skip_opts)) do
-        local tbl_name = tbl.table_name or tbl.name
-        if tbl_name and tbl_name:lower() == name_lower then
-          return "table", tbl, db
-        end
-        -- Also check if name matches a schema_name
-        local schema_name = tbl.schema_name or tbl.schema
-        if schema_name and schema_name:lower() == name_lower then
-          return "schema", db, server
-        end
-      end
-
-      -- Check views (skip_load prevents triggering load)
-      for _, view in ipairs(db:get_views(nil, skip_opts)) do
-        local view_name = view.view_name or view.name
-        if view_name and view_name:lower() == name_lower then
-          return "view", view, db
-        end
-        local schema_name = view.schema_name or view.schema
-        if schema_name and schema_name:lower() == name_lower then
-          return "schema", db, server
-        end
-      end
-
-      -- Check procedures (skip_load prevents triggering load)
-      for _, proc in ipairs(db:get_procedures(nil, skip_opts)) do
-        local proc_name = proc.procedure_name or proc.name
-        if proc_name and proc_name:lower() == name_lower then
-          return "procedure", proc, db
-        end
-        local schema_name = proc.schema_name or proc.schema
-        if schema_name and schema_name:lower() == name_lower then
-          return "schema", db, server
-        end
-      end
-
-      -- Check functions (skip_load prevents triggering load)
-      for _, func in ipairs(db:get_functions(nil, skip_opts)) do
-        local func_name = func.function_name or func.name
-        if func_name and func_name:lower() == name_lower then
-          return "function", func, db
-        end
-        local schema_name = func.schema_name or func.schema
-        if schema_name and schema_name:lower() == name_lower then
-          return "schema", db, server
-        end
-      end
-
-      -- Check synonyms (skip_load prevents triggering load)
-      for _, syn in ipairs(db:get_synonyms(nil, skip_opts)) do
-        local syn_name = syn.synonym_name or syn.name
-        if syn_name and syn_name:lower() == name_lower then
-          return "synonym", syn, db
-        end
-        local schema_name = syn.schema_name or syn.schema
-        if schema_name and schema_name:lower() == name_lower then
-          return "schema", db, server
+        local obj_type, obj, parent = search_database_for_object(db, server, name_lower, skip_opts)
+        if obj_type then
+          return obj_type, obj, parent
         end
       end
     end
@@ -114,8 +161,8 @@ function M.find_schema_in_db(db, name)
   -- Use skip_load to prevent triggering database loads
   local skip_opts = { skip_load = true }
 
-  -- First check actual schema objects (for schema-based servers)
-  for _, schema in ipairs(db:get_schemas()) do
+  -- First check actual schema objects (for schema-based servers, skip_load prevents triggering load)
+  for _, schema in ipairs(db:get_schemas(skip_opts)) do
     local schema_name = schema.schema_name or schema.name
     if schema_name and schema_name:lower() == name_lower then
       return true
@@ -421,30 +468,53 @@ function M.resolve_table_ref_to_object(table_ref, connection)
   return nil, nil
 end
 
----Find all columns across all loaded tables/views in the cache
+---Find all columns across loaded tables/views, prioritizing the connected database
 ---@param column_name string Column name to search for
+---@param connection table? Connection context - searched first if provided
 ---@return boolean found True if column exists anywhere
-function M.find_column_in_cache(column_name)
+function M.find_column_in_cache(column_name, connection)
   local Cache = require('ssns.cache')
 
   -- Use skip_load to prevent triggering database loads
   local skip_opts = { skip_load = true }
 
-  for _, server in ipairs(Cache.servers or {}) do
-    local databases = server:get_databases()
-    for _, db in ipairs(databases) do
-      -- Check tables (skip_load prevents triggering load)
-      local tables = db:get_tables(nil, skip_opts)
-      for _, tbl in ipairs(tables) do
-        if M.find_column_in_object(tbl, column_name) then
-          return true
-        end
+  -- Priority 1: Search the connected database first
+  if connection and connection.database then
+    local db = connection.database
+    -- Check tables
+    local tables = db:get_tables(nil, skip_opts)
+    for _, tbl in ipairs(tables) do
+      if M.find_column_in_object(tbl, column_name) then
+        return true
       end
-      -- Check views (skip_load prevents triggering load)
-      local views = db:get_views(nil, skip_opts)
-      for _, view in ipairs(views) do
-        if M.find_column_in_object(view, column_name) then
-          return true
+    end
+    -- Check views
+    local views = db:get_views(nil, skip_opts)
+    for _, view in ipairs(views) do
+      if M.find_column_in_object(view, column_name) then
+        return true
+      end
+    end
+    -- Found in connected database is the common case - don't scan other servers
+    return false
+  end
+
+  -- Priority 2: No connection - fall back to scanning all servers (legacy behavior)
+  if not connection then
+    for _, server in ipairs(Cache.servers or {}) do
+      local databases = server:get_databases(skip_opts)
+      for _, db in ipairs(databases) do
+        local tables = db:get_tables(nil, skip_opts)
+        for _, tbl in ipairs(tables) do
+          if M.find_column_in_object(tbl, column_name) then
+            return true
+          end
+        end
+        local views = db:get_views(nil, skip_opts)
+        for _, view in ipairs(views) do
+          if M.find_column_in_object(view, column_name) then
+            return true
+          end
         end
       end
     end
@@ -559,7 +629,7 @@ function M.resolve_multipart_from_cache(names, sql_context, connection, resoluti
   if #names >= 4 then
     -- Could be database.schema.table.column or server.database.schema.table
     -- Try to disambiguate: if first part is a known database, it's db.schema.table.column
-    local db = Loaders.find_database(name1)
+    local db = Loaders.find_database(name1, connection)
     if db then
       -- It's database.schema.table.column
       return M.resolve_as_database_qualified(names, db)
@@ -575,7 +645,7 @@ function M.resolve_multipart_from_cache(names, sql_context, connection, resoluti
   -- Step 2: USE keyword context - first part is always database
   -- ============================================================================
   if resolution_context.is_database_context and #names == 1 then
-    local db = Loaders.find_database(name1)
+    local db = Loaders.find_database(name1, connection)
     if db then
       Loaders.ensure_schemas_loaded(db)
     end
@@ -704,7 +774,7 @@ function M.resolve_multipart_from_cache(names, sql_context, connection, resoluti
   -- Step 5: Cross-database reference (database.schema.object or database.object)
   -- Only checked AFTER schema in current DB
   -- ============================================================================
-  local db = Loaders.find_database(name1)
+  local db = Loaders.find_database(name1, connection)
   if db then
     return M.resolve_as_database_qualified(names, db)
   end

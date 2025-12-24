@@ -241,10 +241,12 @@ function DbClass:find_schema(schema_name)
 end
 
 ---Get all schemas
+---@param opts { skip_load: boolean? }? Options
 ---@return SchemaClass[]
-function DbClass:get_schemas()
+function DbClass:get_schemas(opts)
+  opts = opts or {}
   -- For schema completion, only load schema names (not all objects)
-  if not self.schemas then
+  if not self.schemas and not opts.skip_load then
     self:_ensure_schemas_loaded()
   end
   return self.schemas or {}

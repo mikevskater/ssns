@@ -338,9 +338,11 @@ function ServerClass:get_database(database_name)
 end
 
 ---Get all databases
+---@param opts { skip_load: boolean? }? Options
 ---@return DbClass[]
-function ServerClass:get_databases()
-  if not self.is_loaded then
+function ServerClass:get_databases(opts)
+  opts = opts or {}
+  if not self.is_loaded and not opts.skip_load then
     self:load()
   end
   return self.databases or {}

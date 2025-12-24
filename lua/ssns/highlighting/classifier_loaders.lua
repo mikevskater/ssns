@@ -5,22 +5,61 @@
 ---@class ClassifierLoaders
 local M = {}
 
----Find a database by name across all servers
+---Find a database by name, prioritizing the connected server
+---Only searches already-loaded data - does NOT trigger server connections or loading
 ---@param name string Database name (case-insensitive)
+---@param connection table? Connection context with server/database - searched first if provided
 ---@return DbClass? database The database if found
 ---@return ServerClass? server The server containing the database
-function M.find_database(name)
+function M.find_database(name, connection)
   local Cache = require('ssns.cache')
   local name_lower = name:lower()
 
-  for _, server in ipairs(Cache.servers or {}) do
-    for _, db in ipairs(server:get_databases()) do
+  -- Use skip_load = true to prevent triggering server connections during semantic highlighting
+  local skip_opts = { skip_load = true }
+
+  -- Priority 1: Search the connected server first (most common case)
+  if connection and connection.server then
+    local server = connection.server
+    for _, db in ipairs(server:get_databases(skip_opts)) do
       local db_name = db.db_name or db.name
       if db_name and db_name:lower() == name_lower then
         return db, server
       end
     end
+    -- Database not on connected server - this is likely a cross-database reference
+    -- Fall through to search other servers only for explicit cross-DB queries
   end
+
+  -- Priority 2: Only scan other servers if this looks like a cross-database reference
+  -- (i.e., we have a connection but the database name doesn't match the connected one)
+  -- Skip this expensive scan if we don't have a connection context at all
+  if connection and connection.server then
+    -- We already searched the connected server above
+    -- Only search other servers for cross-database references
+    for _, server in ipairs(Cache.servers or {}) do
+      -- Skip the connected server (already searched)
+      if server ~= connection.server then
+        for _, db in ipairs(server:get_databases(skip_opts)) do
+          local db_name = db.db_name or db.name
+          if db_name and db_name:lower() == name_lower then
+            return db, server
+          end
+        end
+      end
+    end
+  elseif not connection then
+    -- No connection context - search all servers (legacy fallback)
+    for _, server in ipairs(Cache.servers or {}) do
+      for _, db in ipairs(server:get_databases(skip_opts)) do
+        local db_name = db.db_name or db.name
+        if db_name and db_name:lower() == name_lower then
+          return db, server
+        end
+      end
+    end
+  end
+
   return nil, nil
 end
 
