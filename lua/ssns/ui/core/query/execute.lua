@@ -28,6 +28,13 @@ local function get_or_create_results_buffer(query_bufnr)
   local results_buf_name = string.format("SSNS Results [%s]", short_name)
 
   -- Try to find existing results buffer
+  -- Use bufnr() which handles unlisted/hidden buffers better
+  local existing_bufnr = vim.fn.bufnr(results_buf_name)
+  if existing_bufnr ~= -1 and vim.api.nvim_buf_is_valid(existing_bufnr) then
+    return existing_bufnr, false
+  end
+
+  -- Fallback: iterate through all buffers
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_valid(buf) then
       local buf_name = vim.api.nvim_buf_get_name(buf)
@@ -38,6 +45,12 @@ local function get_or_create_results_buffer(query_bufnr)
   end
 
   -- Create new buffer
+  -- First, wipe any stale buffer with this name to avoid E95 error
+  local stale_bufnr = vim.fn.bufnr(results_buf_name)
+  if stale_bufnr ~= -1 then
+    pcall(vim.api.nvim_buf_delete, stale_bufnr, { force = true })
+  end
+
   local result_buf = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_name(result_buf, results_buf_name)
   vim.api.nvim_buf_set_option(result_buf, 'buftype', 'nofile')
@@ -367,19 +380,32 @@ function QueryExecute.display_error(error, sql, query_bufnr)
   end
 
   -- Display detailed error in results window
+  -- Use bufnr() which handles unlisted/hidden buffers better
   local result_buf = nil
-  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_valid(buf) then
-      local buf_name = vim.api.nvim_buf_get_name(buf)
-      if buf_name:match("SSNS Results") then
-        result_buf = buf
-        break
+  local existing_bufnr = vim.fn.bufnr("SSNS Results")
+  if existing_bufnr ~= -1 and vim.api.nvim_buf_is_valid(existing_bufnr) then
+    result_buf = existing_bufnr
+  else
+    -- Fallback: iterate through all buffers
+    for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_is_valid(buf) then
+        local buf_name = vim.api.nvim_buf_get_name(buf)
+        if buf_name:match("SSNS Results") then
+          result_buf = buf
+          break
+        end
       end
     end
   end
 
   -- Create new buffer if not found
   if not result_buf then
+    -- First, wipe any stale buffer with this name to avoid E95 error
+    local stale_bufnr = vim.fn.bufnr("SSNS Results")
+    if stale_bufnr ~= -1 then
+      pcall(vim.api.nvim_buf_delete, stale_bufnr, { force = true })
+    end
+
     result_buf = vim.api.nvim_create_buf(false, true)
     vim.api.nvim_buf_set_name(result_buf, "SSNS Results")
     vim.api.nvim_buf_set_option(result_buf, 'buftype', 'nofile')

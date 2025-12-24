@@ -37,6 +37,12 @@ end
 ---@return number bufnr The buffer number
 function UiBuffer.create()
   -- Create a new buffer
+  -- First, wipe any stale buffer with this name to avoid E95 error
+  local stale_bufnr = vim.fn.bufnr("SSNS")
+  if stale_bufnr ~= -1 then
+    pcall(vim.api.nvim_buf_delete, stale_bufnr, { force = true })
+  end
+
   local bufnr = vim.api.nvim_create_buf(false, true)
 
   -- Set buffer options
