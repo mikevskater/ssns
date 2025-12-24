@@ -91,13 +91,8 @@ end
 local function navigate_themes(direction)
   if not state or not multi_panel then return end
 
-  state.selected_theme_idx = state.selected_theme_idx + direction
-
-  if state.selected_theme_idx < 1 then
-    state.selected_theme_idx = #state.available_themes
-  elseif state.selected_theme_idx > #state.available_themes then
-    state.selected_theme_idx = 1
-  end
+  -- Use visual order for navigation (Default, User, Built-in)
+  state.selected_theme_idx = Render.get_next_theme_idx(state, state.selected_theme_idx, direction)
 
   -- Load theme colors
   load_theme_colors(state)
@@ -395,7 +390,20 @@ function ThemeEditor.show()
           title = string.format("Colors [%s]", theme_name),
           ratio = 0.40,
           on_render = function() return Render.render_colors(state) end,
-          on_create = function(bufnr)
+          on_create = function(bufnr, winid)
+            -- Create a CursorLine highlight that only sets background (no foreground)
+            -- This allows the swatch colors to show through
+            vim.api.nvim_set_hl(0, "SsnsFloatSelectedBgOnly", {
+              bg = vim.api.nvim_get_hl(0, { name = "SsnsFloatSelected" }).bg or "#3a3a3a",
+            })
+
+            -- Set winhighlight to use the bg-only version for CursorLine
+            vim.api.nvim_set_option_value(
+              'winhighlight',
+              'Normal:Normal,FloatBorder:SsnsFloatBorder,FloatTitle:SsnsFloatTitle,CursorLine:SsnsFloatSelectedBgOnly',
+              { win = winid }
+            )
+
             -- Apply swatch highlights after buffer is created
             vim.schedule(function()
               Render.apply_swatch_highlights(bufnr, state)
