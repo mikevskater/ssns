@@ -12,6 +12,9 @@ local enabled_buffers = {}
 -- Pending highlight timers per buffer (for minimal debounce)
 local pending_timers = {}
 
+-- Track active threaded highlighting tasks per buffer
+local threaded_tasks = {}
+
 -- Default debounce delay in ms (fallback if config not available)
 local DEFAULT_DEBOUNCE_MS = 50
 
@@ -47,10 +50,64 @@ local function schedule_update(bufnr)
     pending_timers[bufnr] = nil
     vim.schedule(function()
       if vim.api.nvim_buf_is_valid(bufnr) and enabled_buffers[bufnr] then
-        SemanticHighlighter.update(bufnr)
+        SemanticHighlighter.update_threaded(bufnr)
       end
     end)
   end)
+end
+
+---Update semantic highlights using threaded worker when available
+---Falls back to sync update if threading unavailable
+---@param bufnr number Buffer number
+function SemanticHighlighter.update_threaded(bufnr)
+  local ThreadedHighlighting = require('ssns.highlighting.threaded')
+
+  if ThreadedHighlighting.is_available() then
+    threaded_tasks[bufnr] = true
+    ThreadedHighlighting.update(bufnr, function(success, err)
+      threaded_tasks[bufnr] = nil
+      -- Errors are silently ignored, highlighting will just use sync fallback next time
+    end)
+  else
+    -- Fall back to sync update
+    SemanticHighlighter.update(bufnr)
+  end
+end
+
+---Apply highlights from classified tokens (used by threaded worker)
+---@param bufnr number Buffer number
+---@param tokens table[] Classified tokens with highlight_group
+---@param lines string[] Buffer lines for bounds checking
+function SemanticHighlighter._apply_highlights(bufnr, tokens, lines)
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    return
+  end
+
+  -- Ensure namespace exists
+  if not ns_id then
+    ns_id = vim.api.nvim_create_namespace(NAMESPACE)
+  end
+
+  -- Clear existing highlights
+  vim.api.nvim_buf_clear_namespace(bufnr, ns_id, 0, -1)
+
+  -- Apply token highlights
+  for _, item in ipairs(tokens) do
+    if item.highlight_group then
+      -- Convert 1-indexed (tokenizer) to 0-indexed (nvim API)
+      local line = item.line - 1
+      local col_start = item.col - 1
+      local col_end = col_start + #item.text
+
+      -- Ensure we don't go past buffer bounds
+      if line >= 0 and line < #lines then
+        local line_len = #lines[line + 1]
+        if col_start >= 0 and col_end <= line_len then
+          vim.api.nvim_buf_add_highlight(bufnr, ns_id, item.highlight_group, line, col_start, col_end)
+        end
+      end
+    end
+  end
 end
 
 ---Enable semantic highlighting for a buffer
@@ -93,13 +150,19 @@ function SemanticHighlighter.setup_buffer(bufnr)
         vim.fn.timer_stop(pending_timers[buf])
         pending_timers[buf] = nil
       end
+      -- Cancel any active threaded highlighting
+      if threaded_tasks[buf] then
+        local ThreadedHighlighting = require('ssns.highlighting.threaded')
+        ThreadedHighlighting.cancel(buf)
+        threaded_tasks[buf] = nil
+      end
     end,
   })
 
-  -- Trigger initial highlight immediately
+  -- Trigger initial highlight immediately (use threaded when available)
   vim.schedule(function()
     if vim.api.nvim_buf_is_valid(bufnr) then
-      SemanticHighlighter.update(bufnr)
+      SemanticHighlighter.update_threaded(bufnr)
     end
   end)
 end
