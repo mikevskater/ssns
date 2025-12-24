@@ -159,7 +159,7 @@ local ui_state = {
   show_procedures = true,
   show_functions = true,
   show_synonyms = true,
-  show_schemas = true,
+  show_schemas = false,
   -- Search options
   show_system = false,
   case_sensitive = false,
@@ -615,7 +615,7 @@ function M.reset_state(clear_saved)
     show_procedures = true,
     show_functions = true,
     show_synonyms = true,
-    show_schemas = true,
+    show_schemas = false,
     -- Search options
     show_system = false,
     case_sensitive = false,
