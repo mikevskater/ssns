@@ -75,6 +75,42 @@ UiFloat.ZINDEX = {
   DROPDOWN = 200,   -- Dropdowns and menus (highest priority)
 }
 
+-- ============================================================================
+-- Z-Index Layer Helpers
+-- ============================================================================
+
+---Z-index layer boundaries for bring_to_front/send_to_back operations
+local LAYER_BOUNDS = {
+  { min = 0, max = 99, base = UiFloat.ZINDEX.BASE },        -- BASE layer
+  { min = 100, max = 149, base = UiFloat.ZINDEX.OVERLAY },  -- OVERLAY layer
+  { min = 150, max = 199, base = UiFloat.ZINDEX.MODAL },    -- MODAL layer
+  { min = 200, max = 250, base = UiFloat.ZINDEX.DROPDOWN }, -- DROPDOWN layer
+}
+
+---Get the base z-index for the layer containing the given z-index
+---@param zindex number Current z-index value
+---@return number base The base z-index for this layer
+local function get_layer_base(zindex)
+  for _, layer in ipairs(LAYER_BOUNDS) do
+    if zindex >= layer.min and zindex <= layer.max then
+      return layer.base
+    end
+  end
+  return UiFloat.ZINDEX.BASE
+end
+
+---Get the maximum z-index for the layer containing the given z-index
+---@param zindex number Current z-index value
+---@return number max The maximum z-index for this layer
+local function get_layer_max(zindex)
+  for _, layer in ipairs(LAYER_BOUNDS) do
+    if zindex >= layer.min and zindex <= layer.max then
+      return layer.max
+    end
+  end
+  return 99
+end
+
 ---Create a new floating window
 ---@param lines string[]|FloatConfig? Initial content lines OR config (for convenience)
 ---@param config FloatConfig? Configuration options
@@ -733,6 +769,47 @@ function FloatWindow:set_cursor(row, col)
     local clamped_row = math.max(1, math.min(row, line_count))
     vim.api.nvim_win_set_cursor(self.winid, { clamped_row, col })
   end
+end
+
+-- ============================================================================
+-- Z-Index / Panel Ordering Methods
+-- ============================================================================
+
+---Get current z-index
+---@return number zindex The current z-index value
+function FloatWindow:get_zindex()
+  return self.config.zindex or UiFloat.ZINDEX.BASE
+end
+
+---Set specific z-index
+---@param zindex number New z-index value
+function FloatWindow:set_zindex(zindex)
+  if not self:is_valid() then return end
+  self.config.zindex = zindex
+  vim.api.nvim_win_set_config(self.winid, { zindex = zindex })
+  -- Update scrollbar to stay above window
+  if self._scrollbar_winid and vim.api.nvim_win_is_valid(self._scrollbar_winid) then
+    vim.api.nvim_win_set_config(self._scrollbar_winid, { zindex = zindex + 1 })
+  end
+end
+
+---Bring window to front (highest z-index in current layer)
+---Operates within layer bounds to maintain proper stacking order
+function FloatWindow:bring_to_front()
+  if not self:is_valid() then return end
+  local current = self.config.zindex or UiFloat.ZINDEX.BASE
+  -- Set to layer max (within layer bounds)
+  local new_zindex = get_layer_max(current)
+  self:set_zindex(new_zindex)
+end
+
+---Send window to back (lowest z-index in current layer)
+---Operates within layer bounds to maintain proper stacking order
+function FloatWindow:send_to_back()
+  if not self:is_valid() then return end
+  local current = self.config.zindex or UiFloat.ZINDEX.BASE
+  local layer_base = get_layer_base(current)
+  self:set_zindex(layer_base)
 end
 
 ---Get the content builder associated with this window

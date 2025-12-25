@@ -3,6 +3,10 @@
 local ColorPicker = {}
 
 local ColorUtils = require('ssns.ui.components.color_utils')
+local UiFloat = require('ssns.ui.core.float')
+local ContentBuilder = require('ssns.ui.core.content_builder')
+local KeymapManager = require('ssns.keymap_manager')
+local Config = require('ssns.config')
 
 -- ============================================================================
 -- Types
@@ -33,19 +37,21 @@ local ColorUtils = require('ssns.ui.components.color_utils')
 ---@field ns number Namespace for highlights
 ---@field options ColorPickerOptions
 ---@field saved_hsl table? Saved HSL for when at white/black extremes
----@field help_win number? Help popup window handle
----@field help_buf number? Help popup buffer handle
 ---@field step_index number Index into STEP_SIZES array
 ---@field lightness_virtual number? Virtual lightness position (can exceed 0-100 for bounce)
 ---@field saturation_virtual number? Virtual saturation position (can exceed 0-100 for bounce)
+---@field _float FloatWindow? Reference to UiFloat window instance
+---@field _render_pending boolean? Whether a render is scheduled
+---@field _render_timer number? Timer handle for debounced render
 
 -- ============================================================================
 -- Constants
 -- ============================================================================
 
 local PREVIEW_HEIGHT = 2    -- Rows for color preview
-local FOOTER_HEIGHT = 2     -- Rows for info and help hint
-local HEADER_HEIGHT = 2     -- Title + blank line
+local PREVIEW_BORDERS = 2   -- Top and bottom border lines around preview
+local FOOTER_HEIGHT = 4     -- Blank + info line + blank + help hint
+local HEADER_HEIGHT = 3     -- Blank + title + blank
 local PADDING = 2           -- Left/right padding
 
 local BASE_STEP_HUE = 3          -- Base hue degrees per grid cell
@@ -56,6 +62,7 @@ local BASE_STEP_SATURATION = 2   -- Base saturation percent per J/K press
 local STEP_SIZES = { 0.25, 0.5, 1, 2, 4, 8 }
 local STEP_LABELS = { "¼×", "½×", "1×", "2×", "4×", "8×" }
 local DEFAULT_STEP_INDEX = 3  -- 1x multiplier
+
 
 -- ============================================================================
 -- State
@@ -134,7 +141,8 @@ end
 ---@return number grid_width, number grid_height
 local function calculate_grid_size(win_width, win_height)
   local available_width = win_width - PADDING * 2
-  local available_height = win_height - HEADER_HEIGHT - PREVIEW_HEIGHT - FOOTER_HEIGHT - 2 -- 2 for borders around preview
+  -- Account for: header, preview with borders, footer, and spacing line between grid and preview
+  local available_height = win_height - HEADER_HEIGHT - (PREVIEW_HEIGHT + PREVIEW_BORDERS) - FOOTER_HEIGHT - 1
 
   -- Ensure odd numbers for center alignment
   if available_width % 2 == 0 then available_width = available_width - 1 end
@@ -328,25 +336,84 @@ local function render_preview()
   return lines, highlights
 end
 
----Render the info footer
----@return string[] lines
----@return table[] highlights
-local function render_footer()
-  if not state then return {}, {} end
+-- ============================================================================
+-- ContentBuilder Render Functions
+-- ============================================================================
 
-  local lines = {}
-  local highlights = {}
-  local pad = string.rep(" ", PADDING)
+---Render header using ContentBuilder
+---@return ContentBuilder cb The content builder with header content
+local function render_header_cb()
+  local cb = ContentBuilder.new()
 
-  -- Get colors
-  local orig_color = state.editing_bg
-    and (state.original.bg or "none")
-    or (state.original.fg or "none")
-  local curr_color = get_active_color()
+  cb:blank()
+  cb:styled("  " .. (state and state.options.title or "Pick Color"), "header")
+  cb:blank()
+
+  return cb
+end
+
+---Render footer using ContentBuilder (with custom color swatch highlights applied separately)
+---@return ContentBuilder cb The content builder with footer content
+---@return table swatch_info Info needed for applying color swatch highlights
+local function render_footer_cb()
+  local cb = ContentBuilder.new()
+
+  if not state then return cb, {} end
+
+  -- Mode and style indicators
+  local mode = state.editing_bg and "[bg]" or "[fg]"
+  local bold_indicator = state.current.bold and "[B]" or "[ ]"
+  local italic_indicator = state.current.italic and "[I]" or "[ ]"
+
+  cb:blank()
+
+  -- Build info line using spans for styling
+  -- Note: "Original" and "Current" text will get color swatch highlights applied separately
+  cb:spans({
+    { text = "  Original", style = "label" },
+    { text = "   ", style = "muted" },
+    { text = "Current", style = "label" },
+    { text = "   " .. mode .. " ", style = "muted" },
+    { text = bold_indicator .. " bold ", style = state.current.bold and "emphasis" or "muted" },
+    { text = italic_indicator .. " italic", style = state.current.italic and "emphasis" or "muted" },
+  })
+
+  cb:blank()
+
+  -- Step size and help hint
+  local step_label = get_step_label()
+  cb:spans({
+    { text = "  Step: ", style = "label" },
+    { text = step_label, style = "value" },
+    { text = "  (-/+ adjust)", style = "muted" },
+    { text = "     ", style = "muted" },
+    { text = "? = Controls", style = "key" },
+  })
+
+  -- Return info for applying color swatch highlights
+  -- Line 1 (0-indexed after blank) has "Original" at col 2-10 and "Current" at col 13-20
+  local swatch_info = {
+    original = { line_offset = 1, col_start = 2, col_end = 10 },  -- "Original"
+    current = { line_offset = 1, col_start = 13, col_end = 20 },  -- "Current"
+  }
+
+  return cb, swatch_info
+end
+
+---Apply color swatch highlights to "Original" and "Current" text
+---@param base_line number Line offset in buffer where footer starts
+---@param swatch_info table Info from render_footer_cb
+local function apply_swatch_highlights(base_line, swatch_info)
+  if not state then return end
 
   -- Create highlight groups for Original and Current preview text
   local orig_hl_name = "ColorPickerOriginalPreview"
   local curr_hl_name = "ColorPickerCurrentPreview"
+
+  -- Get original color
+  local orig_color = state.editing_bg
+    and (state.original.bg or "none")
+    or (state.original.fg or "none")
 
   if orig_color ~= "none" then
     vim.api.nvim_set_hl(0, orig_hl_name, {
@@ -366,110 +433,123 @@ local function render_footer()
     italic = state.current.italic,
   })
 
-  -- Mode and style indicators
-  local mode = state.editing_bg and "[bg]" or "[fg]"
-  local bold_indicator = state.current.bold and "[B]" or "[ ]"
-  local italic_indicator = state.current.italic and "[I]" or "[ ]"
+  -- Apply highlights
+  local orig_info = swatch_info.original
+  local curr_info = swatch_info.current
 
-  table.insert(lines, "")
-
-  -- Build the info line with sample text that will be highlighted
-  local orig_text = "Original"
-  local curr_text = "Current"
-  local info_line = string.format(
-    "%s%s   %s   %s %s bold %s italic",
-    pad, orig_text, curr_text, mode, bold_indicator, italic_indicator
+  vim.api.nvim_buf_add_highlight(
+    state.buf,
+    state.ns,
+    orig_hl_name,
+    base_line + orig_info.line_offset,
+    orig_info.col_start,
+    orig_info.col_end
   )
-  table.insert(lines, info_line)
 
-  -- Calculate highlight positions (1-indexed to 0-indexed for nvim_buf_add_highlight)
-  local orig_start = PADDING
-  local orig_end = PADDING + #orig_text
-  local curr_start = PADDING + #orig_text + 3 -- "   " separator
-  local curr_end = curr_start + #curr_text
-
-  table.insert(highlights, {
-    line = #lines - 1,
-    col_start = orig_start,
-    col_end = orig_end,
-    hl_group = orig_hl_name,
-  })
-
-  table.insert(highlights, {
-    line = #lines - 1,
-    col_start = curr_start,
-    col_end = curr_end,
-    hl_group = curr_hl_name,
-  })
-
-  -- Help hint line with step size indicator
-  table.insert(lines, "")
-  local step_label = get_step_label()
-  table.insert(lines, pad .. "Step: " .. step_label .. "  (-/+ adjust)     ? = Controls")
-
-  return lines, highlights
+  vim.api.nvim_buf_add_highlight(
+    state.buf,
+    state.ns,
+    curr_hl_name,
+    base_line + curr_info.line_offset,
+    curr_info.col_start,
+    curr_info.col_end
+  )
 end
 
----Full render of the picker
+-- Forward declaration for schedule_render (defined after render)
+local schedule_render
+
+---Full render of the picker (hybrid approach: ContentBuilder for header/footer, custom for grid/preview)
+---This function does the actual synchronous render work
 local function render()
   if not state or not state.buf or not vim.api.nvim_buf_is_valid(state.buf) then
     return
   end
 
-  local lines = {}
+  -- Clear pending flag since we're now rendering
+  state._render_pending = false
+
+  local all_lines = {}
   local all_highlights = {}
+  local line_offset = 0
 
-  -- Header
-  local pad = string.rep(" ", PADDING)
-  local title = state.options.title or "Pick Color"
-  table.insert(lines, "")
-  table.insert(lines, pad .. title)
-  table.insert(lines, "")
+  -- 1. Header via ContentBuilder
+  local header_cb = render_header_cb()
+  local header_lines = header_cb:build_lines()
+  local header_highlights = header_cb:build_highlights()
 
-  -- Track line offset for highlights
-  local line_offset = #lines
+  for _, line in ipairs(header_lines) do
+    table.insert(all_lines, line)
+  end
+  for _, hl in ipairs(header_highlights) do
+    table.insert(all_highlights, {
+      line = hl.line + line_offset,
+      col_start = hl.col_start,
+      col_end = hl.col_end,
+      hl_group = hl.hl_group,
+    })
+  end
+  line_offset = #all_lines
 
-  -- Grid
+  -- 2. Grid (custom rendering - per-cell highlights)
   local grid_lines, grid_highlights = render_grid()
   for _, line in ipairs(grid_lines) do
-    table.insert(lines, line)
+    table.insert(all_lines, line)
   end
   for _, hl in ipairs(grid_highlights) do
-    hl.line = hl.line + line_offset
-    table.insert(all_highlights, hl)
+    table.insert(all_highlights, {
+      line = hl.line + line_offset,
+      col_start = hl.col_start,
+      col_end = hl.col_end,
+      hl_group = hl.hl_group,
+    })
   end
+  line_offset = #all_lines
 
-  line_offset = #lines
-  table.insert(lines, "") -- Spacing before preview
+  -- Spacing before preview
+  table.insert(all_lines, "")
+  line_offset = #all_lines
 
-  -- Preview
-  line_offset = #lines
+  -- 3. Preview (custom rendering - dynamic background color)
   local preview_lines, preview_highlights = render_preview()
   for _, line in ipairs(preview_lines) do
-    table.insert(lines, line)
+    table.insert(all_lines, line)
   end
   for _, hl in ipairs(preview_highlights) do
-    hl.line = hl.line + line_offset
-    table.insert(all_highlights, hl)
+    table.insert(all_highlights, {
+      line = hl.line + line_offset,
+      col_start = hl.col_start,
+      col_end = hl.col_end,
+      hl_group = hl.hl_group,
+    })
   end
 
-  -- Footer
-  line_offset = #lines
-  local footer_lines, footer_highlights = render_footer()
+  -- Track footer start line for swatch highlights
+  local footer_start_line = #all_lines
+
+  -- 4. Footer via ContentBuilder
+  local footer_cb, swatch_info = render_footer_cb()
+  local footer_lines = footer_cb:build_lines()
+  local footer_highlights = footer_cb:build_highlights()
+
   for _, line in ipairs(footer_lines) do
-    table.insert(lines, line)
+    table.insert(all_lines, line)
   end
   for _, hl in ipairs(footer_highlights) do
-    hl.line = hl.line + line_offset
-    table.insert(all_highlights, hl)
+    table.insert(all_highlights, {
+      line = hl.line + footer_start_line,
+      col_start = hl.col_start,
+      col_end = hl.col_end,
+      hl_group = hl.hl_group,
+    })
   end
 
   -- Update buffer
   vim.api.nvim_buf_set_option(state.buf, "modifiable", true)
-  vim.api.nvim_buf_set_lines(state.buf, 0, -1, false, lines)
+  vim.api.nvim_buf_set_lines(state.buf, 0, -1, false, all_lines)
   vim.api.nvim_buf_set_option(state.buf, "modifiable", false)
 
-  -- Apply highlights
+  -- Apply all highlights
   vim.api.nvim_buf_clear_namespace(state.buf, state.ns, 0, -1)
   for _, hl in ipairs(all_highlights) do
     vim.api.nvim_buf_add_highlight(
@@ -482,8 +562,8 @@ local function render()
     )
   end
 
-  -- Title highlight
-  vim.api.nvim_buf_add_highlight(state.buf, state.ns, "SsnsFloatTitle", 1, 0, -1)
+  -- Apply custom color swatch highlights (Original/Current text with actual colors)
+  apply_swatch_highlights(footer_start_line, swatch_info)
 
   -- Trigger on_change callback
   if state.options.on_change then
@@ -491,12 +571,35 @@ local function render()
   end
 end
 
+---Schedule a render for the next event loop iteration
+---Coalesces multiple calls - if a render is already pending, skip scheduling another
+---Uses vim.schedule() with no delay to ensure the X marker stays in center
+schedule_render = function()
+  if not state or not state.buf or not vim.api.nvim_buf_is_valid(state.buf) then
+    return
+  end
+
+  -- If render already pending, skip - coalesce multiple rapid calls
+  if state._render_pending then
+    return
+  end
+
+  -- Mark as pending and schedule for next event loop
+  state._render_pending = true
+  vim.schedule(function()
+    -- Double-check state is still valid when we actually run
+    if state and state.buf and vim.api.nvim_buf_is_valid(state.buf) then
+      render()
+    end
+  end)
+end
+
 ---Increase step size
 local function increase_step_size()
   if not state then return end
   if state.step_index < #STEP_SIZES then
     state.step_index = state.step_index + 1
-    render()
+    schedule_render()
   end
 end
 
@@ -505,7 +608,7 @@ local function decrease_step_size()
   if not state then return end
   if state.step_index > 1 then
     state.step_index = state.step_index - 1
-    render()
+    schedule_render()
   end
 end
 
@@ -528,7 +631,7 @@ local function shift_hue(delta)
   end
 
   set_active_color(new_color)
-  render()
+  schedule_render()
 end
 
 ---Shift lightness with bounce and color band memory
@@ -567,7 +670,7 @@ local function shift_lightness(delta)
 
   local new_color = ColorUtils.hsl_to_hex(new_h, new_s, new_l)
   set_active_color(new_color)
-  render()
+  schedule_render()
 end
 
 ---Shift saturation with bounce
@@ -598,28 +701,28 @@ local function shift_saturation(delta)
 
   local new_color = ColorUtils.hsl_to_hex(h, new_s, l)
   set_active_color(new_color)
-  render()
+  schedule_render()
 end
 
 ---Toggle bold
 local function toggle_bold()
   if not state then return end
   state.current.bold = not state.current.bold
-  render()
+  schedule_render()
 end
 
 ---Toggle italic
 local function toggle_italic()
   if not state then return end
   state.current.italic = not state.current.italic
-  render()
+  schedule_render()
 end
 
 ---Toggle editing fg/bg
 local function toggle_bg_mode()
   if not state then return end
   state.editing_bg = not state.editing_bg
-  render()
+  schedule_render()
 end
 
 ---Reset to original color
@@ -627,14 +730,14 @@ local function reset_color()
   if not state then return end
   state.current = vim.deepcopy(state.original)
   state.editing_bg = false
-  render()
+  schedule_render()
 end
 
 ---Clear background color
 local function clear_bg()
   if not state then return end
   state.current.bg = nil
-  render()
+  schedule_render()
 end
 
 ---Enter hex input mode
@@ -649,7 +752,7 @@ local function enter_hex_input()
   }, function(input)
     if input and ColorUtils.is_valid_hex(input) then
       set_active_color(input)
-      render()
+      schedule_render()
     elseif input then
       vim.notify("Invalid hex color: " .. input, vim.log.levels.WARN)
     end
@@ -673,6 +776,12 @@ end
 local function cancel()
   if not state then return end
 
+  -- Revert preview to original before closing
+  -- This ensures live preview reverts before picker closes
+  if state.options.on_change then
+    state.options.on_change(vim.deepcopy(state.original))
+  end
+
   if state.options.on_cancel then
     state.options.on_cancel()
   end
@@ -681,188 +790,143 @@ local function cancel()
 end
 
 -- ============================================================================
--- Help Popup
+-- Controls Definition (for UiFloat help popup)
 -- ============================================================================
 
----Close the help popup
-local function close_help()
-  if not state then return end
-
-  if state.help_win and vim.api.nvim_win_is_valid(state.help_win) then
-    vim.api.nvim_win_close(state.help_win, true)
-  end
-
-  if state.help_buf and vim.api.nvim_buf_is_valid(state.help_buf) then
-    vim.api.nvim_buf_delete(state.help_buf, { force = true })
-  end
-
-  state.help_win = nil
-  state.help_buf = nil
+---Get controls definition for the color picker
+---@return ControlsDefinition[]
+local function get_controls_definition()
+  return {
+    {
+      header = "Navigation",
+      keys = {
+        { key = "h / l", desc = "Move hue (left/right)" },
+        { key = "j / k", desc = "Adjust lightness (down/up)" },
+        { key = "J / K", desc = "Adjust saturation (less/more)" },
+        { key = "[count]", desc = "Use counts: 10h, 50k" },
+      }
+    },
+    {
+      header = "Step Size",
+      keys = {
+        { key = "- / +", desc = "Decrease/increase multiplier" },
+      }
+    },
+    {
+      header = "Styles",
+      keys = {
+        { key = "b", desc = "Toggle bold" },
+        { key = "i", desc = "Toggle italic" },
+        { key = "B", desc = "Switch to edit background" },
+        { key = "x", desc = "Clear background color" },
+      }
+    },
+    {
+      header = "Actions",
+      keys = {
+        { key = "#", desc = "Enter hex color manually" },
+        { key = "r", desc = "Reset to original" },
+        { key = "Enter", desc = "Apply and close" },
+        { key = "q / Esc", desc = "Cancel and close" },
+      }
+    },
+  }
 end
 
----Show the help popup
+---Show the help popup using UiFloat's controls system
 local function show_help()
-  if not state or not state.win then return end
-
-  -- Close existing help if open
-  close_help()
-
-  local help_lines = {
-    "",
-    "  Color Picker Controls",
-    "  ─────────────────────",
-    "",
-    "  Navigation",
-    "  ──────────",
-    "  h / l       Move hue (left/right)",
-    "  j / k       Adjust lightness (down/up)",
-    "  J / K       Adjust saturation (less/more)",
-    "",
-    "  Use counts for bigger steps: 10h, 50k",
-    "",
-    "  Step Size",
-    "  ─────────",
-    "  - / +       Decrease/increase step size",
-    "              (¼× ½× 1× 2× 4× 8×)",
-    "",
-    "  Styles",
-    "  ──────",
-    "  b           Toggle bold",
-    "  i           Toggle italic",
-    "  B           Switch to edit background",
-    "  x           Clear background color",
-    "",
-    "  Actions",
-    "  ───────",
-    "  #           Enter hex color manually",
-    "  r           Reset to original",
-    "  Enter       Apply and close",
-    "  q / Esc     Cancel and close",
-    "",
-    "  Press any key to close this help",
-    "",
-  }
-
-  local help_width = 42
-  local help_height = #help_lines
-
-  -- Create help buffer
-  local help_buf = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_option(help_buf, "bufhidden", "wipe")
-  vim.api.nvim_buf_set_option(help_buf, "buftype", "nofile")
-  vim.api.nvim_buf_set_lines(help_buf, 0, -1, false, help_lines)
-  vim.api.nvim_buf_set_option(help_buf, "modifiable", false)
-
-  -- Position centered over main picker
-  local win_config = vim.api.nvim_win_get_config(state.win)
-  local help_row = win_config.row[false] + math.floor((win_config.height - help_height) / 2)
-  local help_col = win_config.col[false] + math.floor((win_config.width - help_width) / 2)
-
-  local help_win = vim.api.nvim_open_win(help_buf, true, {
-    relative = "editor",
-    width = help_width,
-    height = help_height,
-    row = help_row,
-    col = help_col,
-    style = "minimal",
-    border = "rounded",
-    title = " Help ",
-    title_pos = "center",
-    zindex = 150,
-  })
-
-  state.help_buf = help_buf
-  state.help_win = help_win
-
-  -- Highlight title
-  local ns = vim.api.nvim_create_namespace("ssns_color_picker_help")
-  vim.api.nvim_buf_add_highlight(help_buf, ns, "SsnsFloatTitle", 1, 0, -1)
-
-  -- Close on any key
-  local function close_on_key()
-    close_help()
-  end
-
-  -- Map common keys to close
-  local close_keys = { "<Esc>", "q", "<CR>", "?", "<Space>" }
-  for _, key in ipairs(close_keys) do
-    vim.keymap.set("n", key, close_on_key, { buffer = help_buf, nowait = true, silent = true })
-  end
-
-  -- Also close on any other key using a catch-all
-  vim.api.nvim_create_autocmd("CursorMoved", {
-    buffer = help_buf,
-    once = true,
-    callback = close_on_key,
-  })
+  if not state or not state._float then return end
+  state._float:show_controls(get_controls_definition())
 end
 
 -- ============================================================================
 -- Keymaps
 -- ============================================================================
 
----Setup keymaps with vim count support
+---Setup keymaps using KeymapManager and config (supports vim count for navigation)
 local function setup_keymaps()
   if not state or not state.buf then return end
 
   local buf = state.buf
+  local cfg = Config.get().keymaps.colorpicker or {}
 
-  local function map(key, fn)
-    vim.keymap.set("n", key, fn, { buffer = buf, nowait = true, silent = true })
+  -- Initialize KeymapManager for this buffer
+  KeymapManager.init_buffer(buf)
+
+  -- Helper to get key(s) from config with fallback
+  local function get_key(name, default)
+    return cfg[name] or default
   end
 
+  -- Helper to add keymap(s) - handles both single key and array of keys
+  local function add_maps(key_or_keys, fn, keymaps_table)
+    local keys = type(key_or_keys) == "table" and key_or_keys or { key_or_keys }
+    for _, k in ipairs(keys) do
+      table.insert(keymaps_table, {
+        mode = "n",
+        lhs = k,
+        rhs = fn,
+        opts = { nowait = true, silent = true }
+      })
+    end
+  end
+
+  local keymaps = {}
+
   -- Navigation with count support
-  map("h", function()
+  add_maps(get_key("nav_left", "h"), function()
     local count = vim.v.count1
     shift_hue(-count)
-  end)
+  end, keymaps)
 
-  map("l", function()
+  add_maps(get_key("nav_right", "l"), function()
     local count = vim.v.count1
     shift_hue(count)
-  end)
+  end, keymaps)
 
-  map("k", function()
+  add_maps(get_key("nav_up", "k"), function()
     local count = vim.v.count1
     shift_lightness(count)
-  end)
+  end, keymaps)
 
-  map("j", function()
+  add_maps(get_key("nav_down", "j"), function()
     local count = vim.v.count1
     shift_lightness(-count)
-  end)
+  end, keymaps)
 
-  -- Saturation with Shift + j/k
-  map("K", function()
+  -- Saturation
+  add_maps(get_key("sat_up", "K"), function()
     local count = vim.v.count1
     shift_saturation(count)
-  end)
+  end, keymaps)
 
-  map("J", function()
+  add_maps(get_key("sat_down", "J"), function()
     local count = vim.v.count1
     shift_saturation(-count)
-  end)
+  end, keymaps)
 
   -- Toggles
-  map("b", toggle_bold)
-  map("i", toggle_italic)
-  map("B", toggle_bg_mode)
-  map("x", clear_bg)
+  add_maps(get_key("toggle_bold", "b"), toggle_bold, keymaps)
+  add_maps(get_key("toggle_italic", "i"), toggle_italic, keymaps)
+  add_maps(get_key("toggle_bg", "B"), toggle_bg_mode, keymaps)
+  add_maps(get_key("clear_bg", "x"), clear_bg, keymaps)
 
   -- Actions
-  map("r", reset_color)
-  map("#", enter_hex_input)
-  map("<CR>", apply)
-  map("q", cancel)
-  map("<Esc>", cancel)
+  add_maps(get_key("reset", "r"), reset_color, keymaps)
+  add_maps(get_key("hex_input", "#"), enter_hex_input, keymaps)
+  add_maps(get_key("apply", "<CR>"), apply, keymaps)
+  add_maps(get_key("cancel", { "q", "<Esc>" }), cancel, keymaps)
 
   -- Help
-  map("?", show_help)
+  add_maps(get_key("help", "?"), show_help, keymaps)
 
   -- Step size adjustment
-  map("-", decrease_step_size)
-  map("+", increase_step_size)
-  map("=", increase_step_size)  -- = is + without shift
+  add_maps(get_key("step_down", "-"), decrease_step_size, keymaps)
+  add_maps(get_key("step_up", { "+", "=" }), increase_step_size, keymaps)
+
+  -- Apply all keymaps using KeymapManager (saves conflicts, auto-restores on close)
+  KeymapManager.set_multiple(buf, keymaps, true)
+  KeymapManager.setup_auto_restore(buf)
 end
 
 -- ============================================================================
@@ -883,7 +947,7 @@ local function on_resize()
   if new_width ~= state.grid_width or new_height ~= state.grid_height then
     state.grid_width = new_width
     state.grid_height = new_height
-    render()
+    schedule_render()
   end
 end
 
@@ -892,23 +956,12 @@ function ColorPicker.close()
   if not state then return end
 
   -- Save references before closing (WinClosed autocmd sets state = nil)
-  local help_win = state.help_win
-  local help_buf = state.help_buf
   local grid_height = state.grid_height or 20
   local grid_width = state.grid_width or 60
-  local win = state.win
-  local buf = state.buf
+  local float = state._float
 
   -- Clear state first to prevent re-entrancy issues
   state = nil
-
-  -- Close help popup if open
-  if help_win and vim.api.nvim_win_is_valid(help_win) then
-    vim.api.nvim_win_close(help_win, true)
-  end
-  if help_buf and vim.api.nvim_buf_is_valid(help_buf) then
-    vim.api.nvim_buf_delete(help_buf, { force = true })
-  end
 
   -- Clean up highlight groups
   for row = 1, grid_height do
@@ -920,12 +973,9 @@ function ColorPicker.close()
   pcall(vim.api.nvim_set_hl, 0, "ColorPickerOriginalPreview", {})
   pcall(vim.api.nvim_set_hl, 0, "ColorPickerCurrentPreview", {})
 
-  if win and vim.api.nvim_win_is_valid(win) then
-    vim.api.nvim_win_close(win, true)
-  end
-
-  if buf and vim.api.nvim_buf_is_valid(buf) then
-    vim.api.nvim_buf_delete(buf, { force = true })
+  -- Close the floating window using UiFloat
+  if float and float:is_valid() then
+    float:close()
   end
 end
 
@@ -965,37 +1015,31 @@ function ColorPicker.show(options)
 
   -- Calculate actual window size needed
   local win_width = grid_width + PADDING * 2
-  local win_height = HEADER_HEIGHT + grid_height + 1 + PREVIEW_HEIGHT + 2 + FOOTER_HEIGHT
+  -- Height: header + grid + spacing + preview with borders + footer
+  local win_height = HEADER_HEIGHT + grid_height + 1 + (PREVIEW_HEIGHT + PREVIEW_BORDERS) + FOOTER_HEIGHT
 
-  -- Create buffer
-  local buf = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_option(buf, "bufhidden", "wipe")
-  vim.api.nvim_buf_set_option(buf, "buftype", "nofile")
-  vim.api.nvim_buf_set_option(buf, "filetype", "ssns-colorpicker")
-
-  -- Create window
-  local row = math.floor((ui.height - win_height) / 2)
-  local col = math.floor((ui.width - win_width) / 2)
-
-  local win = vim.api.nvim_open_win(buf, true, {
-    relative = "editor",
+  -- Create floating window using UiFloat
+  local float = UiFloat.create({
+    title = "Color Picker",
     width = win_width,
     height = win_height,
-    row = row,
-    col = col,
-    style = "minimal",
-    border = "rounded",
-    title = " Color Picker ",
-    title_pos = "center",
-    zindex = 100,
+    centered = true,
+    zindex = UiFloat.ZINDEX.OVERLAY,  -- 100 - above other floats like theme editor
+    default_keymaps = false,  -- We manage keymaps ourselves
+    scrollbar = false,  -- Grid doesn't scroll
+    modifiable = true,  -- We update content via render()
+    readonly = false,
+    cursorline = false,
+    wrap = false,
+    filetype = "ssns-colorpicker",
+    controls = get_controls_definition(),  -- For ? popup
+    footer = "? = Controls",
   })
 
-  -- Window options
-  vim.api.nvim_win_set_option(win, "cursorline", false)
-  vim.api.nvim_win_set_option(win, "wrap", false)
-  vim.api.nvim_win_set_option(win, "number", false)
-  vim.api.nvim_win_set_option(win, "relativenumber", false)
-  vim.api.nvim_win_set_option(win, "signcolumn", "no")
+  if not float or not float:is_valid() then
+    vim.notify("ColorPicker: Failed to create window", vim.log.levels.ERROR)
+    return
+  end
 
   -- Initialize state
   -- Pre-compute initial HSL for color band memory
@@ -1011,30 +1055,26 @@ function ColorPicker.show(options)
     editing_bg = false,
     grid_width = grid_width,
     grid_height = grid_height,
-    win = win,
-    buf = buf,
+    win = float.winid,
+    buf = float.bufnr,
     ns = vim.api.nvim_create_namespace("ssns_color_picker"),
     options = options,
     saved_hsl = initial_hsl,
-    help_win = nil,
-    help_buf = nil,
     step_index = DEFAULT_STEP_INDEX,
     lightness_virtual = nil,  -- Initialized on first navigation
     saturation_virtual = nil, -- Initialized on first navigation
+    _float = float,  -- Keep reference to FloatWindow for controls popup
   }
 
   -- Setup keymaps
   setup_keymaps()
 
-  -- Setup resize handler
+  -- Setup cleanup handler for when window closes
+  -- UiFloat handles VimResized internally, we just need cleanup
   local augroup = vim.api.nvim_create_augroup("SSNSColorPicker", { clear = true })
-  vim.api.nvim_create_autocmd("VimResized", {
-    group = augroup,
-    callback = on_resize,
-  })
   vim.api.nvim_create_autocmd("WinClosed", {
     group = augroup,
-    pattern = tostring(win),
+    pattern = tostring(float.winid),
     callback = function()
       vim.api.nvim_del_augroup_by_id(augroup)
       state = nil

@@ -738,6 +738,34 @@ local default_config = {
       format_statement = "<Leader>ss",  -- Format statement under cursor
       open_config = "<Leader>sc",       -- Open formatter configuration UI
     },
+
+    -- Color picker keymaps (used in theme editor)
+    colorpicker = {
+      -- Navigation
+      nav_left = "h",          -- Move hue left (decrease)
+      nav_right = "l",         -- Move hue right (increase)
+      nav_up = "k",            -- Adjust lightness up (increase)
+      nav_down = "j",          -- Adjust lightness down (decrease)
+      sat_up = "K",            -- Adjust saturation up (increase)
+      sat_down = "J",          -- Adjust saturation down (decrease)
+
+      -- Step size
+      step_up = { "+", "=" },  -- Increase step multiplier
+      step_down = "-",         -- Decrease step multiplier
+
+      -- Styles
+      toggle_bold = "b",       -- Toggle bold style
+      toggle_italic = "i",     -- Toggle italic style
+      toggle_bg = "B",         -- Switch to edit background color
+      clear_bg = "x",          -- Clear background color
+
+      -- Actions
+      reset = "r",             -- Reset to original color
+      hex_input = "#",         -- Enter hex color manually
+      apply = "<CR>",          -- Apply and close
+      cancel = { "q", "<Esc>" }, -- Cancel and close
+      help = "?",              -- Show controls popup
+    },
   },
 
   table_helpers = {

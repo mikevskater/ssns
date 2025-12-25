@@ -612,6 +612,53 @@ function MultiPanelWindow:is_valid()
 end
 
 -- ============================================================================
+-- Z-Index / Panel Ordering Methods
+-- ============================================================================
+
+---Bring entire multi-panel to front (highest z-index in current layer)
+---Brings all panels to front while maintaining their relative order
+function MultiPanelWindow:bring_to_front()
+  if not self:is_valid() then return end
+  for _, panel in pairs(self.panels) do
+    if panel.float and panel.float:is_valid() then
+      panel.float:bring_to_front()
+    end
+  end
+  -- Also bring footer if exists
+  if self.footer_win and vim.api.nvim_win_is_valid(self.footer_win) then
+    local current = vim.api.nvim_win_get_config(self.footer_win).zindex or 50
+    -- Footer should be at the same level as panels
+    vim.api.nvim_win_set_config(self.footer_win, { zindex = current })
+  end
+end
+
+---Send entire multi-panel to back (lowest z-index in current layer)
+---Sends all panels to back while maintaining their relative order
+function MultiPanelWindow:send_to_back()
+  if not self:is_valid() then return end
+  for _, panel in pairs(self.panels) do
+    if panel.float and panel.float:is_valid() then
+      panel.float:send_to_back()
+    end
+  end
+end
+
+---Set z-index for all panels in the multi-panel window
+---@param zindex number New z-index value
+function MultiPanelWindow:set_zindex(zindex)
+  if not self:is_valid() then return end
+  for _, panel in pairs(self.panels) do
+    if panel.float and panel.float:is_valid() then
+      panel.float:set_zindex(zindex)
+    end
+  end
+  -- Also update footer if exists
+  if self.footer_win and vim.api.nvim_win_is_valid(self.footer_win) then
+    vim.api.nvim_win_set_config(self.footer_win, { zindex = zindex })
+  end
+end
+
+-- ============================================================================
 -- Input Field Support for MultiPanelWindow
 -- ============================================================================
 
