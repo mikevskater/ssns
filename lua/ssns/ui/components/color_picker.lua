@@ -977,151 +977,11 @@ schedule_render_multipanel = function()
   end)
 end
 
--- Forward declaration for schedule_render (defined after render)
-local schedule_render
-
----Full render of the picker (hybrid approach: ContentBuilder for header/footer, custom for grid/preview)
----This function does the actual synchronous render work
-local function render()
-  if not state or not state.buf or not vim.api.nvim_buf_is_valid(state.buf) then
-    return
-  end
-
-  -- Clear pending flag since we're now rendering
-  state._render_pending = false
-
-  local all_lines = {}
-  local all_highlights = {}
-  local line_offset = 0
-
-  -- 1. Header via ContentBuilder
-  local header_cb = render_header_cb()
-  local header_lines = header_cb:build_lines()
-  local header_highlights = header_cb:build_highlights()
-
-  for _, line in ipairs(header_lines) do
-    table.insert(all_lines, line)
-  end
-  for _, hl in ipairs(header_highlights) do
-    table.insert(all_highlights, {
-      line = hl.line + line_offset,
-      col_start = hl.col_start,
-      col_end = hl.col_end,
-      hl_group = hl.hl_group,
-    })
-  end
-  line_offset = #all_lines
-
-  -- 2. Grid (custom rendering - per-cell highlights)
-  local grid_lines, grid_highlights = render_grid()
-  for _, line in ipairs(grid_lines) do
-    table.insert(all_lines, line)
-  end
-  for _, hl in ipairs(grid_highlights) do
-    table.insert(all_highlights, {
-      line = hl.line + line_offset,
-      col_start = hl.col_start,
-      col_end = hl.col_end,
-      hl_group = hl.hl_group,
-    })
-  end
-  line_offset = #all_lines
-
-  -- Spacing before preview
-  table.insert(all_lines, "")
-  line_offset = #all_lines
-
-  -- 3. Preview (custom rendering - dynamic background color)
-  local preview_lines, preview_highlights = render_preview()
-  for _, line in ipairs(preview_lines) do
-    table.insert(all_lines, line)
-  end
-  for _, hl in ipairs(preview_highlights) do
-    table.insert(all_highlights, {
-      line = hl.line + line_offset,
-      col_start = hl.col_start,
-      col_end = hl.col_end,
-      hl_group = hl.hl_group,
-    })
-  end
-
-  -- Track footer start line for swatch highlights
-  local footer_start_line = #all_lines
-
-  -- 4. Footer via ContentBuilder
-  local footer_cb, swatch_info = render_footer_cb()
-  local footer_lines = footer_cb:build_lines()
-  local footer_highlights = footer_cb:build_highlights()
-
-  for _, line in ipairs(footer_lines) do
-    table.insert(all_lines, line)
-  end
-  for _, hl in ipairs(footer_highlights) do
-    table.insert(all_highlights, {
-      line = hl.line + footer_start_line,
-      col_start = hl.col_start,
-      col_end = hl.col_end,
-      hl_group = hl.hl_group,
-    })
-  end
-
-  -- Update buffer
-  vim.api.nvim_buf_set_option(state.buf, "modifiable", true)
-  vim.api.nvim_buf_set_lines(state.buf, 0, -1, false, all_lines)
-  vim.api.nvim_buf_set_option(state.buf, "modifiable", false)
-
-  -- Apply all highlights
-  vim.api.nvim_buf_clear_namespace(state.buf, state.ns, 0, -1)
-  for _, hl in ipairs(all_highlights) do
-    vim.api.nvim_buf_add_highlight(
-      state.buf,
-      state.ns,
-      hl.hl_group,
-      hl.line,
-      hl.col_start,
-      hl.col_end
-    )
-  end
-
-  -- Apply custom color swatch highlights (Original/Current text with actual colors)
-  apply_swatch_highlights(footer_start_line, swatch_info)
-
-  -- Trigger on_change callback
-  if state.options.on_change then
-    state.options.on_change(vim.deepcopy(state.current))
-  end
-end
-
 ---Schedule a render for the next event loop iteration
----Coalesces multiple calls - if a render is already pending, skip scheduling another
----Uses vim.schedule() with no delay to ensure the X marker stays in center
-schedule_render = function()
+---Delegates to schedule_render_multipanel
+local function schedule_render()
   if not state then return end
-
-  -- Use multipanel render if in multipanel mode
-  if state._multipanel then
-    schedule_render_multipanel()
-    return
-  end
-
-  -- Single-window mode
-  if not state.buf or not vim.api.nvim_buf_is_valid(state.buf) then
-    return
-  end
-
-  -- If render already pending, skip - coalesce multiple rapid calls
-  if state._render_pending then
-    return
-  end
-
-  -- Mark as pending and schedule for next event loop
-  state._render_pending = true
-  vim.schedule(function()
-    -- Double-check state is still valid when we actually run
-    if state and state.buf and vim.api.nvim_buf_is_valid(state.buf) then
-      render()
-    end
-  end)
+  schedule_render_multipanel()
 end
 
 ---Increase step size
@@ -1453,138 +1313,16 @@ end
 -- ============================================================================
 -- Keymaps
 -- ============================================================================
-
----Setup keymaps using KeymapManager and config (supports vim count for navigation)
-local function setup_keymaps()
-  if not state or not state.buf then return end
-
-  local buf = state.buf
-  local cfg = Config.get().keymaps.colorpicker or {}
-
-  -- Initialize KeymapManager for this buffer
-  KeymapManager.init_buffer(buf)
-
-  -- Helper to get key(s) from config with fallback
-  local function get_key(name, default)
-    return cfg[name] or default
-  end
-
-  -- Helper to add keymap(s) - handles both single key and array of keys
-  local function add_maps(key_or_keys, fn, keymaps_table)
-    local keys = type(key_or_keys) == "table" and key_or_keys or { key_or_keys }
-    for _, k in ipairs(keys) do
-      table.insert(keymaps_table, {
-        mode = "n",
-        lhs = k,
-        rhs = fn,
-        opts = { nowait = true, silent = true }
-      })
-    end
-  end
-
-  local keymaps = {}
-
-  -- Navigation with count support
-  add_maps(get_key("nav_left", "h"), function()
-    local count = vim.v.count1
-    shift_hue(-count)
-  end, keymaps)
-
-  add_maps(get_key("nav_right", "l"), function()
-    local count = vim.v.count1
-    shift_hue(count)
-  end, keymaps)
-
-  add_maps(get_key("nav_up", "k"), function()
-    local count = vim.v.count1
-    shift_lightness(count)
-  end, keymaps)
-
-  add_maps(get_key("nav_down", "j"), function()
-    local count = vim.v.count1
-    shift_lightness(-count)
-  end, keymaps)
-
-  -- Saturation
-  add_maps(get_key("sat_up", "K"), function()
-    local count = vim.v.count1
-    shift_saturation(count)
-  end, keymaps)
-
-  add_maps(get_key("sat_down", "J"), function()
-    local count = vim.v.count1
-    shift_saturation(-count)
-  end, keymaps)
-
-  -- Toggles
-  add_maps(get_key("toggle_bold", "b"), toggle_bold, keymaps)
-  add_maps(get_key("toggle_italic", "i"), toggle_italic, keymaps)
-  add_maps(get_key("toggle_bg", "B"), toggle_bg_mode, keymaps)
-  add_maps(get_key("clear_bg", "x"), clear_bg, keymaps)
-
-  -- Actions
-  add_maps(get_key("reset", "r"), reset_color, keymaps)
-  add_maps(get_key("hex_input", "#"), enter_hex_input, keymaps)
-  add_maps(get_key("apply", "<CR>"), apply, keymaps)
-  add_maps(get_key("cancel", { "q", "<Esc>" }), cancel, keymaps)
-
-  -- Help
-  add_maps(get_key("help", "?"), show_help, keymaps)
-
-  -- Step size adjustment
-  add_maps(get_key("step_down", "-"), decrease_step_size, keymaps)
-  add_maps(get_key("step_up", { "+", "=" }), increase_step_size, keymaps)
-
-  -- Color mode and format cycling
-  add_maps(get_key("cycle_mode", "m"), cycle_mode, keymaps)
-  add_maps(get_key("cycle_format", "f"), cycle_format, keymaps)
-
-  -- Alpha adjustment (with count support)
-  add_maps(get_key("alpha_up", "A"), function()
-    local count = vim.v.count1
-    adjust_alpha(count)
-  end, keymaps)
-
-  add_maps(get_key("alpha_down", "a"), function()
-    local count = vim.v.count1
-    adjust_alpha(-count)
-  end, keymaps)
-
-  -- Apply all keymaps using KeymapManager (saves conflicts, auto-restores on close)
-  KeymapManager.set_multiple(buf, keymaps, true)
-  KeymapManager.setup_auto_restore(buf)
-end
-
--- ============================================================================
 -- Window Management
 -- ============================================================================
-
----Handle window resize
-local function on_resize()
-  if not state or not state.win or not vim.api.nvim_win_is_valid(state.win) then
-    return
-  end
-
-  local win_width = vim.api.nvim_win_get_width(state.win)
-  local win_height = vim.api.nvim_win_get_height(state.win)
-
-  local new_width, new_height = calculate_grid_size(win_width, win_height)
-
-  if new_width ~= state.grid_width or new_height ~= state.grid_height then
-    state.grid_width = new_width
-    state.grid_height = new_height
-    schedule_render()
-  end
-end
 
 ---Close the color picker
 function ColorPicker.close()
   if not state then return end
 
-  -- Save references before closing (WinClosed autocmd sets state = nil)
+  -- Save references before closing
   local grid_height = state.grid_height or 20
   local grid_width = state.grid_width or 60
-  local float = state._float
   local multipanel = state._multipanel
   local input_manager = state._info_input_manager
 
@@ -1606,129 +1344,10 @@ function ColorPicker.close()
   pcall(vim.api.nvim_set_hl, 0, "ColorPickerOriginalPreview", {})
   pcall(vim.api.nvim_set_hl, 0, "ColorPickerCurrentPreview", {})
 
-  -- Close multipanel if in multipanel mode
+  -- Close multipanel window
   if multipanel and multipanel:is_valid() then
     multipanel:close()
-    return
   end
-
-  -- Close the floating window using UiFloat (single-window mode)
-  if float and float:is_valid() then
-    float:close()
-  end
-end
-
----Show the color picker
----@param options ColorPickerOptions
-function ColorPicker.show(options)
-  -- Close existing picker
-  ColorPicker.close()
-
-  -- Validate options
-  if not options or not options.initial then
-    vim.notify("ColorPicker: initial color required", vim.log.levels.ERROR)
-    return
-  end
-
-  -- Normalize initial color
-  local initial = vim.deepcopy(options.initial)
-  if initial.fg then
-    initial.fg = ColorUtils.normalize_hex(initial.fg)
-  else
-    initial.fg = "#808080"
-  end
-  if initial.bg then
-    initial.bg = ColorUtils.normalize_hex(initial.bg)
-  end
-
-  -- Calculate window size
-  local ui = vim.api.nvim_list_uis()[1]
-  local max_width = math.floor(ui.width * 0.8)
-  local max_height = math.floor(ui.height * 0.7)
-
-  -- Ensure reasonable minimums
-  max_width = math.max(50, max_width)
-  max_height = math.max(15, max_height)
-
-  local grid_width, grid_height = calculate_grid_size(max_width, max_height)
-
-  -- Calculate actual window size needed
-  local win_width = grid_width + PADDING * 2
-  -- Height: header + grid + spacing + preview with borders + footer
-  local win_height = HEADER_HEIGHT + grid_height + 1 + (PREVIEW_HEIGHT + PREVIEW_BORDERS) + FOOTER_HEIGHT
-
-  -- Create floating window using UiFloat
-  local float = UiFloat.create({
-    title = "Color Picker",
-    width = win_width,
-    height = win_height,
-    centered = true,
-    zindex = UiFloat.ZINDEX.OVERLAY,  -- 100 - above other floats like theme editor
-    default_keymaps = false,  -- We manage keymaps ourselves
-    scrollbar = false,  -- Grid doesn't scroll
-    modifiable = true,  -- We update content via render()
-    readonly = false,
-    cursorline = false,
-    wrap = false,
-    filetype = "ssns-colorpicker",
-    controls = get_controls_definition(),  -- For ? popup
-    footer = "? = Controls",
-  })
-
-  if not float or not float:is_valid() then
-    vim.notify("ColorPicker: Failed to create window", vim.log.levels.ERROR)
-    return
-  end
-
-  -- Initialize state
-  -- Pre-compute initial HSL for color band memory
-  local initial_hsl = nil
-  if initial.fg then
-    local h, s, _ = ColorUtils.hex_to_hsl(initial.fg)
-    initial_hsl = { h = h, s = s }
-  end
-
-  state = {
-    current = vim.deepcopy(initial),
-    original = vim.deepcopy(initial),
-    editing_bg = false,
-    grid_width = grid_width,
-    grid_height = grid_height,
-    win = float.winid,
-    buf = float.bufnr,
-    ns = vim.api.nvim_create_namespace("ssns_color_picker"),
-    options = options,
-    saved_hsl = initial_hsl,
-    step_index = DEFAULT_STEP_INDEX,
-    lightness_virtual = nil,  -- Initialized on first navigation
-    saturation_virtual = nil, -- Initialized on first navigation
-    _float = float,  -- Keep reference to FloatWindow for controls popup
-    -- New fields for color mode and alpha support
-    color_mode = options.forced_mode or "hsl",  -- Default to HSL
-    value_format = "standard",  -- "standard" or "decimal"
-    alpha = options.initial_alpha or 100,  -- 0-100, default fully opaque
-    alpha_enabled = options.alpha_enabled or false,
-    focused_panel = "grid",  -- Start with grid focused
-    _multipanel = nil,  -- Will be set when multipanel mode is enabled
-  }
-
-  -- Setup keymaps
-  setup_keymaps()
-
-  -- Setup cleanup handler for when window closes
-  -- UiFloat handles VimResized internally, we just need cleanup
-  local augroup = vim.api.nvim_create_augroup("SSNSColorPicker", { clear = true })
-  vim.api.nvim_create_autocmd("WinClosed", {
-    group = augroup,
-    pattern = tostring(float.winid),
-    callback = function()
-      vim.api.nvim_del_augroup_by_id(augroup)
-      state = nil
-    end,
-  })
-
-  -- Initial render
-  render()
 end
 
 ---Setup keymaps for multipanel mode
@@ -2089,6 +1708,14 @@ function ColorPicker.show_multipanel(options)
   -- Create layout config
   local layout_config = create_layout_config()
 
+  -- Use custom title if provided, otherwise default
+  local grid_title = options.title or "Color Grid"
+
+  -- Update initial panel title if custom title provided
+  if options.title then
+    layout_config.layout.children[1].title = grid_title
+  end
+
   -- Add render callbacks to layout config
   layout_config.layout.children[1].on_render = render_grid_panel
   layout_config.layout.children[2].on_render = render_info_panel
@@ -2096,18 +1723,18 @@ function ColorPicker.show_multipanel(options)
   -- Add focus callbacks (guard against state being nil during initial create)
   layout_config.layout.children[1].on_focus = function(multi_state)
     if state then state.focused_panel = "grid" end
-    multi_state:update_panel_title("grid", "Color Grid ●")
+    multi_state:update_panel_title("grid", grid_title .. " ●")
     multi_state:update_panel_title("info", "Info")
   end
 
   layout_config.layout.children[1].on_blur = function(multi_state)
-    multi_state:update_panel_title("grid", "Color Grid")
+    multi_state:update_panel_title("grid", grid_title)
   end
 
   layout_config.layout.children[2].on_focus = function(multi_state)
     if state then state.focused_panel = "info" end
     multi_state:update_panel_title("info", "Info ●")
-    multi_state:update_panel_title("grid", "Color Grid")
+    multi_state:update_panel_title("grid", grid_title)
     -- Focus the first input field when info panel receives focus
     if state and state._info_input_manager then
       vim.schedule(function()

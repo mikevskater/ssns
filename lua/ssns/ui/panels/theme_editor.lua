@@ -179,8 +179,8 @@ local function edit_color()
     italic = current_value.italic or false,
   }
 
-  -- Open color picker
-  ColorPicker.show({
+  -- Open color picker (multipanel mode)
+  ColorPicker.show_multipanel({
     initial = initial,
     title = color_def.name .. " (" .. color_def.key .. ")",
 
