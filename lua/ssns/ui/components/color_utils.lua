@@ -298,4 +298,297 @@ function M.generate_color_grid(center_hex, width, height, hue_step, lightness_st
   return grid
 end
 
+-- ============================================================================
+-- RGB <-> HSV Conversions
+-- ============================================================================
+
+---Convert RGB to HSV
+---@param r number Red (0-255)
+---@param g number Green (0-255)
+---@param b number Blue (0-255)
+---@return number h Hue (0-360)
+---@return number s Saturation (0-100)
+---@return number v Value (0-100)
+function M.rgb_to_hsv(r, g, b)
+  r, g, b = r / 255, g / 255, b / 255
+  local max = math.max(r, g, b)
+  local min = math.min(r, g, b)
+  local h, s, v = 0, 0, max
+  local d = max - min
+
+  s = max == 0 and 0 or d / max
+
+  if max ~= min then
+    if max == r then
+      h = (g - b) / d + (g < b and 6 or 0)
+    elseif max == g then
+      h = (b - r) / d + 2
+    else
+      h = (r - g) / d + 4
+    end
+    h = h / 6
+  end
+
+  return h * 360, s * 100, v * 100
+end
+
+---Convert HSV to RGB
+---@param h number Hue (0-360)
+---@param s number Saturation (0-100)
+---@param v number Value (0-100)
+---@return number r Red (0-255)
+---@return number g Green (0-255)
+---@return number b Blue (0-255)
+function M.hsv_to_rgb(h, s, v)
+  h, s, v = h / 360, s / 100, v / 100
+  local r, g, b
+
+  local i = math.floor(h * 6)
+  local f = h * 6 - i
+  local p = v * (1 - s)
+  local q = v * (1 - f * s)
+  local t = v * (1 - (1 - f) * s)
+
+  i = i % 6
+  if i == 0 then r, g, b = v, t, p
+  elseif i == 1 then r, g, b = q, v, p
+  elseif i == 2 then r, g, b = p, v, t
+  elseif i == 3 then r, g, b = p, q, v
+  elseif i == 4 then r, g, b = t, p, v
+  else r, g, b = v, p, q
+  end
+
+  return r * 255, g * 255, b * 255
+end
+
+---Convert hex to HSV
+---@param hex string Hex color
+---@return number h Hue (0-360)
+---@return number s Saturation (0-100)
+---@return number v Value (0-100)
+function M.hex_to_hsv(hex)
+  local r, g, b = M.hex_to_rgb(hex)
+  return M.rgb_to_hsv(r, g, b)
+end
+
+---Convert HSV to hex
+---@param h number Hue (0-360)
+---@param s number Saturation (0-100)
+---@param v number Value (0-100)
+---@return string hex
+function M.hsv_to_hex(h, s, v)
+  local r, g, b = M.hsv_to_rgb(h, s, v)
+  return M.rgb_to_hex(r, g, b)
+end
+
+-- ============================================================================
+-- RGB <-> CMYK Conversions
+-- ============================================================================
+
+---Convert RGB to CMYK
+---@param r number Red (0-255)
+---@param g number Green (0-255)
+---@param b number Blue (0-255)
+---@return number c Cyan (0-100)
+---@return number m Magenta (0-100)
+---@return number y Yellow (0-100)
+---@return number k Key/Black (0-100)
+function M.rgb_to_cmyk(r, g, b)
+  r, g, b = r / 255, g / 255, b / 255
+
+  local k = 1 - math.max(r, g, b)
+
+  -- Pure black
+  if k == 1 then
+    return 0, 0, 0, 100
+  end
+
+  local c = (1 - r - k) / (1 - k)
+  local m = (1 - g - k) / (1 - k)
+  local y = (1 - b - k) / (1 - k)
+
+  return c * 100, m * 100, y * 100, k * 100
+end
+
+---Convert CMYK to RGB
+---@param c number Cyan (0-100)
+---@param m number Magenta (0-100)
+---@param y number Yellow (0-100)
+---@param k number Key/Black (0-100)
+---@return number r Red (0-255)
+---@return number g Green (0-255)
+---@return number b Blue (0-255)
+function M.cmyk_to_rgb(c, m, y, k)
+  c, m, y, k = c / 100, m / 100, y / 100, k / 100
+
+  local r = 255 * (1 - c) * (1 - k)
+  local g = 255 * (1 - m) * (1 - k)
+  local b = 255 * (1 - y) * (1 - k)
+
+  return r, g, b
+end
+
+---Convert hex to CMYK
+---@param hex string Hex color
+---@return number c Cyan (0-100)
+---@return number m Magenta (0-100)
+---@return number y Yellow (0-100)
+---@return number k Key/Black (0-100)
+function M.hex_to_cmyk(hex)
+  local r, g, b = M.hex_to_rgb(hex)
+  return M.rgb_to_cmyk(r, g, b)
+end
+
+---Convert CMYK to hex
+---@param c number Cyan (0-100)
+---@param m number Magenta (0-100)
+---@param y number Yellow (0-100)
+---@param k number Key/Black (0-100)
+---@return string hex
+function M.cmyk_to_hex(c, m, y, k)
+  local r, g, b = M.cmyk_to_rgb(c, m, y, k)
+  return M.rgb_to_hex(r, g, b)
+end
+
+-- ============================================================================
+-- Value Formatting Helpers
+-- ============================================================================
+
+---Format a color component value for display
+---@param value number The value to format
+---@param unit string The unit type: "deg" (degrees), "pct" (percent), "int" (integer 0-255), "decimal"
+---@param format_type "standard"|"decimal" Display format
+---@return string formatted The formatted value string
+function M.format_value(value, unit, format_type)
+  format_type = format_type or "standard"
+
+  if format_type == "decimal" then
+    -- Convert to 0.0-1.0 range
+    if unit == "deg" then
+      return string.format("%.2f", value / 360)
+    elseif unit == "pct" then
+      return string.format("%.2f", value / 100)
+    elseif unit == "int" then
+      return string.format("%.2f", value / 255)
+    else
+      return string.format("%.2f", value)
+    end
+  else
+    -- Standard format with units
+    if unit == "deg" then
+      return string.format("%d°", math.floor(value + 0.5))
+    elseif unit == "pct" then
+      return string.format("%d%%", math.floor(value + 0.5))
+    elseif unit == "int" then
+      return string.format("%d", math.floor(value + 0.5))
+    else
+      return string.format("%d", math.floor(value + 0.5))
+    end
+  end
+end
+
+---Parse a formatted value string back to a number
+---@param str string The formatted string (e.g., "240°", "75%", "128", "0.67")
+---@param unit string The expected unit type
+---@param format_type "standard"|"decimal" The format used
+---@return number|nil value The parsed value, or nil if invalid
+function M.parse_value(str, unit, format_type)
+  if not str or str == "" then return nil end
+
+  -- Remove any whitespace
+  str = str:match("^%s*(.-)%s*$")
+
+  -- Try to extract number
+  local num_str = str:gsub("[°%%]", "")
+  local num = tonumber(num_str)
+
+  if not num then return nil end
+
+  if format_type == "decimal" then
+    -- Convert from 0.0-1.0 range back to native range
+    if unit == "deg" then
+      return num * 360
+    elseif unit == "pct" then
+      return num * 100
+    elseif unit == "int" then
+      return num * 255
+    else
+      return num
+    end
+  else
+    -- Standard format - value is already in native range
+    return num
+  end
+end
+
+---Get color components for a given mode
+---@param hex string The hex color
+---@param mode "hsl"|"rgb"|"cmyk"|"hsv" The color mode
+---@return table[] components Array of {key, label, value, unit}
+function M.get_color_components(hex, mode)
+  if mode == "hsl" then
+    local h, s, l = M.hex_to_hsl(hex)
+    return {
+      { key = "h", label = "H", value = h, unit = "deg" },
+      { key = "s", label = "S", value = s, unit = "pct" },
+      { key = "l", label = "L", value = l, unit = "pct" },
+    }
+  elseif mode == "rgb" then
+    local r, g, b = M.hex_to_rgb(hex)
+    return {
+      { key = "r", label = "R", value = r, unit = "int" },
+      { key = "g", label = "G", value = g, unit = "int" },
+      { key = "b", label = "B", value = b, unit = "int" },
+    }
+  elseif mode == "cmyk" then
+    local c, m, y, k = M.hex_to_cmyk(hex)
+    return {
+      { key = "c", label = "C", value = c, unit = "pct" },
+      { key = "m", label = "M", value = m, unit = "pct" },
+      { key = "y", label = "Y", value = y, unit = "pct" },
+      { key = "k", label = "K", value = k, unit = "pct" },
+    }
+  elseif mode == "hsv" then
+    local h, s, v = M.hex_to_hsv(hex)
+    return {
+      { key = "h", label = "H", value = h, unit = "deg" },
+      { key = "s", label = "S", value = s, unit = "pct" },
+      { key = "v", label = "V", value = v, unit = "pct" },
+    }
+  end
+
+  return {}
+end
+
+---Build hex color from components
+---@param components table Map of component key to value
+---@param mode "hsl"|"rgb"|"cmyk"|"hsv" The color mode
+---@return string hex The resulting hex color
+function M.components_to_hex(components, mode)
+  if mode == "hsl" then
+    local h = components.h or 0
+    local s = components.s or 0
+    local l = components.l or 50
+    return M.hsl_to_hex(h, s, l)
+  elseif mode == "rgb" then
+    local r = components.r or 128
+    local g = components.g or 128
+    local b = components.b or 128
+    return M.rgb_to_hex(r, g, b)
+  elseif mode == "cmyk" then
+    local c = components.c or 0
+    local m = components.m or 0
+    local y = components.y or 0
+    local k = components.k or 0
+    return M.cmyk_to_hex(c, m, y, k)
+  elseif mode == "hsv" then
+    local h = components.h or 0
+    local s = components.s or 0
+    local v = components.v or 100
+    return M.hsv_to_hex(h, s, v)
+  end
+
+  return "#808080"
+end
+
 return M

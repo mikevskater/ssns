@@ -4,7 +4,9 @@ local ColorPicker = {}
 
 local ColorUtils = require('ssns.ui.components.color_utils')
 local UiFloat = require('ssns.ui.core.float')
+local MultiPanel = require('ssns.ui.core.float.multipanel')
 local ContentBuilder = require('ssns.ui.core.content_builder')
+local InputManager = require('ssns.ui.core.input_manager')
 local KeymapManager = require('ssns.keymap_manager')
 local Config = require('ssns.config')
 
@@ -25,6 +27,9 @@ local Config = require('ssns.config')
 ---@field on_change fun(color: ColorPickerColor)? Called on every navigation
 ---@field on_select fun(color: ColorPickerColor)? Called when user confirms
 ---@field on_cancel fun()? Called when user cancels
+---@field forced_mode "hsl"|"rgb"|"cmyk"|"hsv"? Force specific color mode (locks mode switching)
+---@field alpha_enabled boolean? Allow alpha editing (default: false)
+---@field initial_alpha number? Initial alpha value 0-100 (default: 100)
 
 ---@class ColorPickerState
 ---@field current ColorPickerColor Current working color
@@ -43,6 +48,14 @@ local Config = require('ssns.config')
 ---@field _float FloatWindow? Reference to UiFloat window instance
 ---@field _render_pending boolean? Whether a render is scheduled
 ---@field _render_timer number? Timer handle for debounced render
+---@field color_mode "hsl"|"rgb"|"cmyk"|"hsv" Current color mode for info panel
+---@field value_format "standard"|"decimal" Value display format
+---@field alpha number Alpha value 0-100
+---@field alpha_enabled boolean Whether alpha editing is available
+---@field focused_panel "grid"|"info" Currently focused panel
+---@field _multipanel table? MultiPanelWindow instance (for multipanel mode)
+---@field _info_panel_cb table? ContentBuilder for info panel (stores inputs)
+---@field _info_input_manager table? InputManager for info panel
 
 -- ============================================================================
 -- Constants
@@ -50,7 +63,7 @@ local Config = require('ssns.config')
 
 local PREVIEW_HEIGHT = 2    -- Rows for color preview
 local PREVIEW_BORDERS = 2   -- Top and bottom border lines around preview
-local FOOTER_HEIGHT = 4     -- Blank + info line + blank + help hint
+local FOOTER_HEIGHT = 6     -- Blank + info line + blank + mode/step line + blank + help hint
 local HEADER_HEIGHT = 3     -- Blank + title + blank
 local PADDING = 2           -- Left/right padding
 
@@ -63,6 +76,32 @@ local STEP_SIZES = { 0.25, 0.5, 1, 2, 4, 8 }
 local STEP_LABELS = { "¼×", "½×", "1×", "2×", "4×", "8×" }
 local DEFAULT_STEP_INDEX = 3  -- 1x multiplier
 
+-- Alpha visualization characters (for preview section)
+-- Uses block shades for high opacity, braille patterns for low opacity
+-- Braille provides smooth density transitions: ⣿(8)→⣶(6)→⡆(4)→⠆(3)→⠂(2)→⠁(1)→⠀(0)
+local ALPHA_CHARS = {
+  { min = 100, max = 100, char = "█" },  -- 100% full block
+  { min = 85,  max = 99,  char = "▓" },  -- 85-99% dark shade
+  { min = 70,  max = 84,  char = "▒" },  -- 70-84% medium shade
+  { min = 55,  max = 69,  char = "░" },  -- 55-69% light shade
+  { min = 42,  max = 54,  char = "⣿" },  -- 42-54% braille 8 dots
+  { min = 30,  max = 41,  char = "⣶" },  -- 30-41% braille 6 dots
+  { min = 20,  max = 29,  char = "⠭" },  -- 20-29% braille 4 dots
+  { min = 12,  max = 19,  char = "⠪" },  -- 12-19% braille 3 dots
+  { min = 6,   max = 11,  char = "⠊" },  -- 6-11% braille 2 dots
+  { min = 2,   max = 5,   char = "⠁" },  -- 2-5% braille 1 dot
+  { min = 0,   max = 1,   char = "⠀" },  -- 0-1% braille blank
+}
+
+-- Color modes available
+local COLOR_MODES = { "hsl", "rgb", "cmyk", "hsv" }
+
+-- Minimum width for side-by-side layout (below this, use stacked)
+local MIN_SIDE_BY_SIDE_WIDTH = 80
+
+-- Info panel minimum dimensions
+local INFO_PANEL_MIN_WIDTH = 22
+local INFO_PANEL_MIN_HEIGHT = 12
 
 -- ============================================================================
 -- State
@@ -110,6 +149,18 @@ end
 local function get_step_label()
   if not state then return "1×" end
   return STEP_LABELS[state.step_index] or "1×"
+end
+
+---Get the alpha visualization character for a given alpha value
+---@param alpha number Alpha value 0-100
+---@return string char The character representing the alpha level
+local function get_alpha_char(alpha)
+  for _, def in ipairs(ALPHA_CHARS) do
+    if alpha >= def.min and alpha <= def.max then
+      return def.char
+    end
+  end
+  return "█"  -- Fallback to fully opaque
 end
 
 ---Map a virtual position to actual 0-100 value with bounce (triangular wave)
@@ -168,6 +219,7 @@ end
 -- ============================================================================
 
 ---Create highlight groups for the color grid
+---Uses background color with space character for simpler rendering
 ---@param grid string[][] The color grid
 local function create_grid_highlights(grid)
   if not state then return end
@@ -178,12 +230,18 @@ local function create_grid_highlights(grid)
   for row_idx, row in ipairs(grid) do
     for col_idx, color in ipairs(row) do
       local hl_name = get_cell_hl_group(row_idx, col_idx)
-      local hl_def = { bg = color }
+      local hl_def
 
-      -- Center cell gets contrasting foreground for the X marker
+      -- Center cell gets contrasting X marker
       if row_idx == center_row and col_idx == center_col then
-        hl_def.fg = ColorUtils.get_contrast_color(color)
-        hl_def.bold = true
+        hl_def = {
+          fg = ColorUtils.get_contrast_color(color),
+          bg = color,
+          bold = true,
+        }
+      else
+        -- Non-center cells use background color with space character
+        hl_def = { bg = color }
       end
 
       vim.api.nvim_set_hl(0, hl_name, hl_def)
@@ -269,14 +327,14 @@ local function render_grid()
     local line_hls = {}
 
     for col_idx, _ in ipairs(row) do
-      local char = " "
+      local char = " "  -- Space with background color
       -- Center cell gets X marker
       if row_idx == center_row and col_idx == center_col then
         char = "X"
       end
       table.insert(line_chars, char)
 
-      -- Store highlight info
+      -- Store highlight info (all chars are 1 byte)
       table.insert(line_hls, {
         col_start = PADDING + col_idx - 1,
         col_end = PADDING + col_idx,
@@ -301,7 +359,8 @@ local function render_grid()
   return lines, highlights
 end
 
----Render the preview section
+---Render the preview section with alpha visualization
+---Uses different characters to represent opacity levels
 ---@return string[] lines
 ---@return table[] highlights
 local function render_preview()
@@ -311,27 +370,38 @@ local function render_preview()
   local highlights = {}
   local pad = string.rep(" ", PADDING)
 
-  -- Create preview highlight
+  -- Get the preview color and alpha
   local preview_color = get_active_color()
-  vim.api.nvim_set_hl(0, "ColorPickerPreview", { bg = preview_color })
+  local alpha = state.alpha or 100
 
-  -- Preview border
+  -- Get the alpha visualization character
+  local alpha_char = get_alpha_char(alpha)
+  local alpha_char_len = #alpha_char  -- Byte length (multi-byte for unicode chars)
+
+  -- Create preview highlight using foreground color (for alpha visualization)
+  vim.api.nvim_set_hl(0, "ColorPickerPreview", { fg = preview_color })
+
+  -- Preview border (─ is 3 bytes)
+  local border_char = "─"
   local preview_width = state.grid_width
-  table.insert(lines, pad .. string.rep("─", preview_width))
+  table.insert(lines, pad .. string.rep(border_char, preview_width))
 
-  -- Preview rows (filled with spaces using background color)
+  -- Preview rows (filled with alpha character using foreground color)
+  -- Calculate byte length of the preview content
+  local preview_byte_len = preview_width * alpha_char_len
+
   for i = 1, PREVIEW_HEIGHT do
-    local preview_line = pad .. string.rep(" ", preview_width)
+    local preview_line = pad .. string.rep(alpha_char, preview_width)
     table.insert(lines, preview_line)
     table.insert(highlights, {
       line = #lines - 1,
       col_start = PADDING,
-      col_end = PADDING + preview_width,
+      col_end = PADDING + preview_byte_len,
       hl_group = "ColorPickerPreview",
     })
   end
 
-  table.insert(lines, pad .. string.rep("─", preview_width))
+  table.insert(lines, pad .. string.rep(border_char, preview_width))
 
   return lines, highlights
 end
@@ -361,7 +431,7 @@ local function render_footer_cb()
   if not state then return cb, {} end
 
   -- Mode and style indicators
-  local mode = state.editing_bg and "[bg]" or "[fg]"
+  local fg_bg_mode = state.editing_bg and "[bg]" or "[fg]"
   local bold_indicator = state.current.bold and "[B]" or "[ ]"
   local italic_indicator = state.current.italic and "[I]" or "[ ]"
 
@@ -373,21 +443,34 @@ local function render_footer_cb()
     { text = "  Original", style = "label" },
     { text = "   ", style = "muted" },
     { text = "Current", style = "label" },
-    { text = "   " .. mode .. " ", style = "muted" },
+    { text = "   " .. fg_bg_mode .. " ", style = "muted" },
     { text = bold_indicator .. " bold ", style = state.current.bold and "emphasis" or "muted" },
     { text = italic_indicator .. " italic", style = state.current.italic and "emphasis" or "muted" },
   })
 
   cb:blank()
 
-  -- Step size and help hint
-  local step_label = get_step_label()
+  -- Color mode and alpha info
+  local color_mode_display = state.color_mode:upper()
+  local alpha_display = state.alpha_enabled
+    and string.format("  A: %d%%", math.floor(state.alpha + 0.5))
+    or ""
+
   cb:spans({
+    { text = "  Mode: ", style = "label" },
+    { text = color_mode_display, style = "value" },
+    { text = " (m)", style = "muted" },
+    { text = alpha_display, style = state.alpha < 100 and "emphasis" or "muted" },
     { text = "  Step: ", style = "label" },
-    { text = step_label, style = "value" },
-    { text = "  (-/+ adjust)", style = "muted" },
-    { text = "     ", style = "muted" },
-    { text = "? = Controls", style = "key" },
+    { text = get_step_label(), style = "value" },
+    { text = " (-/+)", style = "muted" },
+  })
+
+  cb:blank()
+
+  -- Help hint
+  cb:spans({
+    { text = "  ? = Controls", style = "key" },
   })
 
   -- Return info for applying color swatch highlights
@@ -454,6 +537,380 @@ local function apply_swatch_highlights(base_line, swatch_info)
     curr_info.col_start,
     curr_info.col_end
   )
+end
+
+-- ============================================================================
+-- Multipanel Layout and Rendering
+-- ============================================================================
+
+-- Forward declaration for schedule_render_multipanel
+local schedule_render_multipanel
+
+---Create layout configuration for multipanel mode
+---@return MultiPanelConfig
+local function create_layout_config()
+  local ui = vim.api.nvim_list_uis()[1]
+  local is_narrow = ui.width < MIN_SIDE_BY_SIDE_WIDTH
+
+  -- Calculate grid panel size based on available space
+  local grid_content_height = HEADER_HEIGHT + 11 + 1 + (PREVIEW_HEIGHT + PREVIEW_BORDERS) + FOOTER_HEIGHT
+
+  if is_narrow then
+    -- Stacked layout (vertical split): Grid on top, Info below
+    return {
+      layout = {
+        split = "vertical",
+        children = {
+          {
+            name = "grid",
+            title = "Color Grid",
+            ratio = 0.70,
+            min_height = grid_content_height,
+            focusable = true,
+            cursorline = false,
+            filetype = "ssns-colorpicker-grid",
+          },
+          {
+            name = "info",
+            title = "Info",
+            ratio = 0.30,
+            min_height = INFO_PANEL_MIN_HEIGHT,
+            focusable = true,
+            cursorline = false,
+            filetype = "ssns-colorpicker-info",
+          },
+        }
+      },
+      total_width_ratio = 0.95,
+      total_height_ratio = 0.85,
+    }
+  else
+    -- Side-by-side layout (horizontal split): Grid left, Info right
+    return {
+      layout = {
+        split = "horizontal",
+        children = {
+          {
+            name = "grid",
+            title = "Color Grid",
+            ratio = 0.60,
+            min_width = 40,
+            focusable = true,
+            cursorline = false,
+            filetype = "ssns-colorpicker-grid",
+          },
+          {
+            name = "info",
+            title = "Info",
+            ratio = 0.40,
+            min_width = INFO_PANEL_MIN_WIDTH,
+            focusable = true,
+            cursorline = false,
+            filetype = "ssns-colorpicker-info",
+          },
+        }
+      },
+      total_width_ratio = 0.80,
+      total_height_ratio = 0.75,
+    }
+  end
+end
+
+---Render the grid panel content (header, grid, preview, footer)
+---@param multi_state MultiPanelState
+---@return string[] lines
+---@return table[] highlights
+local function render_grid_panel(multi_state)
+  if not state then return {}, {} end
+
+  local all_lines = {}
+  local all_highlights = {}
+  local line_offset = 0
+
+  -- Get panel dimensions for grid calculation
+  local panel = multi_state.panels["grid"]
+  if not panel or not panel.float or not panel.float:is_valid() then
+    return {}, {}
+  end
+
+  local panel_width = panel.rect.width
+  local panel_height = panel.rect.height
+
+  -- Recalculate grid size for this panel
+  local grid_width, grid_height = calculate_grid_size(panel_width, panel_height)
+  state.grid_width = grid_width
+  state.grid_height = grid_height
+
+  -- 1. Header via ContentBuilder
+  local header_cb = render_header_cb()
+  local header_lines = header_cb:build_lines()
+  local header_highlights = header_cb:build_highlights()
+
+  for _, line in ipairs(header_lines) do
+    table.insert(all_lines, line)
+  end
+  for _, hl in ipairs(header_highlights) do
+    table.insert(all_highlights, {
+      line = hl.line + line_offset,
+      col_start = hl.col_start,
+      col_end = hl.col_end,
+      hl_group = hl.hl_group,
+    })
+  end
+  line_offset = #all_lines
+
+  -- 2. Grid (custom rendering - per-cell highlights)
+  local grid_lines, grid_highlights = render_grid()
+  for _, line in ipairs(grid_lines) do
+    table.insert(all_lines, line)
+  end
+  for _, hl in ipairs(grid_highlights) do
+    table.insert(all_highlights, {
+      line = hl.line + line_offset,
+      col_start = hl.col_start,
+      col_end = hl.col_end,
+      hl_group = hl.hl_group,
+    })
+  end
+  line_offset = #all_lines
+
+  -- Spacing before preview
+  table.insert(all_lines, "")
+  line_offset = #all_lines
+
+  -- 3. Preview (custom rendering - dynamic foreground color with alpha)
+  local preview_lines, preview_highlights = render_preview()
+  for _, line in ipairs(preview_lines) do
+    table.insert(all_lines, line)
+  end
+  for _, hl in ipairs(preview_highlights) do
+    table.insert(all_highlights, {
+      line = hl.line + line_offset,
+      col_start = hl.col_start,
+      col_end = hl.col_end,
+      hl_group = hl.hl_group,
+    })
+  end
+
+  -- Track footer start line for swatch highlights
+  local footer_start_line = #all_lines
+
+  -- 4. Footer via ContentBuilder
+  local footer_cb, swatch_info = render_footer_cb()
+  local footer_lines = footer_cb:build_lines()
+  local footer_highlights = footer_cb:build_highlights()
+
+  for _, line in ipairs(footer_lines) do
+    table.insert(all_lines, line)
+  end
+  for _, hl in ipairs(footer_highlights) do
+    table.insert(all_highlights, {
+      line = hl.line + footer_start_line,
+      col_start = hl.col_start,
+      col_end = hl.col_end,
+      hl_group = hl.hl_group,
+    })
+  end
+
+  -- Store swatch info in state for post-render highlight application
+  state._swatch_info = swatch_info
+  state._footer_start_line = footer_start_line
+
+  return all_lines, all_highlights
+end
+
+---Apply grid panel post-render highlights (color swatches)
+---@param multi_state MultiPanelState
+local function apply_grid_panel_highlights(multi_state)
+  if not state or not state._swatch_info then return end
+
+  local panel = multi_state.panels["grid"]
+  if not panel or not panel.float or not panel.float:is_valid() then return end
+
+  -- Temporarily update state.buf to point to grid panel buffer
+  local original_buf = state.buf
+  local original_ns = state.ns
+  state.buf = panel.float.bufnr
+  state.ns = panel.namespace
+
+  -- Apply swatch highlights
+  apply_swatch_highlights(state._footer_start_line, state._swatch_info)
+
+  -- Restore original buf/ns
+  state.buf = original_buf
+  state.ns = original_ns
+end
+
+---Render the info panel content using ContentBuilder with interactive inputs
+---@param multi_state MultiPanelState
+---@return string[] lines
+---@return table[] highlights
+local function render_info_panel(multi_state)
+  if not state then return {}, {} end
+
+  local cb = ContentBuilder.new()
+
+  -- Get current color hex
+  local current_hex = get_active_color()
+
+  -- Mode selector line
+  cb:blank()
+  cb:spans({
+    { text = "  Mode: ", style = "label" },
+    { text = "[" .. state.color_mode:upper() .. "]", style = "value" },
+    { text = "  m", style = "key" },
+  })
+
+  cb:blank()
+
+  -- Hex value input (include alpha as #RRGGBBAA when alpha is enabled)
+  local hex_display = current_hex
+  if state.alpha_enabled and state.color_mode ~= "cmyk" then
+    local alpha_byte = math.floor((state.alpha / 100) * 255 + 0.5)
+    hex_display = current_hex .. string.format("%02X", alpha_byte)
+  end
+  cb:input("hex", {
+    label = "  Hex",
+    value = hex_display,
+    width = 10,
+    placeholder = "#000000",
+  })
+
+  cb:blank()
+
+  -- Separator
+  cb:styled("  " .. string.rep("─", 16), "muted")
+
+  cb:blank()
+
+  -- Color components based on mode - use input fields for each
+  local components = ColorUtils.get_color_components(current_hex, state.color_mode)
+  for _, comp in ipairs(components) do
+    local formatted = ColorUtils.format_value(comp.value, comp.unit, state.value_format)
+    local input_key = "comp_" .. comp.label:lower()
+    cb:input(input_key, {
+      label = "  " .. comp.label,
+      value = formatted,
+      width = 8,
+      placeholder = "0",
+    })
+  end
+
+  -- Alpha input (if enabled and not CMYK)
+  if state.alpha_enabled and state.color_mode ~= "cmyk" then
+    cb:blank()
+    local alpha_formatted = ColorUtils.format_value(state.alpha, "pct", state.value_format)
+    cb:input("alpha", {
+      label = "  A",
+      value = alpha_formatted,
+      width = 8,
+      placeholder = "100%",
+    })
+  end
+
+  cb:blank()
+
+  -- Separator
+  cb:styled("  " .. string.rep("─", 16), "muted")
+
+  cb:blank()
+
+  -- Format toggle
+  local format_label = state.value_format == "standard" and "Standard" or "Decimal"
+  cb:spans({
+    { text = "  Format: ", style = "label" },
+    { text = format_label, style = "value" },
+    { text = "  f", style = "key" },
+  })
+
+  cb:blank()
+
+  -- Style toggles
+  local mode_ind = state.editing_bg and "[bg]" or "[fg]"
+  local bold_ind = state.current.bold and "[B]" or "[ ]"
+  local italic_ind = state.current.italic and "[I]" or "[ ]"
+
+  cb:spans({
+    { text = "  " .. mode_ind, style = "muted" },
+  })
+
+  cb:spans({
+    { text = "  " .. bold_ind .. " bold", style = state.current.bold and "emphasis" or "muted" },
+  })
+
+  cb:spans({
+    { text = "  " .. italic_ind .. " italic", style = state.current.italic and "emphasis" or "muted" },
+  })
+
+  cb:blank()
+
+  -- Separator
+  cb:styled("  " .. string.rep("─", 16), "muted")
+
+  cb:blank()
+
+  -- Help hints
+  cb:spans({
+    { text = "  Tab", style = "key" },
+    { text = " switch panel", style = "muted" },
+  })
+
+  cb:spans({
+    { text = "  ?", style = "key" },
+    { text = " controls", style = "muted" },
+  })
+
+  -- Store ContentBuilder in state for InputManager to access
+  state._info_panel_cb = cb
+
+  return cb:build_lines(), cb:build_highlights()
+end
+
+---Render all multipanel panels
+local function render_multipanel()
+  if not state or not state._multipanel then return end
+
+  local multi = state._multipanel
+
+  -- Render grid panel
+  multi:render_panel("grid")
+
+  -- Apply post-render highlights for grid panel
+  apply_grid_panel_highlights(multi)
+
+  -- Render info panel
+  multi:render_panel("info")
+
+  -- Sync InputManager with new values after render
+  -- (InputManager keeps its own copy of values, so we need to update when color changes)
+  if state._info_input_manager and state._info_panel_cb then
+    local cb = state._info_panel_cb
+    state._info_input_manager:update_inputs(
+      cb:get_inputs(),
+      cb:get_input_order()
+    )
+  end
+
+  -- Trigger on_change callback
+  if state.options.on_change then
+    state.options.on_change(vim.deepcopy(state.current))
+  end
+end
+
+---Schedule a render for multipanel mode
+schedule_render_multipanel = function()
+  if not state or not state._multipanel then return end
+
+  -- If render already pending, skip
+  if state._render_pending then return end
+
+  state._render_pending = true
+  vim.schedule(function()
+    if state and state._multipanel then
+      state._render_pending = false
+      render_multipanel()
+    end
+  end)
 end
 
 -- Forward declaration for schedule_render (defined after render)
@@ -575,7 +1032,16 @@ end
 ---Coalesces multiple calls - if a render is already pending, skip scheduling another
 ---Uses vim.schedule() with no delay to ensure the X marker stays in center
 schedule_render = function()
-  if not state or not state.buf or not vim.api.nvim_buf_is_valid(state.buf) then
+  if not state then return end
+
+  -- Use multipanel render if in multipanel mode
+  if state._multipanel then
+    schedule_render_multipanel()
+    return
+  end
+
+  -- Single-window mode
+  if not state.buf or not vim.api.nvim_buf_is_valid(state.buf) then
     return
   end
 
@@ -740,6 +1206,58 @@ local function clear_bg()
   schedule_render()
 end
 
+---Cycle through color modes (HSL → RGB → CMYK → HSV → HSL)
+local function cycle_mode()
+  if not state then return end
+
+  -- Don't allow cycling if mode is forced
+  if state.options.forced_mode then
+    vim.notify("Color mode is locked to " .. state.options.forced_mode:upper(), vim.log.levels.INFO)
+    return
+  end
+
+  -- Find current mode index and cycle to next
+  local current_idx = 1
+  for i, mode in ipairs(COLOR_MODES) do
+    if mode == state.color_mode then
+      current_idx = i
+      break
+    end
+  end
+
+  local next_idx = (current_idx % #COLOR_MODES) + 1
+  state.color_mode = COLOR_MODES[next_idx]
+  schedule_render()
+end
+
+---Cycle value display format (standard ↔ decimal)
+local function cycle_format()
+  if not state then return end
+  state.value_format = state.value_format == "standard" and "decimal" or "standard"
+  schedule_render()
+end
+
+---Adjust alpha value
+---@param delta number Amount to change alpha (positive or negative)
+local function adjust_alpha(delta)
+  if not state then return end
+
+  -- Only adjust if alpha is enabled and mode supports it
+  if not state.alpha_enabled then
+    vim.notify("Alpha editing is not enabled", vim.log.levels.INFO)
+    return
+  end
+
+  if state.color_mode == "cmyk" then
+    vim.notify("CMYK mode does not support alpha", vim.log.levels.INFO)
+    return
+  end
+
+  local step = delta * BASE_STEP_SATURATION * get_step_multiplier()
+  state.alpha = math.max(0, math.min(100, state.alpha + step))
+  schedule_render()
+end
+
 ---Enter hex input mode
 local function enter_hex_input()
   if not state then return end
@@ -796,7 +1314,7 @@ end
 ---Get controls definition for the color picker
 ---@return ControlsDefinition[]
 local function get_controls_definition()
-  return {
+  local controls = {
     {
       header = "Navigation",
       keys = {
@@ -810,6 +1328,13 @@ local function get_controls_definition()
       header = "Step Size",
       keys = {
         { key = "- / +", desc = "Decrease/increase multiplier" },
+      }
+    },
+    {
+      header = "Color Mode",
+      keys = {
+        { key = "m", desc = "Cycle mode (HSL/RGB/CMYK/HSV)" },
+        { key = "f", desc = "Toggle format (standard/decimal)" },
       }
     },
     {
@@ -831,12 +1356,34 @@ local function get_controls_definition()
       }
     },
   }
+
+  -- Add alpha controls if enabled
+  if state and state.alpha_enabled then
+    table.insert(controls, 4, {
+      header = "Alpha",
+      keys = {
+        { key = "a / A", desc = "Decrease/increase opacity" },
+      }
+    })
+  end
+
+  return controls
 end
 
 ---Show the help popup using UiFloat's controls system
 local function show_help()
-  if not state or not state._float then return end
-  state._float:show_controls(get_controls_definition())
+  if not state then return end
+
+  -- Use multipanel's show_controls if in multipanel mode
+  if state._multipanel then
+    state._multipanel:show_controls(get_controls_definition())
+    return
+  end
+
+  -- Single-window mode
+  if state._float then
+    state._float:show_controls(get_controls_definition())
+  end
 end
 
 -- ============================================================================
@@ -924,6 +1471,21 @@ local function setup_keymaps()
   add_maps(get_key("step_down", "-"), decrease_step_size, keymaps)
   add_maps(get_key("step_up", { "+", "=" }), increase_step_size, keymaps)
 
+  -- Color mode and format cycling
+  add_maps(get_key("cycle_mode", "m"), cycle_mode, keymaps)
+  add_maps(get_key("cycle_format", "f"), cycle_format, keymaps)
+
+  -- Alpha adjustment (with count support)
+  add_maps(get_key("alpha_up", "A"), function()
+    local count = vim.v.count1
+    adjust_alpha(count)
+  end, keymaps)
+
+  add_maps(get_key("alpha_down", "a"), function()
+    local count = vim.v.count1
+    adjust_alpha(-count)
+  end, keymaps)
+
   -- Apply all keymaps using KeymapManager (saves conflicts, auto-restores on close)
   KeymapManager.set_multiple(buf, keymaps, true)
   KeymapManager.setup_auto_restore(buf)
@@ -959,6 +1521,13 @@ function ColorPicker.close()
   local grid_height = state.grid_height or 20
   local grid_width = state.grid_width or 60
   local float = state._float
+  local multipanel = state._multipanel
+  local input_manager = state._info_input_manager
+
+  -- Clean up InputManager before clearing state
+  if input_manager then
+    input_manager:destroy()
+  end
 
   -- Clear state first to prevent re-entrancy issues
   state = nil
@@ -973,7 +1542,13 @@ function ColorPicker.close()
   pcall(vim.api.nvim_set_hl, 0, "ColorPickerOriginalPreview", {})
   pcall(vim.api.nvim_set_hl, 0, "ColorPickerCurrentPreview", {})
 
-  -- Close the floating window using UiFloat
+  -- Close multipanel if in multipanel mode
+  if multipanel and multipanel:is_valid() then
+    multipanel:close()
+    return
+  end
+
+  -- Close the floating window using UiFloat (single-window mode)
   if float and float:is_valid() then
     float:close()
   end
@@ -1064,6 +1639,13 @@ function ColorPicker.show(options)
     lightness_virtual = nil,  -- Initialized on first navigation
     saturation_virtual = nil, -- Initialized on first navigation
     _float = float,  -- Keep reference to FloatWindow for controls popup
+    -- New fields for color mode and alpha support
+    color_mode = options.forced_mode or "hsl",  -- Default to HSL
+    value_format = "standard",  -- "standard" or "decimal"
+    alpha = options.initial_alpha or 100,  -- 0-100, default fully opaque
+    alpha_enabled = options.alpha_enabled or false,
+    focused_panel = "grid",  -- Start with grid focused
+    _multipanel = nil,  -- Will be set when multipanel mode is enabled
   }
 
   -- Setup keymaps
@@ -1083,6 +1665,452 @@ function ColorPicker.show(options)
 
   -- Initial render
   render()
+end
+
+---Setup keymaps for multipanel mode
+---@param multi MultiPanelState
+local function setup_multipanel_keymaps(multi)
+  if not state then return end
+
+  local cfg = Config.get().keymaps.colorpicker or {}
+
+  -- Helper to get key(s) from config with fallback
+  local function get_key(name, default)
+    return cfg[name] or default
+  end
+
+  -- Grid-only keymaps (navigation that only works on the color grid panel)
+  local grid_keymaps = {}
+
+  -- Navigation with count support - GRID PANEL ONLY
+  local nav_left = get_key("nav_left", "h")
+  local nav_right = get_key("nav_right", "l")
+  local nav_up = get_key("nav_up", "k")
+  local nav_down = get_key("nav_down", "j")
+  local sat_up = get_key("sat_up", "K")
+  local sat_down = get_key("sat_down", "J")
+
+  grid_keymaps[nav_left] = function()
+    local count = vim.v.count1
+    shift_hue(-count)
+  end
+  grid_keymaps[nav_right] = function()
+    local count = vim.v.count1
+    shift_hue(count)
+  end
+  grid_keymaps[nav_up] = function()
+    local count = vim.v.count1
+    shift_lightness(count)
+  end
+  grid_keymaps[nav_down] = function()
+    local count = vim.v.count1
+    shift_lightness(-count)
+  end
+  grid_keymaps[sat_up] = function()
+    local count = vim.v.count1
+    shift_saturation(count)
+  end
+  grid_keymaps[sat_down] = function()
+    local count = vim.v.count1
+    shift_saturation(-count)
+  end
+
+  -- Step size adjustment - also grid-only
+  grid_keymaps[get_key("step_down", "-")] = decrease_step_size
+  local step_up_keys = get_key("step_up", { "+", "=" })
+  if type(step_up_keys) == "table" then
+    for _, k in ipairs(step_up_keys) do
+      grid_keymaps[k] = increase_step_size
+    end
+  else
+    grid_keymaps[step_up_keys] = increase_step_size
+  end
+
+  -- Apply grid-only keymaps to grid panel
+  multi:set_panel_keymaps("grid", grid_keymaps)
+
+  -- Common keymaps for all panels (actions, toggles, etc.)
+  local common_keymaps = {}
+
+  -- Toggles
+  common_keymaps[get_key("toggle_bold", "b")] = toggle_bold
+  common_keymaps[get_key("toggle_italic", "i")] = toggle_italic
+  common_keymaps[get_key("toggle_bg", "B")] = toggle_bg_mode
+  common_keymaps[get_key("clear_bg", "x")] = clear_bg
+
+  -- Actions
+  common_keymaps[get_key("reset", "r")] = reset_color
+  common_keymaps[get_key("hex_input", "#")] = enter_hex_input
+  common_keymaps[get_key("apply", "<CR>")] = apply
+
+  -- Cancel keymaps
+  local cancel_keys = get_key("cancel", { "q", "<Esc>" })
+  if type(cancel_keys) == "table" then
+    for _, k in ipairs(cancel_keys) do
+      common_keymaps[k] = cancel
+    end
+  else
+    common_keymaps[cancel_keys] = cancel
+  end
+
+  -- Help
+  common_keymaps[get_key("help", "?")] = show_help
+
+  -- Color mode and format cycling
+  common_keymaps[get_key("cycle_mode", "m")] = cycle_mode
+  common_keymaps[get_key("cycle_format", "f")] = cycle_format
+
+  -- Alpha adjustment (with count support)
+  common_keymaps[get_key("alpha_up", "A")] = function()
+    local count = vim.v.count1
+    adjust_alpha(count)
+  end
+  common_keymaps[get_key("alpha_down", "a")] = function()
+    local count = vim.v.count1
+    adjust_alpha(-count)
+  end
+
+  -- Focus switching
+  common_keymaps[get_key("focus_next", "<Tab>")] = function()
+    multi:focus_next_panel()
+  end
+  common_keymaps[get_key("focus_prev", "<S-Tab>")] = function()
+    multi:focus_prev_panel()
+  end
+
+  -- Apply common keymaps to all panels
+  multi:set_keymaps(common_keymaps)
+end
+
+---Extract numeric value from a string, stripping all non-numeric characters
+---Handles integers, decimals, and negative numbers
+---@param str string The input string
+---@return number|nil value The extracted number, or nil if no valid number found
+local function extract_number(str)
+  if not str or str == "" then return nil end
+  -- Match optional negative sign, digits, optional decimal point and more digits
+  local num_str = str:match("%-?%d+%.?%d*")
+  if not num_str or num_str == "" or num_str == "-" or num_str == "." then
+    return nil
+  end
+  return tonumber(num_str)
+end
+
+---Extract hex digits from a string
+---@param str string The input string
+---@return string|nil hex_digits Only the hex digit characters, or nil if none found
+local function extract_hex_digits(str)
+  if not str or str == "" then return nil end
+  -- Remove # prefix if present, then extract only hex digits
+  local cleaned = str:gsub("^#", "")
+  local hex_only = cleaned:gsub("[^%x]", "")
+  if hex_only == "" then return nil end
+  return hex_only
+end
+
+---Handle input commit from the info panel (called on Enter, not on every keystroke)
+---Parses hex values or component values and updates the color
+---@param key string Input field key (e.g., "hex", "comp_h", "comp_s", "comp_l", "alpha")
+---@param value string The committed input value
+local function handle_input_commit(key, value)
+  if not state then return end
+
+  -- Trim whitespace
+  value = value:gsub("^%s+", ""):gsub("%s+$", "")
+  if value == "" then return end
+
+  if key == "hex" then
+    -- Extract only hex digits from the input
+    local hex_digits = extract_hex_digits(value)
+    if not hex_digits then return end
+
+    if #hex_digits >= 6 then
+      -- Take first 6 digits for color
+      local color_hex = "#" .. hex_digits:sub(1, 6):upper()
+      if ColorUtils.is_valid_hex(color_hex) then
+        set_active_color(color_hex)
+
+        -- If 8 digits provided, parse alpha from last 2 hex digits
+        if #hex_digits >= 8 and state.alpha_enabled then
+          local alpha_hex = hex_digits:sub(7, 8)
+          local alpha_byte = tonumber(alpha_hex, 16)
+          if alpha_byte then
+            state.alpha = (alpha_byte / 255) * 100
+          end
+        end
+        schedule_render()
+      end
+    end
+  elseif key == "alpha" then
+    -- Extract numeric value from alpha input
+    local num = extract_number(value)
+    if num and state.alpha_enabled then
+      -- Handle decimal format (0-1) vs standard (0-100)
+      if state.value_format == "decimal" and num >= 0 and num <= 1 then
+        state.alpha = num * 100
+      else
+        state.alpha = math.max(0, math.min(100, num))
+      end
+      schedule_render()
+    end
+  elseif key:match("^comp_") then
+    -- Parse color component value
+    local comp_name = key:gsub("^comp_", ""):upper()
+    local current_hex = get_active_color()
+
+    -- Extract numeric value (strips °, %, and any other non-numeric chars)
+    local num = extract_number(value)
+    if not num then return end
+
+    -- Handle decimal format conversion for percentage-based values
+    if state.value_format == "decimal" and num >= 0 and num <= 1 then
+      -- Convert 0-1 decimal to appropriate range
+      if comp_name == "H" then
+        -- Hue in decimal is 0-1 representing 0-360
+        num = num * 360
+      elseif state.color_mode == "rgb" then
+        -- RGB in decimal is 0-1 representing 0-255
+        num = num * 255
+      else
+        -- S, L, V, C, M, Y, K are percentages (0-100)
+        num = num * 100
+      end
+    end
+
+    -- Update color based on mode and component
+    local new_hex = nil
+    if state.color_mode == "hsl" then
+      local h, s, l = ColorUtils.hex_to_hsl(current_hex)
+      if comp_name == "H" then
+        h = math.max(0, math.min(360, num))
+      elseif comp_name == "S" then
+        s = math.max(0, math.min(100, num))
+      elseif comp_name == "L" then
+        l = math.max(0, math.min(100, num))
+      end
+      new_hex = ColorUtils.hsl_to_hex(h, s, l)
+    elseif state.color_mode == "rgb" then
+      local r, g, b = ColorUtils.hex_to_rgb(current_hex)
+      if comp_name == "R" then
+        r = math.max(0, math.min(255, math.floor(num + 0.5)))
+      elseif comp_name == "G" then
+        g = math.max(0, math.min(255, math.floor(num + 0.5)))
+      elseif comp_name == "B" then
+        b = math.max(0, math.min(255, math.floor(num + 0.5)))
+      end
+      new_hex = ColorUtils.rgb_to_hex(r, g, b)
+    elseif state.color_mode == "hsv" then
+      local h, s, v = ColorUtils.hex_to_hsv(current_hex)
+      if comp_name == "H" then
+        h = math.max(0, math.min(360, num))
+      elseif comp_name == "S" then
+        s = math.max(0, math.min(100, num))
+      elseif comp_name == "V" then
+        v = math.max(0, math.min(100, num))
+      end
+      new_hex = ColorUtils.hsv_to_hex(h, s, v)
+    elseif state.color_mode == "cmyk" then
+      local c, m, y, k = ColorUtils.hex_to_cmyk(current_hex)
+      if comp_name == "C" then
+        c = math.max(0, math.min(100, num))
+      elseif comp_name == "M" then
+        m = math.max(0, math.min(100, num))
+      elseif comp_name == "Y" then
+        y = math.max(0, math.min(100, num))
+      elseif comp_name == "K" then
+        k = math.max(0, math.min(100, num))
+      end
+      new_hex = ColorUtils.cmyk_to_hex(c, m, y, k)
+    end
+
+    if new_hex then
+      set_active_color(new_hex)
+      -- Update saved_hsl so grid reflects changes
+      if state.saved_hsl then
+        local h, s, _ = ColorUtils.hex_to_hsl(new_hex)
+        state.saved_hsl.h = h
+        state.saved_hsl.s = s
+      end
+      schedule_render()
+    end
+  end
+end
+
+---Create and setup InputManager for info panel
+---@param multi MultiPanelState
+local function setup_info_panel_input_manager(multi)
+  if not state or not state._info_panel_cb then return end
+
+  local info_panel = multi.panels["info"]
+  if not info_panel or not info_panel.float or not info_panel.float:is_valid() then
+    return
+  end
+
+  local bufnr = info_panel.float.bufnr
+  local winid = info_panel.float.winid
+  local cb = state._info_panel_cb
+
+  -- Create InputManager with inputs from ContentBuilder
+  -- Use on_input_exit to only process values when Enter is pressed (not on every keystroke)
+  state._info_input_manager = InputManager.new({
+    bufnr = bufnr,
+    winid = winid,
+    inputs = cb:get_inputs(),
+    input_order = cb:get_input_order(),
+    on_input_exit = function(key)
+      -- Get the current value from the InputManager when exiting input mode
+      local value = state._info_input_manager.values[key]
+      if value then
+        handle_input_commit(key, value)
+      end
+    end,
+  })
+
+  -- Setup input handling
+  state._info_input_manager:setup()
+
+  -- Initialize highlights for inputs
+  state._info_input_manager:init_highlights()
+
+  -- Remove Tab/S-Tab keymaps from InputManager so multipanel Tab navigation works
+  -- (j/k already handles input navigation within the info panel)
+  pcall(vim.keymap.del, 'n', '<Tab>', { buffer = bufnr })
+  pcall(vim.keymap.del, 'n', '<S-Tab>', { buffer = bufnr })
+  pcall(vim.keymap.del, 'i', '<Tab>', { buffer = bufnr })
+  pcall(vim.keymap.del, 'i', '<S-Tab>', { buffer = bufnr })
+
+  -- Re-apply multipanel Tab keymaps to the info panel buffer
+  local opts = { buffer = bufnr, nowait = true, silent = true }
+  vim.keymap.set('n', '<Tab>', function()
+    multi:focus_next_panel()
+  end, opts)
+  vim.keymap.set('n', '<S-Tab>', function()
+    multi:focus_prev_panel()
+  end, opts)
+end
+
+---Show the color picker in multipanel mode with info panel
+---@param options ColorPickerOptions
+function ColorPicker.show_multipanel(options)
+  -- Close existing picker
+  ColorPicker.close()
+
+  -- Validate options
+  if not options or not options.initial then
+    vim.notify("ColorPicker: initial color required", vim.log.levels.ERROR)
+    return
+  end
+
+  -- Normalize initial color
+  local initial = vim.deepcopy(options.initial)
+  if initial.fg then
+    initial.fg = ColorUtils.normalize_hex(initial.fg)
+  else
+    initial.fg = "#808080"
+  end
+  if initial.bg then
+    initial.bg = ColorUtils.normalize_hex(initial.bg)
+  end
+
+  -- Pre-compute initial HSL for color band memory
+  local initial_hsl = nil
+  if initial.fg then
+    local h, s, _ = ColorUtils.hex_to_hsl(initial.fg)
+    initial_hsl = { h = h, s = s }
+  end
+
+  -- Create layout config
+  local layout_config = create_layout_config()
+
+  -- Add render callbacks to layout config
+  layout_config.layout.children[1].on_render = render_grid_panel
+  layout_config.layout.children[2].on_render = render_info_panel
+
+  -- Add focus callbacks (guard against state being nil during initial create)
+  layout_config.layout.children[1].on_focus = function(multi_state)
+    if state then state.focused_panel = "grid" end
+    multi_state:update_panel_title("grid", "Color Grid ●")
+    multi_state:update_panel_title("info", "Info")
+  end
+
+  layout_config.layout.children[1].on_blur = function(multi_state)
+    multi_state:update_panel_title("grid", "Color Grid")
+  end
+
+  layout_config.layout.children[2].on_focus = function(multi_state)
+    if state then state.focused_panel = "info" end
+    multi_state:update_panel_title("info", "Info ●")
+    multi_state:update_panel_title("grid", "Color Grid")
+  end
+
+  layout_config.layout.children[2].on_blur = function(multi_state)
+    multi_state:update_panel_title("info", "Info")
+  end
+
+  -- Add controls for help popup
+  layout_config.controls = get_controls_definition()
+  layout_config.footer = "? = Controls"
+  layout_config.initial_focus = "grid"
+  layout_config.augroup_name = "SSNSColorPickerMulti"
+
+  -- Add on_close callback
+  layout_config.on_close = function()
+    state = nil
+  end
+
+  -- Create multipanel window
+  local multi = MultiPanel.create(UiFloat, layout_config)
+
+  if not multi or not multi:is_valid() then
+    vim.notify("ColorPicker: Failed to create multipanel window", vim.log.levels.ERROR)
+    return
+  end
+
+  -- Get grid panel buffer for state
+  local grid_panel = multi.panels["grid"]
+  local grid_buf = grid_panel and grid_panel.float and grid_panel.float.bufnr
+  local grid_win = grid_panel and grid_panel.float and grid_panel.float.winid
+
+  -- Calculate initial grid size from grid panel
+  local grid_width, grid_height = 21, 9  -- Defaults
+  if grid_panel and grid_panel.rect then
+    grid_width, grid_height = calculate_grid_size(grid_panel.rect.width, grid_panel.rect.height)
+  end
+
+  -- Initialize state
+  state = {
+    current = vim.deepcopy(initial),
+    original = vim.deepcopy(initial),
+    editing_bg = false,
+    grid_width = grid_width,
+    grid_height = grid_height,
+    win = grid_win,  -- Primary window is grid panel
+    buf = grid_buf,  -- Primary buffer is grid panel
+    ns = vim.api.nvim_create_namespace("ssns_color_picker_multi"),
+    options = options,
+    saved_hsl = initial_hsl,
+    step_index = DEFAULT_STEP_INDEX,
+    lightness_virtual = nil,
+    saturation_virtual = nil,
+    _float = nil,  -- Not used in multipanel mode
+    _multipanel = multi,  -- Reference to multipanel window
+    color_mode = options.forced_mode or "hsl",
+    value_format = "standard",
+    alpha = options.initial_alpha or 100,
+    alpha_enabled = options.alpha_enabled or false,
+    focused_panel = "grid",
+    _render_pending = false,
+  }
+
+  -- Setup keymaps for multipanel
+  setup_multipanel_keymaps(multi)
+
+  -- Initial render
+  render_multipanel()
+
+  -- Setup InputManager for info panel after initial render
+  -- This must happen after render_multipanel() populates state._info_panel_cb
+  setup_info_panel_input_manager(multi)
 end
 
 ---Check if picker is open

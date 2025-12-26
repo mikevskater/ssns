@@ -759,6 +759,16 @@ local default_config = {
       toggle_bg = "B",         -- Switch to edit background color
       clear_bg = "x",          -- Clear background color
 
+      -- Color mode & format
+      cycle_mode = "m",        -- Cycle color mode (HSL/RGB/CMYK/HSV)
+      cycle_format = "f",      -- Cycle value format (standard/decimal)
+      alpha_up = "A",          -- Increase alpha (when enabled)
+      alpha_down = "a",        -- Decrease alpha (when enabled)
+
+      -- Panel focus (for multipanel layout)
+      focus_next = "<Tab>",    -- Focus next panel
+      focus_prev = "<S-Tab>",  -- Focus previous panel
+
       -- Actions
       reset = "r",             -- Reset to original color
       hex_input = "#",         -- Enter hex color manually
