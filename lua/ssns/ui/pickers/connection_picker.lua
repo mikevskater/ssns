@@ -2,7 +2,7 @@
 ---Connection picker for attaching SQL files to SSNS connections
 local UiConnectionPicker = {}
 
-local UiFloatInteractive = require('ssns.ui.base.float_interactive')
+local UiFloatInteractive = require('nvim-float.float.interactive')
 local ContentBuilder = require('nvim-float.content_builder')
 local UiFloat = require('nvim-float.float')
 local UiQuery = require('ssns.ui.core.query')

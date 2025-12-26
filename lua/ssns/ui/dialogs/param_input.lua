@@ -2,7 +2,7 @@
 ---Parameter input UI for stored procedures
 local UiParamInput = {}
 
-local UiFloatForm = require('ssns.ui.base.float_form')
+local UiFloatForm = require('nvim-float.float.form')
 
 ---@class ProcedureParameter
 ---@field name string Parameter name (e.g., "@param1")

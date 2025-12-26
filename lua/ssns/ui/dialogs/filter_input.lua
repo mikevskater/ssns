@@ -2,7 +2,7 @@
 ---Filter input UI for database object filtering
 local UiFilterInput = {}
 
-local UiFloatForm = require('ssns.ui.base.float_form')
+local UiFloatForm = require('nvim-float.float.form')
 
 ---@type table? Current UiFloatForm state
 local state = nil

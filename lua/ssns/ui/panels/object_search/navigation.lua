@@ -250,7 +250,7 @@ local show_database_picker
 ---@param saved_connections ConnectionData[] Connections loaded from file
 local function _show_server_picker_with_connections(saved_connections)
   local ui_state = State.get_ui_state()
-  local UiFloatInteractive = require('ssns.ui.base.float_interactive')
+  local UiFloatInteractive = require('nvim-float.float.interactive')
   local ContentBuilder = require('nvim-float.content_builder')
   local Config = require('ssns.config')
 
@@ -404,7 +404,7 @@ show_database_picker = function()
   end
 
   local server = ui_state.selected_server
-  local UiFloatInteractive = require('ssns.ui.base.float_interactive')
+  local UiFloatInteractive = require('nvim-float.float.interactive')
   local ContentBuilder = require('nvim-float.content_builder')
 
   ---Helper to create the picker once databases are loaded
