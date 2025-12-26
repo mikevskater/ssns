@@ -47,6 +47,12 @@ local _any_dropdown_open = false
 ---@field placeholder string Placeholder text when empty
 ---@field is_showing_placeholder boolean Whether currently displaying placeholder text
 ---@field prefix_len number? Length of label prefix (for line reconstruction)
+---Validation settings (can be modified after creation)
+---@field value_type "text"|"integer"|"float"|nil Input value type for validation
+---@field min_value number? Minimum numeric value (clamped on commit)
+---@field max_value number? Maximum numeric value (clamped on commit)
+---@field input_pattern string? Lua pattern for allowed characters (e.g., "[%d]" for digits only)
+---@field allow_negative boolean? Whether to allow negative numbers (default: true for numeric types)
 
 ---@class InputManagerState
 ---@field in_input_mode boolean Whether currently in input mode
@@ -259,7 +265,22 @@ function InputManager:setup()
       end
     end,
   })
-  
+
+  -- Filter characters during input based on validation settings
+  vim.api.nvim_create_autocmd("InsertCharPre", {
+    group = self._autocmd_group,
+    buffer = self.bufnr,
+    callback = function()
+      if self.in_input_mode and self.active_input then
+        local char = vim.v.char
+        if not self:is_char_allowed(char) then
+          -- Block the character by setting v:char to empty
+          vim.v.char = ""
+        end
+      end
+    end,
+  })
+
   -- Setup Tab/Shift-Tab for input navigation
   self:_setup_input_keymaps()
 end
@@ -1000,6 +1021,160 @@ function InputManager:update_inputs(inputs, input_order, dropdowns, dropdown_ord
 
   -- Rebuild field order
   self:_build_field_order()
+end
+
+---Update validation settings for a specific input
+---@param key string Input key
+---@param settings table Validation settings: { value_type?, min_value?, max_value?, input_pattern?, allow_negative? }
+function InputManager:update_input_settings(key, settings)
+  local input = self.inputs[key]
+  if not input then return end
+
+  if settings.value_type ~= nil then
+    input.value_type = settings.value_type
+  end
+  if settings.min_value ~= nil then
+    input.min_value = settings.min_value
+  end
+  if settings.max_value ~= nil then
+    input.max_value = settings.max_value
+  end
+  if settings.input_pattern ~= nil then
+    input.input_pattern = settings.input_pattern
+  end
+  if settings.allow_negative ~= nil then
+    input.allow_negative = settings.allow_negative
+  end
+end
+
+---Update validation settings for multiple inputs at once
+---@param settings_map table<string, table> Map of input key -> settings
+function InputManager:update_all_input_settings(settings_map)
+  for key, settings in pairs(settings_map) do
+    self:update_input_settings(key, settings)
+  end
+end
+
+---Validate and clamp a value according to input settings
+---@param key string Input key
+---@param value string Raw input value
+---@return string validated_value The validated/clamped value
+function InputManager:validate_input_value(key, value)
+  local input = self.inputs[key]
+  if not input then return value end
+
+  -- If no validation settings, return as-is
+  if not input.value_type or input.value_type == "text" then
+    return value
+  end
+
+  -- Extract numeric value
+  local num = nil
+  if input.value_type == "integer" then
+    -- Extract integer (strip non-digit chars except leading minus)
+    local sign = ""
+    if input.allow_negative ~= false and value:match("^%-") then
+      sign = "-"
+    end
+    local digits = value:gsub("[^%d]", "")
+    if digits ~= "" then
+      num = tonumber(sign .. digits)
+    end
+  elseif input.value_type == "float" then
+    -- Extract float (allow one decimal point)
+    local sign = ""
+    if input.allow_negative ~= false and value:match("^%-") then
+      sign = "-"
+    end
+    -- Extract digits and first decimal point
+    local cleaned = value:gsub("[^%d%.]", "")
+    -- Only keep first decimal point
+    local first_dot = cleaned:find("%.")
+    if first_dot then
+      local before = cleaned:sub(1, first_dot)
+      local after = cleaned:sub(first_dot + 1):gsub("%.", "")
+      cleaned = before .. after
+    end
+    if cleaned ~= "" and cleaned ~= "." then
+      num = tonumber(sign .. cleaned)
+    end
+  end
+
+  -- If we couldn't parse a number, return empty or original
+  if num == nil then
+    return ""
+  end
+
+  -- Clamp to min/max
+  if input.min_value ~= nil and num < input.min_value then
+    num = input.min_value
+  end
+  if input.max_value ~= nil and num > input.max_value then
+    num = input.max_value
+  end
+
+  -- Format output
+  if input.value_type == "integer" then
+    return tostring(math.floor(num + 0.5))
+  else
+    -- For floats, preserve reasonable precision
+    if num == math.floor(num) then
+      return tostring(math.floor(num))
+    else
+      return string.format("%.2f", num):gsub("%.?0+$", "")
+    end
+  end
+end
+
+---Check if a character is allowed for the current input
+---@param char string Single character to check
+---@return boolean allowed Whether the character is allowed
+function InputManager:is_char_allowed(char)
+  if not self.active_input then return true end
+
+  local input = self.inputs[self.active_input]
+  if not input then return true end
+
+  -- Check custom pattern first
+  if input.input_pattern then
+    return char:match(input.input_pattern) ~= nil
+  end
+
+  -- Check based on value_type
+  if input.value_type == "integer" then
+    -- Allow digits and minus (for negative)
+    if char:match("[%d]") then return true end
+    if input.allow_negative ~= false and char == "-" then
+      -- Only allow minus at start
+      local current = self.values[self.active_input] or ""
+      return current == "" or current == input.placeholder
+    end
+    return false
+  elseif input.value_type == "float" then
+    -- Allow digits, decimal point, and minus
+    if char:match("[%d]") then return true end
+    if char == "." then
+      -- Only allow one decimal point
+      local current = self.values[self.active_input] or ""
+      return not current:find("%.")
+    end
+    if input.allow_negative ~= false and char == "-" then
+      local current = self.values[self.active_input] or ""
+      return current == "" or current == input.placeholder
+    end
+    return false
+  end
+
+  -- Default: allow all
+  return true
+end
+
+---Get validated value for an input (call this on commit)
+---@param key string Input key
+---@return string value Validated value
+function InputManager:get_validated_value(key)
+  local raw = self.values[key] or ""
+  return self:validate_input_value(key, raw)
 end
 
 ---Highlight a field (input, dropdown, or multi-dropdown)

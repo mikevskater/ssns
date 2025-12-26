@@ -466,13 +466,6 @@ local function render_footer_cb()
     { text = " (-/+)", style = "muted" },
   })
 
-  cb:blank()
-
-  -- Help hint
-  cb:spans({
-    { text = "  ? = Controls", style = "key" },
-  })
-
   -- Return info for applying color swatch highlights
   -- Line 1 (0-indexed after blank) has "Original" at col 2-10 and "Current" at col 13-20
   local swatch_info = {
@@ -842,28 +835,97 @@ local function render_info_panel(multi_state)
     { text = "  " .. italic_ind .. " italic", style = state.current.italic and "emphasis" or "muted" },
   })
 
-  cb:blank()
-
-  -- Separator
-  cb:styled("  " .. string.rep("─", 16), "muted")
-
-  cb:blank()
-
-  -- Help hints
-  cb:spans({
-    { text = "  Tab", style = "key" },
-    { text = " switch panel", style = "muted" },
-  })
-
-  cb:spans({
-    { text = "  ?", style = "key" },
-    { text = " controls", style = "muted" },
-  })
-
   -- Store ContentBuilder in state for InputManager to access
   state._info_panel_cb = cb
 
   return cb:build_lines(), cb:build_highlights()
+end
+
+---Get validation settings for color picker inputs based on current mode
+---@return table<string, table> settings_map Map of input key -> validation settings
+local function get_input_validation_settings()
+  if not state then return {} end
+
+  local settings = {}
+
+  -- Hex input: allow hex characters
+  settings["hex"] = {
+    value_type = "text",
+    input_pattern = "[%x#]",  -- Allow hex digits and #
+  }
+
+  -- Alpha input: 0-100 (or 0-1 for decimal mode)
+  if state.alpha_enabled then
+    if state.value_format == "decimal" then
+      settings["alpha"] = {
+        value_type = "float",
+        min_value = 0,
+        max_value = 1,
+        allow_negative = false,
+      }
+    else
+      settings["alpha"] = {
+        value_type = "integer",
+        min_value = 0,
+        max_value = 100,
+        allow_negative = false,
+      }
+    end
+  end
+
+  -- Component inputs based on color mode
+  if state.color_mode == "hsl" then
+    if state.value_format == "decimal" then
+      settings["comp_h"] = { value_type = "float", min_value = 0, max_value = 1, allow_negative = false }
+      settings["comp_s"] = { value_type = "float", min_value = 0, max_value = 1, allow_negative = false }
+      settings["comp_l"] = { value_type = "float", min_value = 0, max_value = 1, allow_negative = false }
+    else
+      settings["comp_h"] = { value_type = "integer", min_value = 0, max_value = 360, allow_negative = false }
+      settings["comp_s"] = { value_type = "integer", min_value = 0, max_value = 100, allow_negative = false }
+      settings["comp_l"] = { value_type = "integer", min_value = 0, max_value = 100, allow_negative = false }
+    end
+  elseif state.color_mode == "rgb" then
+    if state.value_format == "decimal" then
+      settings["comp_r"] = { value_type = "float", min_value = 0, max_value = 1, allow_negative = false }
+      settings["comp_g"] = { value_type = "float", min_value = 0, max_value = 1, allow_negative = false }
+      settings["comp_b"] = { value_type = "float", min_value = 0, max_value = 1, allow_negative = false }
+    else
+      settings["comp_r"] = { value_type = "integer", min_value = 0, max_value = 255, allow_negative = false }
+      settings["comp_g"] = { value_type = "integer", min_value = 0, max_value = 255, allow_negative = false }
+      settings["comp_b"] = { value_type = "integer", min_value = 0, max_value = 255, allow_negative = false }
+    end
+  elseif state.color_mode == "hsv" then
+    if state.value_format == "decimal" then
+      settings["comp_h"] = { value_type = "float", min_value = 0, max_value = 1, allow_negative = false }
+      settings["comp_s"] = { value_type = "float", min_value = 0, max_value = 1, allow_negative = false }
+      settings["comp_v"] = { value_type = "float", min_value = 0, max_value = 1, allow_negative = false }
+    else
+      settings["comp_h"] = { value_type = "integer", min_value = 0, max_value = 360, allow_negative = false }
+      settings["comp_s"] = { value_type = "integer", min_value = 0, max_value = 100, allow_negative = false }
+      settings["comp_v"] = { value_type = "integer", min_value = 0, max_value = 100, allow_negative = false }
+    end
+  elseif state.color_mode == "cmyk" then
+    if state.value_format == "decimal" then
+      settings["comp_c"] = { value_type = "float", min_value = 0, max_value = 1, allow_negative = false }
+      settings["comp_m"] = { value_type = "float", min_value = 0, max_value = 1, allow_negative = false }
+      settings["comp_y"] = { value_type = "float", min_value = 0, max_value = 1, allow_negative = false }
+      settings["comp_k"] = { value_type = "float", min_value = 0, max_value = 1, allow_negative = false }
+    else
+      settings["comp_c"] = { value_type = "integer", min_value = 0, max_value = 100, allow_negative = false }
+      settings["comp_m"] = { value_type = "integer", min_value = 0, max_value = 100, allow_negative = false }
+      settings["comp_y"] = { value_type = "integer", min_value = 0, max_value = 100, allow_negative = false }
+      settings["comp_k"] = { value_type = "integer", min_value = 0, max_value = 100, allow_negative = false }
+    end
+  end
+
+  return settings
+end
+
+---Update InputManager validation settings (call when color mode or format changes)
+local function update_input_validation_settings()
+  if not state or not state._info_input_manager then return end
+  local settings = get_input_validation_settings()
+  state._info_input_manager:update_all_input_settings(settings)
 end
 
 ---Render all multipanel panels
@@ -889,6 +951,8 @@ local function render_multipanel()
       cb:get_inputs(),
       cb:get_input_order()
     )
+    -- Update validation settings (in case color mode or format changed)
+    update_input_validation_settings()
   end
 
   -- Trigger on_change callback
@@ -1958,9 +2022,9 @@ local function setup_info_panel_input_manager(multi)
     inputs = cb:get_inputs(),
     input_order = cb:get_input_order(),
     on_input_exit = function(key)
-      -- Get the current value from the InputManager when exiting input mode
-      local value = state._info_input_manager.values[key]
-      if value then
+      -- Get the validated value from the InputManager when exiting input mode
+      local value = state._info_input_manager:get_validated_value(key)
+      if value and value ~= "" then
         handle_input_commit(key, value)
       end
     end,
@@ -1971,6 +2035,9 @@ local function setup_info_panel_input_manager(multi)
 
   -- Initialize highlights for inputs
   state._info_input_manager:init_highlights()
+
+  -- Apply validation settings based on current color mode
+  update_input_validation_settings()
 
   -- Remove Tab/S-Tab keymaps from InputManager so multipanel Tab navigation works
   -- (j/k already handles input navigation within the info panel)
@@ -2041,6 +2108,14 @@ function ColorPicker.show_multipanel(options)
     if state then state.focused_panel = "info" end
     multi_state:update_panel_title("info", "Info ●")
     multi_state:update_panel_title("grid", "Color Grid")
+    -- Focus the first input field when info panel receives focus
+    if state and state._info_input_manager then
+      vim.schedule(function()
+        if state and state._info_input_manager then
+          state._info_input_manager:focus_first_field()
+        end
+      end)
+    end
   end
 
   layout_config.layout.children[2].on_blur = function(multi_state)
