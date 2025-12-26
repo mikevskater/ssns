@@ -120,11 +120,11 @@ function ViewContext.view_context()
       cb:separator("-", 30)
       for i, t in ipairs(context.tables_in_scope) do
         local desc
-        local style = "table"
+        local style = "sql_table"
         if t.is_cte then
           local col_count = t.columns and #t.columns or 0
           desc = string.format("[CTE] %s (%d columns)", t.name, col_count)
-          style = "view"
+          style = "sql_view"
         elseif t.is_subquery then
           local col_count = t.columns and #t.columns or 0
           desc = string.format("[Subquery] %s AS %s (%d columns)", t.name or "?", t.alias or t.name, col_count)
@@ -161,7 +161,7 @@ function ViewContext.view_context()
           { text = "  " },
           { text = alias, style = "emphasis" },
           { text = " -> " },
-          { text = context.aliases[alias], style = "table" },
+          { text = context.aliases[alias], style = "sql_table" },
         })
       end
       cb:blank()
@@ -175,7 +175,7 @@ function ViewContext.view_context()
         local col_count = cte.columns and #cte.columns or 0
         cb:spans({
           { text = "  " },
-          { text = name, style = "view" },
+          { text = name, style = "sql_view" },
           { text = " (" },
           { text = tostring(col_count), style = "number" },
           { text = " columns)" },

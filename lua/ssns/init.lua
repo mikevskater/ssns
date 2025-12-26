@@ -48,6 +48,7 @@ function Ssns.setup(user_config)
     -- SQL Objects
     sql_column = "SsnsColumn",
     sql_table = "SsnsTable",
+    sql_view = "SsnsView",
     sql_schema = "SsnsSchema",
     sql_database = "SsnsDatabase",
     sql_procedure = "SsnsProcedure",

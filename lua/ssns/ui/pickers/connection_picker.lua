@@ -525,7 +525,7 @@ local function render_hierarchical(st)
       if is_selected then
         cb:spans({
           { text = prefix, style = "emphasis" },
-          { text = db.db_name, style = "database" },
+          { text = db.db_name, style = "sql_database" },
         })
       else
         cb:spans({

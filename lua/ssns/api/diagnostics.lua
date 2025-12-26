@@ -204,7 +204,7 @@ function M.show_usage_stats()
   })
   cb:spans({
     { text = "Database: ", style = "label" },
-    { text = active_db.name, style = "database" },
+    { text = active_db.name, style = "sql_database" },
   })
   cb:blank()
 
@@ -229,7 +229,7 @@ function M.show_usage_stats()
       local item = stats.top_tables[i]
       cb:spans({
         { text = string.format("  %2d. ", i), style = "muted" },
-        { text = item.path, style = "table" },
+        { text = item.path, style = "sql_table" },
         { text = " (weight: " },
         { text = tostring(item.weight), style = "number" },
         { text = ")" },
@@ -245,7 +245,7 @@ function M.show_usage_stats()
       local item = stats.top_columns[i]
       cb:spans({
         { text = string.format("  %2d. ", i), style = "muted" },
-        { text = item.path, style = "column" },
+        { text = item.path, style = "sql_column" },
         { text = " (weight: " },
         { text = tostring(item.weight), style = "number" },
         { text = ")" },
@@ -261,7 +261,7 @@ function M.show_usage_stats()
       local item = stats.top_procedures[i]
       cb:spans({
         { text = string.format("  %2d. ", i), style = "muted" },
-        { text = item.path, style = "procedure" },
+        { text = item.path, style = "sql_procedure" },
         { text = " (weight: " },
         { text = tostring(item.weight), style = "number" },
         { text = ")" },

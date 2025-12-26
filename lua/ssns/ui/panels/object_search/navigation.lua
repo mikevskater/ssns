@@ -460,7 +460,7 @@ show_database_picker = function()
           cb:spans({
             { text = prefix, style = state.selected_idx == i + 1 and "emphasis" or "muted" },
             { text = check .. " ", style = style },
-            { text = db.db_name, style = "database" },
+            { text = db.db_name, style = "sql_database" },
           })
         end
 

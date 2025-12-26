@@ -81,9 +81,9 @@ function TreeFeatures.show_dependencies(obj)
     for _, dep in ipairs(depends_on) do
       cb:spans({
         { text = "  [" },
-        { text = dep.schema_name, style = "schema" },
+        { text = dep.schema_name, style = "sql_schema" },
         { text = "].[" },
-        { text = dep.object_name, style = "table" },
+        { text = dep.object_name, style = "sql_table" },
         { text = "] (" },
         { text = dep.object_type, style = "muted" },
         { text = ")" },
@@ -99,9 +99,9 @@ function TreeFeatures.show_dependencies(obj)
     for _, dep in ipairs(depended_on_by) do
       cb:spans({
         { text = "  [" },
-        { text = dep.schema_name, style = "schema" },
+        { text = dep.schema_name, style = "sql_schema" },
         { text = "].[" },
-        { text = dep.object_name, style = "table" },
+        { text = dep.object_name, style = "sql_table" },
         { text = "] (" },
         { text = dep.object_type, style = "muted" },
         { text = ")" },

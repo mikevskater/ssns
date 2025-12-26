@@ -94,7 +94,7 @@ local function build_styled_content(cb, bufnr, line_num, col)
   })
   cb:spans({
     { text = "  Database: ", style = "label" },
-    { text = db_name, style = "database" },
+    { text = db_name, style = "sql_database" },
   })
   cb:blank()
 
@@ -111,10 +111,10 @@ local function build_styled_content(cb, bufnr, line_num, col)
       local name = table_info.table or table_info.name or "?"
       local alias = table_info.alias and (" AS " .. table_info.alias) or ""
       local type_str = ""
-      local style = "table"
+      local style = "sql_table"
       if table_info.is_cte then
         type_str = " [CTE]"
-        style = "view"
+        style = "sql_view"
       elseif table_info.is_temp_table then
         type_str = " [Temp]"
         style = "warning"
@@ -191,13 +191,13 @@ local function build_styled_content(cb, bufnr, line_num, col)
 
       cb:spans({
         { text = "  " },
-        { text = source, style = "table" },
+        { text = source, style = "sql_table" },
         { text = "." },
-        { text = source_col, style = "column" },
+        { text = source_col, style = "sql_column" },
         { text = " -> " },
-        { text = target, style = "table" },
+        { text = target, style = "sql_table" },
         { text = "." },
-        { text = target_col, style = "column" },
+        { text = target_col, style = "sql_column" },
       })
       if constraint_name ~= "" then
         cb:spans({
@@ -247,7 +247,7 @@ local function build_styled_content(cb, bufnr, line_num, col)
           local detail = FKGraph.build_detail(result)
           cb:spans({
             { text = "    -> " },
-            { text = label, style = "table" },
+            { text = label, style = "sql_table" },
           })
           cb:spans({
             { text = "       " },

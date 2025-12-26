@@ -138,13 +138,13 @@ function ViewStatementCache.view_cache()
               local src = col.source_table and (col.source_table .. ".") or ""
               cb:spans({
                 { text = "    - " },
-                { text = src, style = "table" },
-                { text = col_name, style = "column" },
+                { text = src, style = "sql_table" },
+                { text = col_name, style = "sql_column" },
               })
             else
               cb:spans({
                 { text = "    - " },
-                { text = col_name, style = "column" },
+                { text = col_name, style = "sql_column" },
               })
             end
           end
@@ -224,7 +224,7 @@ function ViewStatementCache.view_cache()
             local cte_cols = cte.columns and #cte.columns or 0
             cb:spans({
               { text = "        CTE: " },
-              { text = cte.name, style = "view" },
+              { text = cte.name, style = "sql_view" },
               { text = " (" },
               { text = tostring(cte_cols), style = "number" },
               { text = " cols)" },

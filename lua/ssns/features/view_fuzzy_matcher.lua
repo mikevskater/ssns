@@ -136,7 +136,7 @@ function ViewFuzzyMatcher.view_matcher()
       local normalized = FuzzyMatcher.normalize(example)
       cb:spans({
         { text = "  " },
-        { text = example, style = "column" },
+        { text = example, style = "sql_column" },
         { text = " -> " },
         { text = normalized, style = "success" },
       })
@@ -162,9 +162,9 @@ function ViewFuzzyMatcher.view_matcher()
         { text = "  [" },
         { text = icon, style = status_style },
         { text = "] " },
-        { text = s1, style = "column" },
+        { text = s1, style = "sql_column" },
         { text = " vs " },
-        { text = s2, style = "column" },
+        { text = s2, style = "sql_column" },
       })
       cb:spans({
         { text = "      Score: ", style = "label" },

@@ -90,7 +90,7 @@ function ViewCompletionMetadata.view_metadata()
     })
     cb:spans({
       { text = "  Database: ", style = "label" },
-      { text = db_name, style = "database" },
+      { text = db_name, style = "sql_database" },
     })
   else
     cb:styled("  (No active connection)", "muted")
@@ -128,7 +128,7 @@ function ViewCompletionMetadata.view_metadata()
         { text = "  " },
         { text = alias, style = "emphasis" },
         { text = " -> " },
-        { text = target, style = "table" },
+        { text = target, style = "sql_table" },
         { text = resolved_status, style = status_style },
       })
     end
@@ -150,7 +150,7 @@ function ViewCompletionMetadata.view_metadata()
       if table_info.is_cte then
         cb:spans({
           { text = "  CTE: ", style = "label" },
-          { text = table_name, style = "view" },
+          { text = table_name, style = "sql_view" },
           { text = scope_str, style = "muted" },
         })
         if table_info.columns and #table_info.columns > 0 then
@@ -162,7 +162,7 @@ function ViewCompletionMetadata.view_metadata()
             local col_name = type(col) == "table" and col.name or col
             cb:spans({
               { text = "    - " },
-              { text = col_name, style = "column" },
+              { text = col_name, style = "sql_column" },
             })
           end
         end
@@ -184,7 +184,7 @@ function ViewCompletionMetadata.view_metadata()
             local col_name = type(col) == "table" and col.name or col
             cb:spans({
               { text = "    - " },
-              { text = col_name, style = "column" },
+              { text = col_name, style = "sql_column" },
             })
           end
         end
@@ -203,7 +203,7 @@ function ViewCompletionMetadata.view_metadata()
             local col_name = type(col) == "table" and col.name or col
             cb:spans({
               { text = "    - " },
-              { text = col_name, style = "column" },
+              { text = col_name, style = "sql_column" },
             })
           end
         end
@@ -224,7 +224,7 @@ function ViewCompletionMetadata.view_metadata()
           { text = "  " },
           { text = status, style = status_style },
           { text = " " },
-          { text = table_name, style = "table" },
+          { text = table_name, style = "sql_table" },
           { text = alias_str, style = "emphasis" },
           { text = scope_str, style = "muted" },
         })
@@ -239,7 +239,7 @@ function ViewCompletionMetadata.view_metadata()
             local col_type = col.data_type or ""
             cb:spans({
               { text = "    - " },
-              { text = col_name, style = "column" },
+              { text = col_name, style = "sql_column" },
               { text = col_type ~= "" and (" (" .. col_type .. ")") or "", style = "muted" },
             })
           end
@@ -263,7 +263,7 @@ function ViewCompletionMetadata.view_metadata()
       local table_count = cte.tables and #cte.tables or 0
       cb:spans({
         { text = "  " },
-        { text = cte.name or "?", style = "view" },
+        { text = cte.name or "?", style = "sql_view" },
         { text = ":" },
       })
       cb:spans({
@@ -288,7 +288,7 @@ function ViewCompletionMetadata.view_metadata()
         end
         cb:spans({
           { text = "    [" },
-          { text = table.concat(col_names, ", "), style = "column" },
+          { text = table.concat(col_names, ", "), style = "sql_column" },
           { text = "]" },
         })
       end
@@ -347,13 +347,13 @@ function ViewCompletionMetadata.view_metadata()
 
           cb:spans({
             { text = "  " },
-            { text = table_name, style = "table" },
+            { text = table_name, style = "sql_table" },
             { text = "." },
-            { text = from_col, style = "column" },
+            { text = from_col, style = "sql_column" },
             { text = " -> " },
-            { text = to_table, style = "table" },
+            { text = to_table, style = "sql_table" },
             { text = "." },
-            { text = to_col, style = "column" },
+            { text = to_col, style = "sql_column" },
           })
         end
       end

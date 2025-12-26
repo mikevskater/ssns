@@ -577,9 +577,9 @@ local default_config = {
     color_mode = "datatype",
 
     -- Border character style for result tables
-    -- "box" = Unicode box-drawing characters (│ ─ ┼ ┌ ┐ └ ┘ etc.)
-    -- "ascii" = ASCII characters (| - + etc.)
-    border_style = "box",
+    -- "box" = ASCII characters (| - + etc.)
+    -- "ascii" = Unicode box-drawing characters (│ ─ ┼ ┌ ┐ └ ┘ etc.)
+    border_style = "ascii",
 
     -- Show NULL values with distinct styling (gray italic)
     highlight_null = true,

@@ -175,7 +175,7 @@ function ViewUsageWeights.view_weights()
         cb:spans({
           { text = string.format("  %2d. ", i), style = "muted" },
           { text = string.format("[%4d] ", item.weight), style = "number" },
-          { text = item.path, style = "table" },
+          { text = item.path, style = "sql_table" },
         })
       end
       cb:blank()

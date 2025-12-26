@@ -85,12 +85,12 @@ end
 ---@return string style
 local function get_object_style(object_type)
   local styles = {
-    table = "table",
-    view = "view",
-    procedure = "procedure",
+    table = "sql_table",
+    view = "sql_view",
+    procedure = "sql_procedure",
     ["function"] = "func",
     synonym = "muted",
-    schema = "schema",
+    schema = "sql_schema",
   }
   return styles[object_type] or "normal"
 end
@@ -596,12 +596,12 @@ function M.render_results(state)
     if not is_selected then
       local db_positions = find_matches_in_segment(result.searchable.database_name)
       if #db_positions > 0 then
-        local db_spans = build_highlighted_spans(result.searchable.database_name, db_positions, "database", "search_match")
+        local db_spans = build_highlighted_spans(result.searchable.database_name, db_positions, "sql_database", "search_match")
         for _, span in ipairs(db_spans) do
           table.insert(spans, span)
         end
       else
-        table.insert(spans, { text = result.searchable.database_name, style = "database" })
+        table.insert(spans, { text = result.searchable.database_name, style = "sql_database" })
       end
     else
       table.insert(spans, { text = result.searchable.database_name, style = "strong" })
@@ -693,12 +693,12 @@ function M.render_metadata(state)
   }
   local schema_positions = find_matches_in_segment(schema_text)
   if #schema_positions > 0 then
-    local highlighted = build_highlighted_spans(schema_text, schema_positions, "schema", "search_match")
+    local highlighted = build_highlighted_spans(schema_text, schema_positions, "sql_schema", "search_match")
     for _, span in ipairs(highlighted) do
       table.insert(schema_spans, span)
     end
   else
-    table.insert(schema_spans, { text = schema_text, style = "schema" })
+    table.insert(schema_spans, { text = schema_text, style = "sql_schema" })
   end
   cb:spans(schema_spans)
 
@@ -708,12 +708,12 @@ function M.render_metadata(state)
   }
   local db_positions = find_matches_in_segment(searchable.database_name)
   if #db_positions > 0 then
-    local highlighted = build_highlighted_spans(searchable.database_name, db_positions, "database", "search_match")
+    local highlighted = build_highlighted_spans(searchable.database_name, db_positions, "sql_database", "search_match")
     for _, span in ipairs(highlighted) do
       table.insert(db_spans, span)
     end
   else
-    table.insert(db_spans, { text = searchable.database_name, style = "database" })
+    table.insert(db_spans, { text = searchable.database_name, style = "sql_database" })
   end
   cb:spans(db_spans)
 
@@ -742,12 +742,12 @@ function M.render_metadata(state)
 
           -- Add column name with or without highlighting
           if #name_positions > 0 then
-            local name_spans = build_highlighted_spans(col.name, name_positions, "column", "search_match")
+            local name_spans = build_highlighted_spans(col.name, name_positions, "sql_column", "search_match")
             for _, span in ipairs(name_spans) do
               table.insert(spans, span)
             end
           else
-            table.insert(spans, { text = col.name, style = "column" })
+            table.insert(spans, { text = col.name, style = "sql_column" })
           end
 
           table.insert(spans, { text = " (", style = "muted" })
@@ -785,12 +785,12 @@ function M.render_metadata(state)
 
           -- Add param name with or without highlighting
           if #name_positions > 0 then
-            local name_spans = build_highlighted_spans(param.name, name_positions, "param", "search_match")
+            local name_spans = build_highlighted_spans(param.name, name_positions, "sql_parameter", "search_match")
             for _, span in ipairs(name_spans) do
               table.insert(spans, span)
             end
           else
-            table.insert(spans, { text = param.name, style = "param" })
+            table.insert(spans, { text = param.name, style = "sql_parameter" })
           end
 
           table.insert(spans, { text = " (", style = "muted" })
@@ -810,7 +810,7 @@ function M.render_metadata(state)
     if obj and obj.base_object_name then
       cb:spans({
         { text = "   ", style = "normal" },
-        { text = obj.base_object_name, style = "table" },
+        { text = obj.base_object_name, style = "sql_table" },
       })
     else
       cb:styled("   (Unknown)", "comment")

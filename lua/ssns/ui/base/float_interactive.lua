@@ -1,10 +1,10 @@
 ---@class UiFloatInteractive
 ---Reusable interactive floating picker system
 ---Provides state management, navigation, and common keymaps for interactive list pickers
+---Now uses nvim-float for window management
 local UiFloatInteractive = {}
 
-local UiFloatBase = require('ssns.ui.base.float_base')
-local KeymapManager = require('ssns.keymap_manager')
+local UiFloat = require('nvim-float.float')
 
 -- Namespace for highlights
 local HIGHLIGHT_NS = vim.api.nvim_create_namespace("ssns_float_interactive")
@@ -26,6 +26,7 @@ local HIGHLIGHT_NS = vim.api.nvim_create_namespace("ssns_float_interactive")
 ---@class FloatInteractiveState
 ---@field bufnr number Buffer number
 ---@field winid number Window ID
+---@field float FloatWindow The nvim-float window instance
 ---@field selected_idx number Currently selected item index (1-based, within selectable items)
 ---@field data any Custom data provided by caller
 ---@field config FloatInteractiveConfig Configuration
@@ -42,25 +43,11 @@ function UiFloatInteractive.create(config)
     return nil
   end
 
-  -- Create buffer using base
-  local bufnr = UiFloatBase.create_buffer({})
-  vim.api.nvim_buf_set_option(bufnr, 'filetype', 'ssns-picker')
-
-  -- Create window using base
-  local winid = UiFloatBase.create_window(bufnr, {
-    width = config.width or 60,
-    height = config.height or 20,
-    title = config.title,
-    footer = config.footer or "<CR> Select | <Esc> Cancel | j/k Navigate",
-    border = 'rounded',
-    enter = true,
-    zindex = 50,
-  })
-
-  -- Create state
+  -- Create state first (needed for keymaps)
   local state = {
-    bufnr = bufnr,
-    winid = winid,
+    bufnr = nil,
+    winid = nil,
+    float = nil,
     selected_idx = 1,
     data = config.initial_data,
     config = config,
@@ -68,15 +55,64 @@ function UiFloatInteractive.create(config)
     header_lines = config.header_lines or 0,
   }
 
+  -- Build keymaps (reference state via closure)
+  local keymaps = {
+    -- Navigation
+    ["j"] = function() UiFloatInteractive.navigate(state, 'down') end,
+    ["k"] = function() UiFloatInteractive.navigate(state, 'up') end,
+    ["<Down>"] = function() UiFloatInteractive.navigate(state, 'down') end,
+    ["<Up>"] = function() UiFloatInteractive.navigate(state, 'up') end,
+    -- Selection
+    ["<CR>"] = function() config.on_select(state) end,
+    -- Close
+    ["<Esc>"] = function() UiFloatInteractive.close(state) end,
+    ["q"] = function() UiFloatInteractive.close(state) end,
+  }
+
+  -- Add custom keymaps
+  if config.custom_keymaps then
+    for key, handler in pairs(config.custom_keymaps) do
+      keymaps[key] = function() handler(state) end
+    end
+  end
+
+  -- Create float using nvim-float
+  local float = UiFloat.create(nil, {
+    width = config.width or 60,
+    height = config.height or 20,
+    title = config.title,
+    title_pos = "center",
+    footer = config.footer or "<CR> Select | <Esc> Cancel | j/k Navigate",
+    footer_pos = "center",
+    border = 'rounded',
+    centered = true,
+    enter = true,
+    zindex = 50,
+    cursorline = true,
+    default_keymaps = false,
+    keymaps = keymaps,
+  })
+
+  if not float or not float:is_valid() then
+    vim.notify("SSNS: Failed to create floating window", vim.log.levels.ERROR)
+    return nil
+  end
+
+  -- Update state with float references
+  state.float = float
+  state.bufnr = float.bufnr
+  state.winid = float.winid
+
+  -- Set filetype
+  vim.api.nvim_buf_set_option(state.bufnr, 'filetype', 'ssns-picker')
+
+  -- Set winhighlight for themed UI
+  vim.api.nvim_set_option_value('winhighlight',
+    'Normal:Normal,FloatBorder:NvimFloatBorder,FloatTitle:NvimFloatTitle,CursorLine:NvimFloatSelected',
+    { win = state.winid })
+
   -- Initial render
   UiFloatInteractive.render(state)
-
-  -- Setup keymaps
-  UiFloatInteractive.setup_keymaps(state)
-
-  -- Enable cursorline with themed highlighting for all UI elements
-  vim.api.nvim_set_option_value('cursorline', true, { win = state.winid })
-  vim.api.nvim_set_option_value('winhighlight', 'Normal:Normal,FloatBorder:NvimFloatBorder,FloatTitle:NvimFloatTitle,CursorLine:NvimFloatSelected', { win = state.winid })
 
   return state
 end
@@ -84,14 +120,14 @@ end
 ---Render the picker content
 ---@param state FloatInteractiveState
 function UiFloatInteractive.render(state)
-  if not state or not vim.api.nvim_buf_is_valid(state.bufnr) then
+  if not state or not state.float or not state.float:is_valid() then
     return
   end
 
   -- Get lines and optional highlights from render callback
   local lines, highlights = state.config.on_render(state)
   highlights = highlights or {}
-  
+
   -- Use item_count from config if provided, otherwise calculate from lines
   if state.config.item_count then
     state.total_items = state.config.item_count
@@ -109,20 +145,20 @@ function UiFloatInteractive.render(state)
     state.selected_idx = state.total_items
   end
 
-  -- Write to buffer using base
-  UiFloatBase.set_buffer_lines(state.bufnr, lines)
+  -- Write to buffer
+  state.float:update_lines(lines)
 
   -- Apply highlights if provided
   if #highlights > 0 then
     vim.api.nvim_buf_clear_namespace(state.bufnr, HIGHLIGHT_NS, 0, -1)
     for _, hl in ipairs(highlights) do
-      -- Support both array format {line, col_start, col_end, hl_group} 
+      -- Support both array format {line, col_start, col_end, hl_group}
       -- and named format {line=, col_start=, col_end=, hl_group=} from ContentBuilder
       local line = hl.line or hl[1]
       local col_start = hl.col_start or hl[2]
       local col_end = hl.col_end or hl[3]
       local hl_group = hl.hl_group or hl[4]
-      
+
       if line and col_start and hl_group then
         vim.api.nvim_buf_add_highlight(
           state.bufnr, HIGHLIGHT_NS,
@@ -135,7 +171,7 @@ function UiFloatInteractive.render(state)
   -- Position cursor on the correct line (header_lines + selected_idx)
   if state.total_items > 0 then
     local cursor_line = state.header_lines + state.selected_idx
-    UiFloatBase.set_cursor(state.winid, cursor_line, 0)
+    state.float:set_cursor(cursor_line, 0)
   end
 end
 
@@ -161,8 +197,10 @@ function UiFloatInteractive.navigate(state, direction)
 
   -- DON'T re-render on navigation - just move cursor
   -- Uses cursorline for selection highlighting, no need to rebuild buffer
-  local cursor_line = state.header_lines + state.selected_idx
-  UiFloatBase.set_cursor(state.winid, cursor_line, 0)
+  if state.float and state.float:is_valid() then
+    local cursor_line = state.header_lines + state.selected_idx
+    state.float:set_cursor(cursor_line, 0)
+  end
 
   -- Call navigation callback if provided
   if state.config.on_navigate then
@@ -180,64 +218,9 @@ function UiFloatInteractive.close(state)
     state.config.on_close(state)
   end
 
-  -- Close window and delete buffer using base
-  UiFloatBase.close_window(state.winid)
-  UiFloatBase.delete_buffer(state.bufnr)
-end
-
----Setup keymaps for the picker
----@param state FloatInteractiveState
-function UiFloatInteractive.setup_keymaps(state)
-  if not state or not vim.api.nvim_buf_is_valid(state.bufnr) then
-    return
-  end
-
-  local function safe_call(fn)
-    return function()
-      if state and vim.api.nvim_buf_is_valid(state.bufnr) then
-        fn()
-      end
-    end
-  end
-
-  -- Navigation
-  KeymapManager.set(state.bufnr, 'n', 'j', safe_call(function()
-    UiFloatInteractive.navigate(state, 'down')
-  end), { noremap = true, silent = true })
-
-  KeymapManager.set(state.bufnr, 'n', 'k', safe_call(function()
-    UiFloatInteractive.navigate(state, 'up')
-  end), { noremap = true, silent = true })
-
-  KeymapManager.set(state.bufnr, 'n', '<Down>', safe_call(function()
-    UiFloatInteractive.navigate(state, 'down')
-  end), { noremap = true, silent = true })
-
-  KeymapManager.set(state.bufnr, 'n', '<Up>', safe_call(function()
-    UiFloatInteractive.navigate(state, 'up')
-  end), { noremap = true, silent = true })
-
-  -- Selection
-  KeymapManager.set(state.bufnr, 'n', '<CR>', safe_call(function()
-    state.config.on_select(state)
-  end), { noremap = true, silent = true })
-
-  -- Close
-  KeymapManager.set(state.bufnr, 'n', '<Esc>', safe_call(function()
-    UiFloatInteractive.close(state)
-  end), { noremap = true, silent = true })
-
-  KeymapManager.set(state.bufnr, 'n', 'q', safe_call(function()
-    UiFloatInteractive.close(state)
-  end), { noremap = true, silent = true })
-
-  -- Custom keymaps
-  if state.config.custom_keymaps then
-    for key, handler in pairs(state.config.custom_keymaps) do
-      KeymapManager.set(state.bufnr, 'n', key, safe_call(function()
-        handler(state)
-      end), { noremap = true, silent = true })
-    end
+  -- Close float (handles buffer cleanup)
+  if state.float then
+    state.float:close()
   end
 end
 
@@ -245,14 +228,18 @@ end
 ---@param state FloatInteractiveState
 ---@param title string New title
 function UiFloatInteractive.update_title(state, title)
-  UiFloatBase.update_title(state.winid, title)
+  if state and state.float and state.float:is_valid() then
+    state.float:update_title(title)
+  end
 end
 
 ---Update window footer dynamically
 ---@param state FloatInteractiveState
 ---@param footer string New footer
 function UiFloatInteractive.update_footer(state, footer)
-  UiFloatBase.update_footer(state.winid, footer)
+  if state and state.float and state.float:is_valid() then
+    state.float:update_footer(footer)
+  end
 end
 
 ---Helper: Add selection indicator to line

@@ -77,14 +77,14 @@ function StatementChunksViewer.view_statement_chunks()
     for name, info in pairs(parse_result.temp_tables) do
       cb:spans({
         { text = "  ", style = "text" },
-        { text = name, style = "table" },
+        { text = name, style = "sql_table" },
         { text = string.format(" (batch %d):", info.created_in_batch or 0), style = "muted" },
       })
       if info.columns and #info.columns > 0 then
         for _, col in ipairs(info.columns) do
           cb:spans({
             { text = "    - ", style = "muted" },
-            { text = col.name or col, style = "column" },
+            { text = col.name or col, style = "sql_column" },
           })
         end
       end
@@ -115,10 +115,10 @@ function StatementChunksViewer.view_statement_chunks()
         for _, tbl in ipairs(chunk.tables) do
           local spans = {{ text = "    - ", style = "muted" }}
           if tbl.schema then
-            table.insert(spans, { text = tbl.schema, style = "schema" })
+            table.insert(spans, { text = tbl.schema, style = "sql_schema" })
             table.insert(spans, { text = ".", style = "text" })
           end
-          table.insert(spans, { text = tbl.name or "?", style = "table" })
+          table.insert(spans, { text = tbl.name or "?", style = "sql_table" })
           if tbl.alias then
             table.insert(spans, { text = " AS ", style = "muted" })
             table.insert(spans, { text = tbl.alias, style = "alias" })
@@ -134,10 +134,10 @@ function StatementChunksViewer.view_statement_chunks()
         for _, col in ipairs(chunk.columns) do
           local spans = {{ text = "    - ", style = "muted" }}
           if col.source_table then
-            table.insert(spans, { text = col.source_table, style = "table" })
+            table.insert(spans, { text = col.source_table, style = "sql_table" })
             table.insert(spans, { text = ".", style = "text" })
           end
-          table.insert(spans, { text = col.name or "*", style = "column" })
+          table.insert(spans, { text = col.name or "*", style = "sql_column" })
           if col.is_star then
             table.insert(spans, { text = " (star)", style = "muted" })
           end
