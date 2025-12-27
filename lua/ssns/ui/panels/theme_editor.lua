@@ -11,7 +11,7 @@ local UiFloat = require('nvim-float.float')
 local Data = require('ssns.ui.panels.theme_editor_data')
 local Render = require('ssns.ui.panels.theme_editor_render')
 local Actions = require('ssns.ui.panels.theme_picker_actions')
-local ColorPicker = require('ssns.ui.components.color_picker')
+local colorpicker = require('nvim-colorpicker')
 
 ---@class ThemeEditorState
 ---@field available_themes table[] All available themes
@@ -170,65 +170,126 @@ local function edit_color()
     return
   end
 
-  -- Get current color value
-  local current_value = state.current_colors[color_def.key] or {}
-  local initial = {
-    fg = current_value.fg or "#808080",
-    bg = current_value.bg,
-    bold = current_value.bold or false,
-    italic = current_value.italic or false,
+  -- Get current color value and save original for cancel
+  local original_value = vim.deepcopy(state.current_colors[color_def.key] or {})
+
+  -- Working copies of fg/bg colors that we update as user edits
+  local working_colors = {
+    fg = original_value.fg or "#808080",
+    bg = original_value.bg or "#808080",
+    bold = original_value.bold or false,
+    italic = original_value.italic or false,
   }
 
-  -- Open color picker (multipanel mode)
-  ColorPicker.show_multipanel({
-    initial = initial,
+  -- Determine initial target (fg by default, bg if fg is nil but bg exists)
+  local initial_target = original_value.fg and "fg" or (original_value.bg and "bg" or "fg")
+
+  -- Helper to apply working colors to theme state
+  local function apply_working_colors()
+    if not state then return end
+    state.current_colors[color_def.key] = {
+      fg = working_colors.fg,
+      bg = working_colors.bg ~= "#808080" and working_colors.bg or original_value.bg,
+      bold = working_colors.bold,
+      italic = working_colors.italic,
+    }
+    state.is_dirty = true
+    ThemeManager.apply_colors(state.current_colors)
+
+    if multi_panel then
+      local colors_buf = multi_panel:get_panel_buffer("colors")
+      if colors_buf then
+        Render.apply_swatch_highlights(colors_buf, state)
+      end
+      multi_panel:render_panel("colors")
+      multi_panel:render_panel("preview")
+    end
+  end
+
+  -- Open color picker with SSNS-specific custom controls
+  colorpicker.pick({
+    color = working_colors[initial_target],
     title = color_def.name .. " (" .. color_def.key .. ")",
 
-    -- Live preview as user navigates
-    on_change = function(color)
+    -- Inject SSNS-specific controls
+    custom_controls = {
+      {
+        id = "target",
+        type = "select",
+        label = "Target",
+        options = { "fg", "bg" },
+        default = initial_target,
+        key = "B",
+        -- When target changes, swap colors
+        on_change = function(new_target, old_target)
+          -- Save current picker color to the old target
+          local current_color = colorpicker.get_color()
+          if current_color then
+            working_colors[old_target] = current_color
+          end
+          -- Load the new target's color into the picker
+          colorpicker.set_color(working_colors[new_target])
+          -- Apply preview
+          apply_working_colors()
+        end,
+      },
+      {
+        id = "bold",
+        type = "toggle",
+        label = "Bold",
+        default = working_colors.bold,
+        key = "b",
+        on_change = function(new_val)
+          working_colors.bold = new_val
+          apply_working_colors()
+        end,
+      },
+      {
+        id = "italic",
+        type = "toggle",
+        label = "Italic",
+        default = working_colors.italic,
+        key = "i",
+        on_change = function(new_val)
+          working_colors.italic = new_val
+          apply_working_colors()
+        end,
+      },
+    },
+
+    -- Live preview as user navigates the color grid
+    on_change = function(result)
       if not state then return end
 
-      -- Update working colors
-      state.current_colors[color_def.key] = {
-        fg = color.fg,
-        bg = color.bg,
-        bold = color.bold,
-        italic = color.italic,
-      }
-      state.is_dirty = true
+      -- Update the current target's color in working_colors
+      local target = result.custom and result.custom.target or "fg"
+      working_colors[target] = result.color
 
-      -- Apply to highlights for live preview
-      ThemeManager.apply_colors(state.current_colors)
-
-      -- Re-render panels
-      if multi_panel then
-        local colors_buf = multi_panel:get_panel_buffer("colors")
-        if colors_buf then
-          Render.apply_swatch_highlights(colors_buf, state)
-        end
-        multi_panel:render_panel("colors")
-        multi_panel:render_panel("preview")
+      -- Update bold/italic from result
+      if result.custom then
+        working_colors.bold = result.custom.bold
+        working_colors.italic = result.custom.italic
       end
+
+      apply_working_colors()
     end,
 
     -- User confirmed selection
-    on_select = function(color)
+    on_select = function(result)
       if not state then return end
 
-      -- Final update
-      state.current_colors[color_def.key] = {
-        fg = color.fg,
-        bg = color.bg,
-        bold = color.bold,
-        italic = color.italic,
-      }
-      state.is_dirty = true
+      -- Final update: save current picker color to the active target
+      local target = result.custom and result.custom.target or "fg"
+      working_colors[target] = result.color
 
-      -- Apply and re-render
-      ThemeManager.apply_colors(state.current_colors)
+      if result.custom then
+        working_colors.bold = result.custom.bold
+        working_colors.italic = result.custom.italic
+      end
+
+      apply_working_colors()
+
       if multi_panel then
-        multi_panel:render_panel("colors")
-        multi_panel:render_panel("preview")
         multi_panel:update_panel_title("colors", get_colors_title(state) .. " *")
       end
     end,
@@ -238,7 +299,7 @@ local function edit_color()
       if not state then return end
 
       -- Restore original color
-      state.current_colors[color_def.key] = current_value
+      state.current_colors[color_def.key] = original_value
 
       -- Re-apply original colors
       ThemeManager.apply_colors(state.current_colors)
