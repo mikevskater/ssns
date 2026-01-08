@@ -21,8 +21,34 @@ UiTree.object_map = {}
 ---@type {object: BaseDbObject?, line: number?, column: number?}
 UiTree.last_cursor_state = { object = nil, line = nil, column = nil }
 
+---ContentBuilder instance for element tracking
+---@type ContentBuilder?
+UiTree.content_builder = nil
+
 -- Re-export helpers from TreeRender for external use
 UiTree.get_object_icon = TreeRender.get_object_icon
+
+---Get element at cursor position using ContentBuilder's element registry
+---@return table|nil element { type: string, data: table, name: string } or nil
+function UiTree.get_element_at_cursor()
+  local Buffer = require('ssns.ui.core.buffer')
+  if not Buffer.is_open() or not UiTree.content_builder then return nil end
+
+  local line_number = Buffer.get_current_line()
+  return UiTree.content_builder:get_element_at_line(line_number)
+end
+
+---Get object at specific line using ContentBuilder
+---@param line_number number
+---@return BaseDbObject|nil
+function UiTree.get_object_at_line(line_number)
+  if not UiTree.content_builder then
+    -- Fallback to line_map during transition
+    return UiTree.line_map[line_number]
+  end
+  local element = UiTree.content_builder:get_element_at_line(line_number)
+  return element and element.data and element.data.object or nil
+end
 
 ---Render the entire tree
 function UiTree.render()
