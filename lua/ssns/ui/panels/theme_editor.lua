@@ -181,6 +181,12 @@ local function edit_color()
     italic = original_value.italic or false,
   }
 
+  -- Track original colors for each target (for reset/comparison in picker)
+  local original_colors = {
+    fg = original_value.fg or "#808080",
+    bg = original_value.bg or "#808080",
+  }
+
   -- Determine initial target (fg by default, bg if fg is nil but bg exists)
   local initial_target = original_value.fg and "fg" or (original_value.bg and "bg" or "fg")
 
@@ -227,8 +233,10 @@ local function edit_color()
           if current_color then
             working_colors[old_target] = current_color
           end
-          -- Load the new target's color into the picker
-          colorpicker.set_color(working_colors[new_target])
+          -- Load the new target's color into the picker (with its original for comparison)
+          local new_color = working_colors[new_target]
+          local new_original = original_colors[new_target]
+          colorpicker.set_color(new_color, new_original)
           -- Apply preview
           apply_working_colors()
         end,
@@ -264,7 +272,7 @@ local function edit_color()
       -- Update the current target's color in working_colors
       local target = result.custom and result.custom.target or "fg"
       working_colors[target] = result.color
-
+      
       -- Update bold/italic from result
       if result.custom then
         working_colors.bold = result.custom.bold
