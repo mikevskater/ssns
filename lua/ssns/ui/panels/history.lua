@@ -160,14 +160,14 @@ local function render_buffers(state)
           entry_count == 1 and "entry" or "entries"
         ), style = "Comment" },
     })
-    cb:nl()
   end
 
   if #ui_state.buffer_histories == 0 then
     cb:line("   (No history)", "NvimFloatHint")
   end
 
-  local lines, highlights = cb:build()
+  local lines = cb:build_lines()
+  local highlights = cb:build_highlights()
 
   -- Associate ContentBuilder with panel for element tracking
   if multi_panel then
@@ -202,7 +202,8 @@ local function render_history(state)
       cb:line("")
       cb:line(" No buffer selected", "NvimFloatHint")
     end
-    local lines, highlights = cb:build()
+    local lines = cb:build_lines()
+  local highlights = cb:build_highlights()
     if multi_panel then
       multi_panel:set_panel_content_builder("history", cb)
     end
@@ -304,14 +305,14 @@ local function render_history(state)
     }
 
     cb:spans(spans)
-    cb:nl()
   end
 
   if #buffer_history.entries == 0 then
     cb:line("   (No entries)", "NvimFloatHint")
   end
 
-  local lines, highlights = cb:build()
+  local lines = cb:build_lines()
+  local highlights = cb:build_highlights()
 
   -- Associate ContentBuilder with panel for element tracking
   if multi_panel then
@@ -329,7 +330,8 @@ local function render_preview(state)
 
   if ui_state.selected_buffer_idx < 1 or ui_state.selected_buffer_idx > #ui_state.buffer_histories then
     cb:line("-- No buffer selected", "Comment")
-    local lines, highlights = cb:build()
+    local lines = cb:build_lines()
+  local highlights = cb:build_highlights()
     return lines, highlights, cb
   end
 
@@ -337,7 +339,8 @@ local function render_preview(state)
 
   if ui_state.selected_entry_idx < 1 or ui_state.selected_entry_idx > #buffer_history.entries then
     cb:line("-- No entry selected", "Comment")
-    local lines, highlights = cb:build()
+    local lines = cb:build_lines()
+  local highlights = cb:build_highlights()
     return lines, highlights, cb
   end
 
@@ -367,7 +370,7 @@ local function render_preview(state)
   cb:line("")
 
   -- Track where query content starts (for match position offsets)
-  local query_start_line = cb:get_line_count()
+  local query_start_line = cb:line_count()
 
   -- Get match positions for overlay highlighting
   local orig_buf_idx = nil
@@ -421,8 +424,7 @@ local function render_preview(state)
           table.insert(spans, { text = query_line:sub(last_end) })
         end
         cb:spans(spans)
-        cb:nl()
-      else
+          else
         cb:line(query_line)
       end
 
@@ -436,7 +438,8 @@ local function render_preview(state)
     end
   end
 
-  local lines, highlights = cb:build()
+  local lines = cb:build_lines()
+  local highlights = cb:build_highlights()
   return lines, highlights, cb
 end
 
@@ -481,7 +484,8 @@ local function render_search(state)
   local settings_line, _ = build_search_settings_line()
   cb:line(settings_line, "Comment")
 
-  local lines, highlights = cb:build()
+  local lines = cb:build_lines()
+  local highlights = cb:build_highlights()
   return lines, highlights, cb
 end
 

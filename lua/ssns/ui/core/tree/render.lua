@@ -333,7 +333,8 @@ function TreeRender.render(UiTree, opts)
     saved_line = Buffer.get_current_line()
     -- Get saved object from content_builder if available, fallback to line_map
     if UiTree.content_builder then
-      local element = UiTree.content_builder:get_element_at_line(saved_line)
+      -- ContentBuilder uses 0-indexed rows
+      local element = UiTree.content_builder:get_element_at(saved_line - 1, 0)
       saved_object = element and element.data and element.data.object
     else
       saved_object = UiTree.line_map[saved_line]
@@ -379,7 +380,6 @@ function TreeRender.render(UiTree, opts)
       },
     },
   })
-  cb:nl()
 
   -- Add separator line
   cb:line("")
@@ -388,13 +388,13 @@ function TreeRender.render(UiTree, opts)
   local servers = Cache.get_all_servers()
 
   if #servers == 0 then
-    cb:line("No servers connected", "Comment")
+    cb:spans({{ text = "No servers connected", style = "Comment" }})
     cb:line("")
-    cb:line("Press Enter on '+ Add Server' above", "Comment")
-    cb:line("or add servers in your setup():", "Comment")
-    cb:line("  connections = {", "Comment")
-    cb:line('    my_server = "sqlserver://.\\\\SQLEXPRESS/master"', "Comment")
-    cb:line("  }", "Comment")
+    cb:spans({{ text = "Press Enter on '+ Add Server' above", style = "Comment" }})
+    cb:spans({{ text = "or add servers in your setup():", style = "Comment" }})
+    cb:spans({{ text = "  connections = {", style = "Comment" }})
+    cb:spans({{ text = '    my_server = "sqlserver://.\\\\SQLEXPRESS/master"', style = "Comment" }})
+    cb:spans({{ text = "  }", style = "Comment" }})
   else
     -- Render each server (indent level 1 to match "+ Add Server" indent)
     for _, server in ipairs(servers) do
@@ -403,16 +403,19 @@ function TreeRender.render(UiTree, opts)
   end
 
   -- Build lines and highlights from ContentBuilder
-  local lines, highlights = cb:build()
+  local lines = cb:build_lines()
+  local highlights = cb:build_highlights()
 
   -- Store ContentBuilder for element lookup
   UiTree.content_builder = cb
 
   -- Also populate line_map for backward compatibility during transition
-  local registry = cb:get_element_registry()
+  local registry = cb:get_registry()
   if registry then
-    for line_num, element in pairs(registry) do
+    -- Iterate through all tracked elements and build line_map/object_map
+    for _, element in registry:iter() do
       if element.data and element.data.object then
+        local line_num = element.row + 1  -- Convert 0-indexed to 1-indexed
         UiTree.line_map[line_num] = element.data.object
         UiTree.object_map[element.data.object] = line_num
       end
@@ -474,19 +477,25 @@ function TreeRender.render_server(UiTree, server, cb, indent_level)
   local indent = string.rep("  ", indent_level)
   local expand_icon = server.ui_state.expanded and (icons.expanded or "▾") or (icons.collapsed or "▸")
 
-  -- Get database-type specific server icon
+  -- Get database-type specific server icon and highlight
   local server_icon = icons.server or ""
+  local server_style = "SsnsServer"
   local db_type = server:get_db_type()
   if db_type == "sqlserver" then
     server_icon = icons.server_sqlserver or icons.server or ""
+    server_style = "SsnsServerSqlServer"
   elseif db_type == "postgres" or db_type == "postgresql" then
     server_icon = icons.server_postgres or icons.server or ""
+    server_style = "SsnsServerPostgres"
   elseif db_type == "mysql" then
     server_icon = icons.server_mysql or icons.server or ""
+    server_style = "SsnsServerMysql"
   elseif db_type == "sqlite" then
     server_icon = icons.server_sqlite or icons.server or ""
+    server_style = "SsnsServerSqlite"
   elseif db_type == "bigquery" then
     server_icon = icons.server_bigquery or icons.server or ""
+    server_style = "SsnsServerBigQuery"
   end
 
   local status = server:get_status_icon()
@@ -502,7 +511,7 @@ function TreeRender.render_server(UiTree, server, cb, indent_level)
   cb:spans({
     { text = indent },
     { text = expand_icon .. " " .. server_icon .. " " .. server.name .. favorite_icon .. " " .. status,
-      style = "SsnsServer",
+      style = server_style,
       track = {
         name = "server_" .. server.name,
         type = "server",
@@ -511,18 +520,17 @@ function TreeRender.render_server(UiTree, server, cb, indent_level)
       },
     },
   })
-  cb:nl()
 
   -- If expanded, render children (Databases group, etc.)
   if server.ui_state.expanded then
     if server.ui_state.error then
       -- Show error message
       local error_icon = icons.error or "✗"
-      cb:line(indent .. "    " .. error_icon .. " Error: " .. server.ui_state.error, "SsnsStatusError")
+      cb:spans({{ text = indent .. "    " .. error_icon .. " Error: " .. server.ui_state.error, style = "SsnsStatusError" }})
     elseif server.ui_state.loading then
       -- Show loading indicator
       local loading_icon = icons.connecting or "⋯"
-      cb:line(indent .. "    " .. loading_icon .. " Loading...", "SsnsStatusConnecting")
+      cb:spans({{ text = indent .. "    " .. loading_icon .. " Loading...", style = "SsnsStatusConnecting" }})
     elseif server.is_loaded then
       -- Get databases using typed array accessor
       local all_databases = server:get_databases()
@@ -567,7 +575,7 @@ function TreeRender.render_server(UiTree, server, cb, indent_level)
     elseif server:is_connected() and not server.is_loaded then
       -- Show loading indicator (fallback if loading flag not set)
       local loading_icon = icons.connecting or "⋯"
-      cb:line(indent .. "    " .. loading_icon .. " Loading...", "SsnsStatusConnecting")
+      cb:spans({{ text = indent .. "    " .. loading_icon .. " Loading...", style = "SsnsStatusConnecting" }})
     end
   end
 end
@@ -599,18 +607,17 @@ function TreeRender.render_database(UiTree, db, cb, indent_level)
       },
     },
   })
-  cb:nl()
 
   -- If expanded, render object type groups (TABLES, VIEWS, etc.)
   if db.ui_state.expanded then
     if db.ui_state.error then
       -- Show error message
       local error_icon = icons.error or "✗"
-      cb:line(indent .. "    " .. error_icon .. " Error: " .. db.ui_state.error, "SsnsStatusError")
+      cb:spans({{ text = indent .. "    " .. error_icon .. " Error: " .. db.ui_state.error, style = "SsnsStatusError" }})
     elseif db.ui_state.loading then
       -- Show loading indicator
       local loading_icon = icons.connecting or "⋯"
-      cb:line(indent .. "    " .. loading_icon .. " Loading...", "SsnsStatusConnecting")
+      cb:spans({{ text = indent .. "    " .. loading_icon .. " Loading...", style = "SsnsStatusConnecting" }})
     elseif db.is_loaded then
       -- Render object groups at database level (aggregating from schemas if needed)
       -- This works for both schema-based (SQL Server, PostgreSQL) and non-schema (MySQL) servers
@@ -715,7 +722,7 @@ function TreeRender.render_database(UiTree, db, cb, indent_level)
       end
     else
       local loading_icon = icons.connecting or "⋯"
-      cb:line(indent .. "    " .. loading_icon .. " Loading...", "SsnsStatusConnecting")
+      cb:spans({{ text = indent .. "    " .. loading_icon .. " Loading...", style = "SsnsStatusConnecting" }})
     end
   end
 end
@@ -767,14 +774,13 @@ function TreeRender.render_schema(UiTree, schema, cb, indent_level)
       },
     },
   })
-  cb:nl()
 
   -- If expanded, render children
   if schema.ui_state.expanded then
     if not schema.is_loaded then
       -- Schema data not loaded yet
       local loading_icon = icons.connecting or "⋯"
-      cb:line(indent .. "    " .. loading_icon .. " Loading...", "SsnsStatusConnecting")
+      cb:spans({{ text = indent .. "    " .. loading_icon .. " Loading...", style = "SsnsStatusConnecting" }})
     elseif schema._sorting then
       -- Async sort in progress - add placeholder line for spinner overlay
       -- (spinner is already running from when sort started)
@@ -787,7 +793,7 @@ function TreeRender.render_schema(UiTree, schema, cb, indent_level)
     else
       -- Need to start async sort
       -- Add placeholder line for spinner overlay (0-indexed for spinner)
-      local spinner_line = cb:get_line_count()  -- This will be the line index after we add it
+      local spinner_line = cb:line_count()  -- This will be the line index after we add it
       cb:line("")  -- Empty line - spinner will overlay
 
       -- Start async sort with spinner - defer to next tick so buffer is written first
@@ -886,7 +892,6 @@ function TreeRender.render_object_group(UiTree, group, cb, indent_level)
       },
     },
   })
-  cb:nl()
 
   -- If expanded, render filtered children
   if group.ui_state.expanded and #filtered_children > 0 then
@@ -921,8 +926,7 @@ function TreeRender.render_object(UiTree, obj, cb, indent_level)
         },
       },
     })
-    cb:nl()
-    return
+      return
   end
 
   -- Regular objects with potential children
@@ -1021,18 +1025,17 @@ function TreeRender.render_object(UiTree, obj, cb, indent_level)
       },
     },
   })
-  cb:nl()
 
   -- If expanded, render children
   if obj.ui_state.expanded then
     if obj.ui_state.error then
       -- Show error message
       local error_icon = icons.error or "✗"
-      cb:line(indent .. "  " .. error_icon .. " Error: " .. obj.ui_state.error, "SsnsStatusError")
+      cb:spans({{ text = indent .. "  " .. error_icon .. " Error: " .. obj.ui_state.error, style = "SsnsStatusError" }})
     elseif obj.ui_state.loading then
       -- Show loading indicator
       local loading_icon = icons.connecting or "⋯"
-      cb:line(indent .. "  " .. loading_icon .. " Loading...", "SsnsStatusConnecting")
+      cb:spans({{ text = indent .. "  " .. loading_icon .. " Loading...", style = "SsnsStatusConnecting" }})
     else
       -- Check if this is a structural group that needs alignment
       if obj.object_type == "column_group" or obj.object_type == "index_group" or
@@ -1112,7 +1115,7 @@ function TreeRender.render_aligned_group(UiTree, group, cb, indent_level)
     -- Show "(No <type>)" message for empty groups
     -- Keep plural form (Columns, Indexes, Keys, Parameters)
     local message = string.format("(No %s)", group.name)
-    cb:line(indent .. "  " .. message, "Comment")
+    cb:spans({{ text = indent .. "  " .. message, style = "Comment" }})
     return
   end
 
@@ -1169,8 +1172,7 @@ function TreeRender.render_aligned_group(UiTree, group, cb, indent_level)
         },
       },
     })
-    cb:nl()
-  end
+    end
 end
 
 ---Format a detail row for alignment
