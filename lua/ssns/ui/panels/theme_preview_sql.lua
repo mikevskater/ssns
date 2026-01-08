@@ -7,7 +7,7 @@
 
 local M = {}
 
-local ContentBuilder = require('nvim-float.content_builder')
+local ContentBuilder = require('nvim-float.content')
 
 ---Build preview SQL content with highlights using ContentBuilder
 ---@return string[] lines, table[] highlights

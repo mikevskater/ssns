@@ -7,7 +7,7 @@ local ThemeEditor = {}
 
 local KeymapManager = require('ssns.keymap_manager')
 local ThemeManager = require('ssns.ui.theme_manager')
-local UiFloat = require('nvim-float.float')
+local UiFloat = require('nvim-float.window')
 local Data = require('ssns.ui.panels.theme_editor_data')
 local Render = require('ssns.ui.panels.theme_editor_render')
 local Actions = require('ssns.ui.panels.theme_picker_actions')
@@ -86,72 +86,65 @@ end
 -- Navigation Actions
 -- ============================================================================
 
----Navigate theme list
----@param direction number 1 for down, -1 for up
-local function navigate_themes(direction)
-  if not state or not multi_panel then return end
-
-  -- Use visual order for navigation (Default, User, Built-in)
-  state.selected_theme_idx = Render.get_next_theme_idx(state, state.selected_theme_idx, direction)
-
-  -- Load theme colors
-  load_theme_colors(state)
-  state.is_dirty = false
-  state.editing_user_copy = false
-
-  -- Apply preview
-  apply_preview()
-
-  -- Re-render panels
-  multi_panel:render_panel("themes")
-  multi_panel:render_panel("colors")
-  multi_panel:render_panel("preview")
-  multi_panel:update_panel_title("colors", get_colors_title(state))
-
-  -- Position cursor
-  local cursor_line = Render.get_theme_cursor_line(state, state.selected_theme_idx)
-  multi_panel:set_cursor("themes", cursor_line, 0)
+---Get the color element at cursor position
+---@return table? element_data { def, index } or nil if not on a color
+local function get_color_at_cursor()
+  if not multi_panel then return nil end
+  local element = multi_panel:get_element_at_cursor()
+  if element and element.type == "color" then
+    return element.data
+  end
+  return nil
 end
 
----Select current theme and move to colors panel
+---Get the theme element at cursor position
+---@return table? element_data { theme, index } or nil if not on a theme
+local function get_theme_at_cursor()
+  if not multi_panel then return nil end
+  local element = multi_panel:get_element_at_cursor()
+  if element and element.type == "theme" then
+    return element.data
+  end
+  return nil
+end
+
+---Select theme at cursor and move to colors panel
 local function select_theme()
   if not state or not multi_panel then return end
 
-  -- Load theme colors
+  -- Get theme from cursor position
+  local element = get_theme_at_cursor()
+  if not element then return end -- Not on a theme element
+
+  -- Update state with selection
+  state.selected_theme_idx = element.index
+  state.is_dirty = false
+  state.editing_user_copy = false
+
+  -- Load theme colors and apply preview
   load_theme_colors(state)
+  apply_preview()
 
-  -- Move to colors panel
-  multi_panel:focus_panel("colors")
-  local cursor_line = Render.get_color_cursor_line(state, state.selected_color_idx)
-  multi_panel:set_cursor("colors", cursor_line, 0)
-end
-
----Navigate colors list
----@param direction number 1 for down, -1 for up
-local function navigate_colors(direction)
-  if not state or not multi_panel then return end
-
-  state.selected_color_idx = state.selected_color_idx + direction
-
-  if state.selected_color_idx < 1 then
-    state.selected_color_idx = #Data.COLOR_DEFINITIONS
-  elseif state.selected_color_idx > #Data.COLOR_DEFINITIONS then
-    state.selected_color_idx = 1
-  end
-
+  -- Re-render panels and move to colors
   multi_panel:render_panel("colors")
-
-  -- Position cursor
-  local cursor_line = Render.get_color_cursor_line(state, state.selected_color_idx)
-  multi_panel:set_cursor("colors", cursor_line, 0)
+  multi_panel:render_panel("preview")
+  multi_panel:update_panel_title("colors", get_colors_title(state))
+  multi_panel:focus_panel("colors")
 end
 
 ---Edit the currently selected color using the color picker
 local function edit_color()
   if not state or not multi_panel then return end
 
-  local color_def = Data.COLOR_DEFINITIONS[state.selected_color_idx]
+  -- Get color definition from element at cursor
+  local element_data = get_color_at_cursor()
+  if not element_data then return end
+
+  local color_def = element_data.def
   if not color_def then return end
+
+  -- Update state to match cursor
+  state.selected_color_idx = element_data.index
 
   -- Check if we need to create a user copy first
   local theme = state.available_themes[state.selected_theme_idx]
@@ -228,14 +221,20 @@ local function edit_color()
         key = "B",
         -- When target changes, swap colors
         on_change = function(new_target, old_target)
+          vim.notify(string.format("TARGET SWAP: %s -> %s", old_target, new_target))
           -- Save current picker color to the old target
           local current_color = colorpicker.get_color()
+          vim.notify(string.format("  Current picker color: %s", current_color or "nil"))
+          vim.notify(string.format("  working_colors BEFORE: fg=%s, bg=%s", working_colors.fg, working_colors.bg))
+          vim.notify(string.format("  original_colors: fg=%s, bg=%s", original_colors.fg, original_colors.bg))
           if current_color then
             working_colors[old_target] = current_color
           end
+          vim.notify(string.format("  working_colors AFTER save: fg=%s, bg=%s", working_colors.fg, working_colors.bg))
           -- Load the new target's color into the picker (with its original for comparison)
           local new_color = working_colors[new_target]
           local new_original = original_colors[new_target]
+          vim.notify(string.format("  Calling set_color(%s, %s)", new_color, new_original))
           colorpicker.set_color(new_color, new_original)
           -- Apply preview
           apply_working_colors()
@@ -271,8 +270,11 @@ local function edit_color()
 
       -- Update the current target's color in working_colors
       local target = result.custom and result.custom.target or "fg"
+      vim.notify(string.format("PICKER on_change: target=%s, color=%s", target, result.color))
+      vim.notify(string.format("  working_colors BEFORE: fg=%s, bg=%s", working_colors.fg, working_colors.bg))
       working_colors[target] = result.color
-      
+      vim.notify(string.format("  working_colors AFTER: fg=%s, bg=%s", working_colors.fg, working_colors.bg))
+
       -- Update bold/italic from result
       if result.custom then
         working_colors.bold = result.custom.bold
@@ -445,13 +447,19 @@ function ThemeEditor.show()
           title = "Themes",
           ratio = 0.18,
           filetype = "nvim-float",
-          on_render = function() return Render.render_themes(state) end,
+          on_render = function()
+            local lines, highlights, cb = Render.render_themes(state)
+            -- Associate ContentBuilder with panel for element tracking (if supported)
+            if multi_panel and cb and multi_panel.set_panel_content_builder then
+              multi_panel:set_panel_content_builder("themes", cb)
+            end
+            return lines, highlights
+          end,
           on_focus = function()
             if multi_panel and state then
               multi_panel:update_panel_title("themes", "Themes *")
               multi_panel:update_panel_title("colors", get_colors_title(state))
-              local cursor_line = Render.get_theme_cursor_line(state, state.selected_theme_idx)
-              multi_panel:set_cursor("themes", cursor_line, 0)
+              -- Cursor position is preserved, no need to manually set
             end
           end,
         },
@@ -460,7 +468,14 @@ function ThemeEditor.show()
           title = string.format("Colors [%s]", theme_name),
           ratio = 0.40,
           filetype = "nvim-float",
-          on_render = function() return Render.render_colors(state) end,
+          on_render = function()
+            local lines, highlights, cb = Render.render_colors(state)
+            -- Associate ContentBuilder with panel for element tracking (if supported)
+            if multi_panel and cb and multi_panel.set_panel_content_builder then
+              multi_panel:set_panel_content_builder("colors", cb)
+            end
+            return lines, highlights
+          end,
           on_create = function(bufnr, winid)
             -- Create a CursorLine highlight that only sets background (no foreground)
             -- This allows the swatch colors to show through
@@ -484,8 +499,7 @@ function ThemeEditor.show()
             if multi_panel and state then
               multi_panel:update_panel_title("themes", "Themes")
               multi_panel:update_panel_title("colors", get_colors_title(state) .. " *")
-              local cursor_line = Render.get_color_cursor_line(state, state.selected_color_idx)
-              multi_panel:set_cursor("colors", cursor_line, 0)
+              -- Cursor position is preserved, no need to manually set
             end
           end,
         },
@@ -511,30 +525,30 @@ function ThemeEditor.show()
       {
         header = "Navigation",
         keys = {
-          { key = "j/k", desc = "Navigate up/down" },
-          { key = "Tab", desc = "Switch panels" },
+          { key = "j/k", desc = "Move cursor" },
+          { key = "Tab", desc = "Next panel" },
           { key = "S-Tab", desc = "Previous panel" },
         },
       },
       {
-        header = "Themes Panel",
+        header = "Themes",
         keys = {
           { key = "Enter", desc = "Select theme" },
-          { key = "c", desc = "Copy theme" },
-          { key = "d", desc = "Delete user theme" },
-          { key = "r", desc = "Rename user theme" },
+          { key = "c", desc = "Copy" },
+          { key = "d", desc = "Delete" },
+          { key = "r", desc = "Rename" },
         },
       },
       {
-        header = "Colors Panel",
+        header = "Colors",
         keys = {
-          { key = "Enter", desc = "Open color picker" },
+          { key = "Enter", desc = "Edit color" },
         },
       },
       {
         header = "Actions",
         keys = {
-          { key = "a", desc = "Apply and close" },
+          { key = "a", desc = "Apply & close" },
           { key = "q/Esc", desc = "Cancel" },
         },
       },
@@ -562,11 +576,11 @@ function ThemeEditor.show()
   -- Mark initial focus
   multi_panel:update_panel_title("themes", "Themes *")
 
-  -- Position cursor on selected theme
+  -- Position cursor on the first theme element (Default theme, line 2)
+  -- The Default theme is always first and appears on line 2 (after the blank line)
   vim.schedule(function()
     if multi_panel and multi_panel:is_valid() and state then
-      local cursor_line = Render.get_theme_cursor_line(state, state.selected_theme_idx)
-      multi_panel:set_cursor("themes", cursor_line, 0)
+      multi_panel:set_cursor("themes", 2, 0)
     end
   end)
 end
@@ -577,17 +591,13 @@ function ThemeEditor._setup_keymaps()
 
   local km = KeymapManager.get_group("common")
 
-  -- Themes panel keymaps
+  -- Themes panel keymaps (navigation uses default vim movement)
   multi_panel:set_panel_keymaps("themes", {
     [km.cancel or "<Esc>"] = cancel,
     [km.close or "q"] = cancel,
     ["a"] = apply_and_close,
     [km.next_field or "<Tab>"] = function() multi_panel:focus_next_panel() end,
     [km.prev_field or "<S-Tab>"] = function() multi_panel:focus_prev_panel() end,
-    [km.nav_down or "j"] = function() navigate_themes(1) end,
-    [km.nav_up or "k"] = function() navigate_themes(-1) end,
-    [km.nav_down_alt or "<Down>"] = function() navigate_themes(1) end,
-    [km.nav_up_alt or "<Up>"] = function() navigate_themes(-1) end,
     [km.confirm or "<CR>"] = select_theme,
     -- Theme management
     ["c"] = function() Actions.copy_theme(state, multi_panel, on_action_complete) end,
@@ -595,17 +605,13 @@ function ThemeEditor._setup_keymaps()
     ["r"] = function() Actions.rename_theme(state, multi_panel, on_action_complete) end,
   })
 
-  -- Colors panel keymaps
+  -- Colors panel keymaps (navigation uses default vim movement)
   multi_panel:set_panel_keymaps("colors", {
     [km.cancel or "<Esc>"] = cancel,
     [km.close or "q"] = cancel,
     ["a"] = apply_and_close,
     [km.next_field or "<Tab>"] = function() multi_panel:focus_next_panel() end,
     [km.prev_field or "<S-Tab>"] = function() multi_panel:focus_prev_panel() end,
-    [km.nav_down or "j"] = function() navigate_colors(1) end,
-    [km.nav_up or "k"] = function() navigate_colors(-1) end,
-    [km.nav_down_alt or "<Down>"] = function() navigate_colors(1) end,
-    [km.nav_up_alt or "<Up>"] = function() navigate_colors(-1) end,
     -- Color editing with color picker
     [km.confirm or "<CR>"] = edit_color,
   })

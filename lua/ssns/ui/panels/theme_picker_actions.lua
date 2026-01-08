@@ -43,7 +43,7 @@ function M.copy_theme(state, multi_panel, on_complete)
     return
   end
 
-  local UiFloat = require('nvim-float.float')
+  local UiFloat = require('nvim-float.window')
 
   local default_name = theme.display_name .. " - COPY"
 
@@ -209,7 +209,7 @@ end
 function M.rename_theme(state, multi_panel, on_complete)
   if not state then return end
 
-  local UiFloat = require('nvim-float.float')
+  local UiFloat = require('nvim-float.window')
 
   local theme = state.available_themes[get_selected_idx(state)]
   if not theme or theme.is_default then
@@ -321,7 +321,7 @@ end
 function M.save_theme(colors, source_theme, multi_panel, on_complete)
   if not colors then return end
 
-  local UiFloat = require('nvim-float.float')
+  local UiFloat = require('nvim-float.window')
 
   local default_name = source_theme and source_theme.is_user
     and source_theme.display_name

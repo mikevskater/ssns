@@ -2,7 +2,7 @@
 ---Rendering functions for the theme editor
 local M = {}
 
-local ContentBuilder = require('nvim-float.content_builder')
+local ContentBuilder = require('nvim-float.content')
 local Data = require('ssns.ui.panels.theme_editor_data')
 local PreviewSql = require('ssns.ui.panels.theme_preview_sql')
 
@@ -10,56 +10,58 @@ local PreviewSql = require('ssns.ui.panels.theme_preview_sql')
 -- Themes Panel (Left)
 -- ============================================================================
 
----Render a single theme entry
+---Render a single theme entry with element tracking
 ---@param cb any ContentBuilder
 ---@param theme table Theme data
----@param is_selected boolean
-local function render_theme_entry(cb, theme, is_selected)
-  if is_selected then
-    cb:spans({
-      { text = " ▸ ", style = "emphasis" },
-      { text = theme.display_name, style = "highlight" },
-    })
-  else
-    cb:spans({
-      { text = "   " },
-      { text = theme.display_name },
-    })
-  end
+---@param original_idx number Original index in available_themes
+local function render_theme_entry(cb, theme, original_idx)
+  cb:spans({
+    { text = "   " },
+    {
+      text = theme.display_name,
+      track = {
+        name = "theme_" .. (theme.name or "default"),
+        type = "theme",
+        data = { theme = theme, index = original_idx },
+        row_based = true,
+      },
+    },
+  })
 end
 
 ---Render the themes list panel
 ---Order: Default, User Themes (if any), Built-in Themes
 ---@param state ThemeEditorState
----@return string[] lines, table[] highlights
+---@return string[] lines, table[] highlights, ContentBuilder cb
 function M.render_themes(state)
   local cb = ContentBuilder.new()
 
   if not state then
-    return cb:build_lines(), cb:build_highlights()
+    return cb:build_lines(), cb:build_highlights(), cb
   end
 
   cb:blank()
 
-  -- Separate themes into categories
+  -- Separate themes into categories while preserving original indices
   local default_theme = nil
+  local default_idx = nil
   local user_themes = {}
   local builtin_themes = {}
 
   for i, theme in ipairs(state.available_themes) do
-    theme._original_idx = i  -- Store original index for selection tracking
     if theme.is_default then
       default_theme = theme
+      default_idx = i
     elseif theme.is_user then
-      table.insert(user_themes, theme)
+      table.insert(user_themes, { theme = theme, idx = i })
     else
-      table.insert(builtin_themes, theme)
+      table.insert(builtin_themes, { theme = theme, idx = i })
     end
   end
 
   -- Render Default first
   if default_theme then
-    render_theme_entry(cb, default_theme, default_theme._original_idx == state.selected_theme_idx)
+    render_theme_entry(cb, default_theme, default_idx)
   end
 
   -- Render User Themes section (if any)
@@ -68,8 +70,8 @@ function M.render_themes(state)
     cb:styled(" ─── User Themes ───", "muted")
     cb:blank()
 
-    for _, theme in ipairs(user_themes) do
-      render_theme_entry(cb, theme, theme._original_idx == state.selected_theme_idx)
+    for _, entry in ipairs(user_themes) do
+      render_theme_entry(cb, entry.theme, entry.idx)
     end
   end
 
@@ -78,13 +80,13 @@ function M.render_themes(state)
   cb:styled(" ─── Built-in ───", "muted")
   cb:blank()
 
-  for _, theme in ipairs(builtin_themes) do
-    render_theme_entry(cb, theme, theme._original_idx == state.selected_theme_idx)
+  for _, entry in ipairs(builtin_themes) do
+    render_theme_entry(cb, entry.theme, entry.idx)
   end
 
   cb:blank()
 
-  return cb:build_lines(), cb:build_highlights()
+  return cb:build_lines(), cb:build_highlights(), cb
 end
 
 -- ============================================================================
@@ -127,12 +129,12 @@ end
 
 ---Render the colors panel
 ---@param state ThemeEditorState
----@return string[] lines, table[] highlights
+---@return string[] lines, table[] highlights, ContentBuilder cb
 function M.render_colors(state)
   local cb = ContentBuilder.new()
 
   if not state or not state.current_colors then
-    return cb:build_lines(), cb:build_highlights()
+    return cb:build_lines(), cb:build_highlights(), cb
   end
 
   cb:blank()
@@ -152,10 +154,8 @@ function M.render_colors(state)
 
     local color_value = state.current_colors[def.key]
     local display_value = format_color_value(color_value)
-    local is_selected = (i == state.selected_color_idx)
 
     -- Format: "  ▸ Color Name        #HEXVAL [BI]"
-    local prefix = is_selected and " ▸ " or "   "
     local name_width = 18
     local padded_name = def.name .. string.rep(" ", math.max(0, name_width - #def.name))
 
@@ -167,28 +167,29 @@ function M.render_colors(state)
       swatch_hl = "ThemeEditorSwatch" .. i
     end
 
-    if is_selected then
-      cb:spans({
-        { text = prefix, style = "emphasis" },
-        { text = padded_name, style = "highlight" },
-        { text = swatch, hl_group = swatch_hl or "NvimFloatHint" },
-        { text = " " },
-        { text = display_value, style = "string" },
-      })
-    else
-      cb:spans({
-        { text = prefix, style = "muted" },
-        { text = padded_name, style = "label" },
-        { text = swatch, hl_group = swatch_hl or "NvimFloatHint" },
-        { text = " " },
-        { text = display_value, style = "muted" },
-      })
-    end
+    -- Track this color element for cursor-based queries
+    -- Row-based tracking means the entire line is this element
+    cb:spans({
+      { text = "   " },
+      {
+        text = padded_name,
+        style = "label",
+        track = {
+          name = "color_" .. def.key,
+          type = "color",
+          data = { def = def, index = i },
+          row_based = true,
+        },
+      },
+      { text = swatch, hl_group = swatch_hl or "NvimFloatHint" },
+      { text = " " },
+      { text = display_value, style = "muted" },
+    })
   end
 
   cb:blank()
 
-  return cb:build_lines(), cb:build_highlights()
+  return cb:build_lines(), cb:build_highlights(), cb
 end
 
 -- ============================================================================
@@ -282,163 +283,6 @@ function M.clear_swatch_highlights()
     local hl_name = "ThemeEditorSwatch" .. i
     pcall(vim.api.nvim_set_hl, 0, hl_name, {})
   end
-end
-
--- ============================================================================
--- Helpers
--- ============================================================================
-
----Get the line number for a color index (accounting for category headers)
----@param state ThemeEditorState
----@param color_idx number
----@return number line 1-based line number
-function M.get_color_cursor_line(state, color_idx)
-  if not state then return 2 end
-
-  local line = 2 -- Start after initial blank line
-  local current_category = nil
-
-  for i, def in ipairs(Data.COLOR_DEFINITIONS) do
-    -- Account for category headers
-    if def.category ~= current_category then
-      if current_category ~= nil then
-        line = line + 1 -- Blank line before category
-      end
-      line = line + 1 -- Category header
-      line = line + 1 -- Blank line after header
-      current_category = def.category
-    end
-
-    if i == color_idx then
-      return line
-    end
-
-    line = line + 1
-  end
-
-  return 2
-end
-
----Get the visual order of themes (Default, User, Built-in)
----Returns a list of original indices in visual order
----@param state ThemeEditorState
----@return number[] visual_order List of original indices
-function M.get_theme_visual_order(state)
-  if not state then return {} end
-
-  local order = {}
-  local user_indices = {}
-  local builtin_indices = {}
-
-  for i, theme in ipairs(state.available_themes) do
-    if theme.is_default then
-      table.insert(order, i)  -- Default goes first
-    elseif theme.is_user then
-      table.insert(user_indices, i)
-    else
-      table.insert(builtin_indices, i)
-    end
-  end
-
-  -- Add user themes
-  for _, idx in ipairs(user_indices) do
-    table.insert(order, idx)
-  end
-
-  -- Add built-in themes
-  for _, idx in ipairs(builtin_indices) do
-    table.insert(order, idx)
-  end
-
-  return order
-end
-
----Get the next theme index in visual order
----@param state ThemeEditorState
----@param current_idx number Current theme index
----@param direction number 1 for next, -1 for previous
----@return number next_idx
-function M.get_next_theme_idx(state, current_idx, direction)
-  local order = M.get_theme_visual_order(state)
-  if #order == 0 then return current_idx end
-
-  -- Find current position in visual order
-  local current_pos = 1
-  for i, idx in ipairs(order) do
-    if idx == current_idx then
-      current_pos = i
-      break
-    end
-  end
-
-  -- Calculate new position with wrapping
-  local new_pos = current_pos + direction
-  if new_pos < 1 then
-    new_pos = #order
-  elseif new_pos > #order then
-    new_pos = 1
-  end
-
-  return order[new_pos]
-end
-
----Get the line number for a theme index (accounting for section headers)
----Matches the render order: Default, User Themes, Built-in Themes
----@param state ThemeEditorState
----@param theme_idx number
----@return number line 1-based line number
-function M.get_theme_cursor_line(state, theme_idx)
-  if not state then return 2 end
-
-  -- Separate themes into categories (same as render)
-  local default_theme = nil
-  local user_themes = {}
-  local builtin_themes = {}
-
-  for i, theme in ipairs(state.available_themes) do
-    theme._original_idx = i
-    if theme.is_default then
-      default_theme = theme
-    elseif theme.is_user then
-      table.insert(user_themes, theme)
-    else
-      table.insert(builtin_themes, theme)
-    end
-  end
-
-  local line = 2 -- Start after initial blank line
-
-  -- Check Default
-  if default_theme then
-    if default_theme._original_idx == theme_idx then
-      return line
-    end
-    line = line + 1  -- Move past Default entry
-  end
-
-  -- Check User Themes section
-  if #user_themes > 0 then
-    line = line + 3  -- blank + header + blank
-
-    for _, theme in ipairs(user_themes) do
-      if theme._original_idx == theme_idx then
-        return line
-      end
-      line = line + 1
-    end
-  end
-
-  -- Check Built-in section
-  line = line + 3  -- blank + header + blank
-
-  for _, theme in ipairs(builtin_themes) do
-    if theme._original_idx == theme_idx then
-      return line
-    end
-    line = line + 1
-  end
-
-  return 2
 end
 
 return M
