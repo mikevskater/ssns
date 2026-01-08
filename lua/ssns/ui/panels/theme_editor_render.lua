@@ -14,11 +14,16 @@ local PreviewSql = require('ssns.ui.panels.theme_preview_sql')
 ---@param cb any ContentBuilder
 ---@param theme table Theme data
 ---@param original_idx number Original index in available_themes
-local function render_theme_entry(cb, theme, original_idx)
+---@param is_selected boolean Whether this theme is currently selected
+local function render_theme_entry(cb, theme, original_idx, is_selected)
+  -- DEBUG: Log each entry
+  local prefix = is_selected and " ▸ " or "   "
+  local style = is_selected and "emphasis" or nil
   cb:spans({
-    { text = "   " },
+    { text = prefix, style = is_selected and "emphasis" or "muted" },
     {
       text = theme.display_name,
+      style = style,
       track = {
         name = "theme_" .. (theme.name or "default"),
         type = "theme",
@@ -59,9 +64,11 @@ function M.render_themes(state)
     end
   end
 
+  local selected_idx = state.selected_theme_idx
+  
   -- Render Default first
   if default_theme then
-    render_theme_entry(cb, default_theme, default_idx)
+    render_theme_entry(cb, default_theme, default_idx, default_idx == selected_idx)
   end
 
   -- Render User Themes section (if any)
@@ -71,7 +78,7 @@ function M.render_themes(state)
     cb:blank()
 
     for _, entry in ipairs(user_themes) do
-      render_theme_entry(cb, entry.theme, entry.idx)
+      render_theme_entry(cb, entry.theme, entry.idx, entry.idx == selected_idx)
     end
   end
 
@@ -81,7 +88,7 @@ function M.render_themes(state)
   cb:blank()
 
   for _, entry in ipairs(builtin_themes) do
-    render_theme_entry(cb, entry.theme, entry.idx)
+    render_theme_entry(cb, entry.theme, entry.idx, entry.idx == selected_idx)
   end
 
   cb:blank()

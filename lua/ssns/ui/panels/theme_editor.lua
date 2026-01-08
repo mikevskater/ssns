@@ -185,7 +185,8 @@ local function select_theme()
   load_theme_colors(state)
   apply_preview()
 
-  -- Re-render panels and move to colors
+  -- Re-render all panels (themes panel needs to update selection arrow)
+  multi_panel:render_panel("themes")
   multi_panel:render_panel("colors")
   multi_panel:render_panel("preview")
   multi_panel:update_panel_title("colors", get_colors_title(state))
@@ -209,7 +210,7 @@ local function edit_color()
   -- Check if we need to create a user copy first
   local theme = state.available_themes[state.selected_theme_idx]
   if theme and not theme.is_user then
-    -- Auto-create a user copy before editing (works for both built-in and default themes)
+    -- Auto-create a user copy before editing
     local success = Actions.ensure_user_copy(state, multi_panel)
     if not success then
       return
@@ -274,10 +275,10 @@ local function edit_color()
         options = { "fg", "bg" },
         default = initial_target,
         key = "B",
-        -- When target changes, swap colors (no live preview, just swap picker color)
+        -- When target changes, swap colors
         on_change = function(new_target, old_target)
           -- Save current picker color to the old target
-          local current_color = colorpicker.get_color()
+          local current_color = colorpicker.get_color()          
           if current_color then
             working_colors[old_target] = current_color
           end
@@ -328,11 +329,6 @@ local function edit_color()
         multi_panel:update_panel_title("colors", get_colors_title(state) .. " *")
       end
     end,
-
-    -- User cancelled - nothing to restore since we don't update during navigation
-    on_cancel = function()
-      -- No-op: colors weren't changed during navigation
-    end,
   })
 end
 
@@ -355,7 +351,12 @@ local function apply_and_close()
     if current and current.is_user then
       local theme_data = ThemeManager.get_theme(current.name, true)
       if theme_data then
-        ThemeManager.save(current.name, current.display_name, state.current_colors, theme_data.description, theme_data.author)
+        local ok, err = ThemeManager.save(current.name, current.display_name, state.current_colors, theme_data.description, theme_data.author)
+        if ok then
+          vim.notify("Theme saved: " .. current.display_name, vim.log.levels.INFO)
+        else
+          vim.notify("Failed to save theme: " .. (err or "unknown error"), vim.log.levels.ERROR)
+        end
       end
     end
   end
@@ -365,11 +366,71 @@ end
 
 ---Cancel and restore original theme
 local function cancel()
-  if not state then return end
+  if not state then
+    -- State was already cleared, just ensure cleanup
+    if multi_panel then
+      multi_panel:close()
+      multi_panel = nil
+    end
+    return
+  end
 
-  -- Restore original theme
-  ThemeManager.preview(state.original_theme)
+  -- Capture state values before any dialog (in case state gets modified)
+  local is_dirty = state.is_dirty
+  local original_theme = state.original_theme
+  local current_theme_info = state.available_themes[state.selected_theme_idx]
+  local theme_name = current_theme_info and current_theme_info.display_name or "theme"
 
+  -- Check for unsaved changes
+  if is_dirty then
+    -- Show confirmation dialog
+    local confirm_win = UiFloat.create({
+      title = "Unsaved Changes",
+      width = 50,
+      height = 7,
+      center = true,
+      content_builder = true,
+      zindex = UiFloat.ZINDEX.MODAL,
+    })
+
+    if confirm_win then
+      local cb = confirm_win:get_content_builder()
+      cb:line("")
+      cb:line("  You have unsaved changes to '" .. theme_name .. "'.", "NvimFloatTitle")
+      cb:line("")
+      cb:line("  Discard changes and close?", "NvimFloatLabel")
+      cb:line("")
+      cb:line("  <Enter>=Discard | <a>=Apply & Close | <Esc>=Cancel", "NvimFloatHint")
+      confirm_win:render()
+
+      -- Discard changes and close (use captured original_theme)
+      vim.keymap.set("n", "<CR>", function()
+        confirm_win:close()
+        ThemeManager.preview(original_theme)
+        ThemeEditor.close()
+      end, { buffer = confirm_win.buf, nowait = true })
+
+      -- Apply changes and close
+      vim.keymap.set("n", "a", function()
+        confirm_win:close()
+        apply_and_close()
+      end, { buffer = confirm_win.buf, nowait = true })
+
+      -- Cancel (go back to editor)
+      vim.keymap.set("n", "<Esc>", function()
+        confirm_win:close()
+      end, { buffer = confirm_win.buf, nowait = true })
+
+      vim.keymap.set("n", "q", function()
+        confirm_win:close()
+      end, { buffer = confirm_win.buf, nowait = true })
+
+      return
+    end
+  end
+
+  -- No unsaved changes, just close (use captured original_theme)
+  ThemeManager.preview(original_theme)
   ThemeEditor.close()
 end
 
@@ -570,8 +631,8 @@ function ThemeEditor.show()
     },
     on_close = function()
       Render.clear_swatch_highlights()
-      multi_panel = nil
-      state = nil
+      -- Note: Don't nil out state here - let cancel() handle confirmation first
+      -- The actual cleanup happens in ThemeEditor.close()
     end,
   })
 
