@@ -4,6 +4,8 @@ local M = {}
 
 local State = require('ssns.ui.panels.object_search.state')
 local Cache = require('ssns.cache')
+local UiFloat = require('nvim-float.window')
+local ContentBuilder = require('nvim-float.content')
 
 ---Forward reference for load_definition (injected by init.lua)
 ---@type fun(searchable: SearchableObject): string?
@@ -246,12 +248,45 @@ end
 -- Forward declaration for show_database_picker (called from show_server_picker)
 local show_database_picker
 
+---Build server picker content with element tracking
+---@param servers table[] Server list
+---@return ContentBuilder cb
+local function build_server_picker_content(servers)
+  local cb = ContentBuilder.new()
+
+  cb:blank()
+  cb:line(" Select a server to search:")
+  cb:blank()
+
+  for i, srv in ipairs(servers) do
+    local status = srv.connected and "●" or "○"
+    local status_style = srv.connected and "success" or "muted"
+
+    cb:spans({
+      { text = "   ", style = "text" },
+      { text = status .. " ", style = status_style },
+      {
+        text = srv.name,
+        style = "server",
+        track = {
+          name = "server_" .. i,
+          type = "server",
+          data = { server = srv, index = i },
+          row_based = true,
+        },
+      },
+    })
+  end
+
+  cb:blank()
+
+  return cb
+end
+
 ---Internal: Build and show server picker with given saved connections
 ---@param saved_connections ConnectionData[] Connections loaded from file
 local function _show_server_picker_with_connections(saved_connections)
   local ui_state = State.get_ui_state()
-  local UiFloatInteractive = require('nvim-float.float.interactive')
-  local ContentBuilder = require('nvim-float.content_builder')
   local Config = require('ssns.config')
 
   -- Gather all servers
@@ -300,85 +335,101 @@ local function _show_server_picker_with_connections(saved_connections)
     return
   end
 
-  local picker_state = UiFloatInteractive.create({
+  -- Build content
+  local cb = build_server_picker_content(servers)
+
+  -- Create picker window
+  local picker = UiFloat.create({
     title = "Select Server",
     footer = " <CR>=Select | <Esc>=Cancel | j/k=Navigate ",
     width = 70,
-    height = math.min(#servers + 4, 20),
-    item_count = #servers,
-    header_lines = 3,
-    initial_data = { servers = servers },
-    on_render = function(state)
-      local cb = ContentBuilder.new()
-      cb:blank()
-      cb:line(" Select a server to search:")
-      cb:blank()
-
-      for i, srv in ipairs(state.data.servers) do
-        local prefix = i == state.selected_idx and " ▶ " or "   "
-        local status = srv.connected and "●" or "○"
-        local status_style = srv.connected and "success" or "muted"
-
-        cb:spans({
-          { text = prefix, style = i == state.selected_idx and "emphasis" or "muted" },
-          { text = status .. " ", style = status_style },
-          { text = srv.name, style = "server" },
-        })
-      end
-
-      return cb:build_lines(), cb:build_highlights()
-    end,
-    on_select = function(state)
-      local selected = state.data.servers[state.selected_idx]
-      UiFloatInteractive.close(state)
-
-      -- Find or create server
-      local server = selected.server
-      if not server then
-        server = Cache.find_server(selected.name)
-        if not server and selected.connection_config then
-          server = Cache.find_or_create_server(selected.name, selected.connection_config)
-        end
-      end
-
-      if not server then
-        vim.notify("Failed to create server connection", vim.log.levels.ERROR)
-        return
-      end
-
-      -- Set up state for new server
-      ui_state.selected_server = server
-      ui_state.selected_databases = {}
-      ui_state.all_databases_selected = false
-      ui_state.loaded_objects = {}
-      ui_state.filtered_results = {}
-
-      -- Connect and load asynchronously if needed
-      if not server:is_connected() or not server.is_loaded then
-        vim.notify("Connecting to " .. selected.name .. "...", vim.log.levels.INFO)
-
-        -- Use true non-blocking RPC async (UI stays responsive)
-        server:connect_and_load_async({
-          on_complete = function(success, err)
-            if not success then
-              vim.notify("Failed to connect: " .. (err or "Unknown"), vim.log.levels.ERROR)
-              return
-            end
-
-            -- Auto-show database picker after successful connect
-            vim.schedule(function()
-              show_database_picker()
-            end)
-          end,
-        })
-      else
-        -- Already connected and loaded - show database picker directly
-        vim.schedule(function()
-          show_database_picker()
-        end)
-      end
-    end,
+    height = math.min(#servers + 6, 20),
+    center = true,
+    cursorline = true,
+    filetype = "nvim-float",
+    content_builder = cb,
+    controls = {
+      {
+        header = "Server Picker",
+        keys = {
+          { key = "j/k", desc = "Navigate up/down" },
+          { key = "Enter", desc = "Select server" },
+          { key = "Esc", desc = "Cancel" },
+        },
+      },
+    },
   })
+
+  if not picker then return end
+
+  -- Store data
+  picker._picker_data = {
+    servers = servers,
+  }
+
+  -- Position cursor on first server (line 4 after header)
+  vim.schedule(function()
+    if picker:is_valid() then
+      picker:set_cursor(4, 0)
+    end
+  end)
+
+  -- Setup Enter keymap
+  vim.keymap.set('n', '<CR>', function()
+    local element = picker:get_element_at_cursor()
+    if not element or element.type ~= "server" then
+      return
+    end
+
+    local selected = element.data.server
+    picker:close()
+
+    -- Find or create server
+    local server = selected.server
+    if not server then
+      server = Cache.find_server(selected.name)
+      if not server and selected.connection_config then
+        server = Cache.find_or_create_server(selected.name, selected.connection_config)
+      end
+    end
+
+    if not server then
+      vim.notify("Failed to create server connection", vim.log.levels.ERROR)
+      return
+    end
+
+    -- Set up state for new server
+    ui_state.selected_server = server
+    ui_state.selected_databases = {}
+    ui_state.all_databases_selected = false
+    ui_state.loaded_objects = {}
+    ui_state.filtered_results = {}
+
+    -- Connect and load asynchronously if needed
+    if not server:is_connected() or not server.is_loaded then
+      vim.notify("Connecting to " .. selected.name .. "...", vim.log.levels.INFO)
+
+      -- Use true non-blocking RPC async (UI stays responsive)
+      server:connect_and_load_async({
+        on_complete = function(success, err)
+          if not success then
+            vim.notify("Failed to connect: " .. (err or "Unknown"), vim.log.levels.ERROR)
+            return
+          end
+
+          -- Auto-show database picker after successful connect
+          vim.schedule(function()
+            show_database_picker()
+          end)
+        end,
+      })
+    else
+      -- Already connected and loaded - show database picker directly
+      vim.schedule(function()
+        show_database_picker()
+      end)
+    end
+  end, { buffer = picker.bufnr, nowait = true })
 end
 
 ---Show server picker (loads connections async then shows picker)
@@ -394,6 +445,62 @@ function M.show_server_picker()
   end)
 end
 
+---Build database picker content with element tracking
+---@param databases table[] Database list
+---@param selection table<string, boolean> Selection state
+---@param all_selected boolean Whether all are selected
+---@return ContentBuilder cb
+local function build_database_picker_content(databases, selection, all_selected)
+  local cb = ContentBuilder.new()
+
+  cb:blank()
+  cb:line(" Select databases to search:")
+  cb:blank()
+
+  -- SELECT ALL option
+  local all_check = all_selected and "[x]" or "[ ]"
+  cb:spans({
+    { text = "   ", style = "text" },
+    { text = all_check .. " ", style = all_selected and "success" or "muted" },
+    {
+      text = "SELECT ALL",
+      style = "strong",
+      track = {
+        name = "select_all",
+        type = "select_all",
+        data = { is_select_all = true },
+        row_based = true,
+      },
+    },
+  })
+
+  -- Individual databases
+  for i, db in ipairs(databases) do
+    local is_selected = selection[db.db_name] or all_selected
+    local check = is_selected and "[x]" or "[ ]"
+    local style = is_selected and "success" or "muted"
+
+    cb:spans({
+      { text = "   ", style = "text" },
+      { text = check .. " ", style = style },
+      {
+        text = db.db_name,
+        style = "sql_database",
+        track = {
+          name = "database_" .. i,
+          type = "database",
+          data = { database = db, index = i },
+          row_based = true,
+        },
+      },
+    })
+  end
+
+  cb:blank()
+
+  return cb
+end
+
 ---Show database multi-picker
 show_database_picker = function()
   local ui_state = State.get_ui_state()
@@ -404,8 +511,6 @@ show_database_picker = function()
   end
 
   local server = ui_state.selected_server
-  local UiFloatInteractive = require('nvim-float.float.interactive')
-  local ContentBuilder = require('nvim-float.content_builder')
 
   ---Helper to create the picker once databases are loaded
   local function create_picker()
@@ -424,101 +529,116 @@ show_database_picker = function()
 
     local all_selected = ui_state.all_databases_selected
 
-    local picker_state = UiFloatInteractive.create({
+    -- Build content
+    local cb = build_database_picker_content(databases, selection, all_selected)
+
+    -- Create picker window
+    local picker = UiFloat.create({
       title = "Select Databases",
       footer = " <Space>=Toggle | <CR>=Confirm | a=All | <Esc>=Cancel ",
       width = 70,
-      height = math.min(#databases + 6, 25),
-      item_count = #databases + 1,  -- +1 for SELECT ALL
-      header_lines = 3,
-      initial_data = {
-        databases = databases,
-        selection = selection,
-        all_selected = all_selected,
-      },
-      on_render = function(state)
-        local cb = ContentBuilder.new()
-        cb:blank()
-        cb:line(" Select databases to search:")
-        cb:blank()
-
-        -- SELECT ALL option
-        local all_prefix = state.selected_idx == 1 and " ▶ " or "   "
-        local all_check = state.data.all_selected and "[x]" or "[ ]"
-        cb:spans({
-          { text = all_prefix, style = state.selected_idx == 1 and "emphasis" or "muted" },
-          { text = all_check .. " ", style = state.data.all_selected and "success" or "muted" },
-          { text = "SELECT ALL", style = "strong" },
-        })
-
-        -- Individual databases (no blank line to maintain cursor alignment)
-        for i, db in ipairs(state.data.databases) do
-          local prefix = state.selected_idx == i + 1 and " ▶ " or "   "
-          local check = (state.data.selection[db.db_name] or state.data.all_selected) and "[x]" or "[ ]"
-          local style = (state.data.selection[db.db_name] or state.data.all_selected) and "success" or "muted"
-
-          cb:spans({
-            { text = prefix, style = state.selected_idx == i + 1 and "emphasis" or "muted" },
-            { text = check .. " ", style = style },
-            { text = db.db_name, style = "sql_database" },
-          })
-        end
-
-        return cb:build_lines(), cb:build_highlights()
-      end,
-      on_select = function(state)
-        -- Confirm selection
-        UiFloatInteractive.close(state)
-
-        ui_state.all_databases_selected = state.data.all_selected
-        ui_state.selected_databases = {}
-
-        if state.data.all_selected then
-          for _, db in ipairs(state.data.databases) do
-            ui_state.selected_databases[db.db_name] = db
-          end
-        else
-          for _, db in ipairs(state.data.databases) do
-            if state.data.selection[db.db_name] then
-              ui_state.selected_databases[db.db_name] = db
-            end
-          end
-        end
-
-        -- Start loading objects
-        vim.schedule(function()
-          if load_objects_for_databases_fn then
-            load_objects_for_databases_fn()
-          end
-        end)
-      end,
-      custom_keymaps = {
-        ["<Space>"] = function(state)
-          if state.selected_idx == 1 then
-            -- Toggle all
-            state.data.all_selected = not state.data.all_selected
-            if state.data.all_selected then
-              state.data.selection = {}
-            end
-          else
-            -- Toggle individual
-            local db = state.data.databases[state.selected_idx - 1]
-            if db then
-              state.data.selection[db.db_name] = not state.data.selection[db.db_name]
-              state.data.all_selected = false
-            end
-          end
-          UiFloatInteractive.render(state)
-        end,
-        ["<A-a>"] = function(state)
-          state.data.all_selected = not state.data.all_selected
-          if state.data.all_selected then
-            state.data.selection = {}
-          end
-          UiFloatInteractive.render(state)
-        end,
+      height = math.min(#databases + 8, 25),
+      center = true,
+      cursorline = true,
+      filetype = "nvim-float",
+      content_builder = cb,
+      controls = {
+        {
+          header = "Database Picker",
+          keys = {
+            { key = "Space", desc = "Toggle selection" },
+            { key = "Enter", desc = "Confirm" },
+            { key = "a", desc = "Toggle all" },
+            { key = "Esc", desc = "Cancel" },
+          },
+        },
       },
     })
+
+    if not picker then return end
+
+    -- Store data
+    picker._picker_data = {
+      databases = databases,
+      selection = selection,
+      all_selected = all_selected,
+    }
+
+    -- Position cursor on SELECT ALL (line 4)
+    vim.schedule(function()
+      if picker:is_valid() then
+        picker:set_cursor(4, 0)
+      end
+    end)
+
+    -- Helper to re-render with updated selection
+    local function update_picker()
+      local data = picker._picker_data
+      local new_cb = build_database_picker_content(data.databases, data.selection, data.all_selected)
+      picker._content_builder = new_cb
+      picker:render()
+    end
+
+    -- Setup Space keymap to toggle selection
+    vim.keymap.set('n', '<Space>', function()
+      local element = picker:get_element_at_cursor()
+      if not element then return end
+
+      local data = picker._picker_data
+
+      if element.type == "select_all" then
+        -- Toggle all
+        data.all_selected = not data.all_selected
+        if data.all_selected then
+          data.selection = {}
+        end
+      elseif element.type == "database" then
+        -- Toggle individual
+        local db = element.data.database
+        data.selection[db.db_name] = not data.selection[db.db_name]
+        data.all_selected = false
+      end
+
+      update_picker()
+    end, { buffer = picker.bufnr, nowait = true })
+
+    -- Setup 'a' keymap to toggle all
+    vim.keymap.set('n', 'a', function()
+      local data = picker._picker_data
+      data.all_selected = not data.all_selected
+      if data.all_selected then
+        data.selection = {}
+      end
+      update_picker()
+    end, { buffer = picker.bufnr, nowait = true })
+
+    -- Setup Enter keymap to confirm
+    vim.keymap.set('n', '<CR>', function()
+      local data = picker._picker_data
+      picker:close()
+
+      ui_state.all_databases_selected = data.all_selected
+      ui_state.selected_databases = {}
+
+      if data.all_selected then
+        for _, db in ipairs(data.databases) do
+          ui_state.selected_databases[db.db_name] = db
+        end
+      else
+        for _, db in ipairs(data.databases) do
+          if data.selection[db.db_name] then
+            ui_state.selected_databases[db.db_name] = db
+          end
+        end
+      end
+
+      -- Start loading objects
+      vim.schedule(function()
+        if load_objects_for_databases_fn then
+          load_objects_for_databases_fn()
+        end
+      end)
+    end, { buffer = picker.bufnr, nowait = true })
   end
 
   -- Load databases asynchronously if needed, then show picker
