@@ -512,21 +512,22 @@ function TreeFeatures.view_metadata(UiTree)
 
   if needs_async_load and async_load_fn then
     -- Create float window with loading state
+    local obj_name = obj.name or "Object"
     local loading_lines = {
-      "=== " .. (obj.name or "Object") .. " ===",
+      "=== " .. obj_name .. " ===",
       "",
-      "Loading metadata...",
+      "Loading " .. obj_name .. "...",
     }
 
     local float_win = Float.create(loading_lines, {
-      title = "Metadata: " .. (obj.name or "Object"),
+      title = "Metadata: " .. obj_name,
       min_width = 50,
       modifiable = true, -- Allow updates
     })
 
     -- Start spinner in the float window
     local spinner_id = Spinner.start_in_buffer(float_win.bufnr, {
-      text = "Loading metadata...",
+      text = "Loading " .. obj_name .. "...",
       line = 2, -- Line 3 (0-indexed)
       show_runtime = true,
     })

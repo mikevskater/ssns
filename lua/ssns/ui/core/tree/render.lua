@@ -528,9 +528,8 @@ function TreeRender.render_server(UiTree, server, cb, indent_level)
       local error_icon = icons.error or "✗"
       cb:spans({{ text = indent .. "    " .. error_icon .. " Error: " .. server.ui_state.error, style = "SsnsStatusError" }})
     elseif server.ui_state.loading then
-      -- Show loading indicator
-      local loading_icon = icons.connecting or "⋯"
-      cb:spans({{ text = indent .. "    " .. loading_icon .. " Loading...", style = "SsnsStatusConnecting" }})
+      -- Show loading indicator with server name
+      cb:spans({{ text = indent .. "    Loading " .. (server.name or "server") .. "...", style = "SsnsStatusConnecting" }})
     elseif server.is_loaded then
       -- Get databases using typed array accessor
       local all_databases = server:get_databases()
@@ -574,8 +573,7 @@ function TreeRender.render_server(UiTree, server, cb, indent_level)
       end
     elseif server:is_connected() and not server.is_loaded then
       -- Show loading indicator (fallback if loading flag not set)
-      local loading_icon = icons.connecting or "⋯"
-      cb:spans({{ text = indent .. "    " .. loading_icon .. " Loading...", style = "SsnsStatusConnecting" }})
+      cb:spans({{ text = indent .. "    Loading " .. (server.name or "server") .. "...", style = "SsnsStatusConnecting" }})
     end
   end
 end
@@ -615,9 +613,8 @@ function TreeRender.render_database(UiTree, db, cb, indent_level)
       local error_icon = icons.error or "✗"
       cb:spans({{ text = indent .. "    " .. error_icon .. " Error: " .. db.ui_state.error, style = "SsnsStatusError" }})
     elseif db.ui_state.loading then
-      -- Show loading indicator
-      local loading_icon = icons.connecting or "⋯"
-      cb:spans({{ text = indent .. "    " .. loading_icon .. " Loading...", style = "SsnsStatusConnecting" }})
+      -- Show loading indicator with database name
+      cb:spans({{ text = indent .. "    Loading " .. (db.db_name or "database") .. "...", style = "SsnsStatusConnecting" }})
     elseif db.is_loaded then
       -- Render object groups at database level (aggregating from schemas if needed)
       -- This works for both schema-based (SQL Server, PostgreSQL) and non-schema (MySQL) servers
@@ -721,8 +718,8 @@ function TreeRender.render_database(UiTree, db, cb, indent_level)
         TreeRender.render_object(UiTree, schemas_group, cb, indent_level + 1)
       end
     else
-      local loading_icon = icons.connecting or "⋯"
-      cb:spans({{ text = indent .. "    " .. loading_icon .. " Loading...", style = "SsnsStatusConnecting" }})
+      -- Show loading indicator with database name (fallback)
+      cb:spans({{ text = indent .. "    Loading " .. (db.db_name or "database") .. "...", style = "SsnsStatusConnecting" }})
     end
   end
 end
@@ -779,8 +776,7 @@ function TreeRender.render_schema(UiTree, schema, cb, indent_level)
   if schema.ui_state.expanded then
     if not schema.is_loaded then
       -- Schema data not loaded yet
-      local loading_icon = icons.connecting or "⋯"
-      cb:spans({{ text = indent .. "    " .. loading_icon .. " Loading...", style = "SsnsStatusConnecting" }})
+      cb:spans({{ text = indent .. "    Loading " .. (schema.name or "schema") .. "...", style = "SsnsStatusConnecting" }})
     elseif schema._sorting then
       -- Async sort in progress - add placeholder line for spinner overlay
       -- (spinner is already running from when sort started)
@@ -1033,9 +1029,8 @@ function TreeRender.render_object(UiTree, obj, cb, indent_level)
       local error_icon = icons.error or "✗"
       cb:spans({{ text = indent .. "  " .. error_icon .. " Error: " .. obj.ui_state.error, style = "SsnsStatusError" }})
     elseif obj.ui_state.loading then
-      -- Show loading indicator
-      local loading_icon = icons.connecting or "⋯"
-      cb:spans({{ text = indent .. "  " .. loading_icon .. " Loading...", style = "SsnsStatusConnecting" }})
+      -- Show loading indicator with object name
+      cb:spans({{ text = indent .. "  Loading " .. (obj.name or "objects") .. "...", style = "SsnsStatusConnecting" }})
     else
       -- Check if this is a structural group that needs alignment
       if obj.object_type == "column_group" or obj.object_type == "index_group" or
