@@ -16,6 +16,40 @@ Cache.buffer_cache = {}
 ---Default TTL (Time To Live) in seconds for cached data
 Cache.default_ttl = 300  -- 5 minutes
 
+---Ensure ODBC driver is set for SQL Server Windows auth connections
+---Auto-detects best available driver if not specified
+---@param connection_data ConnectionData Connection data to check/modify
+---@return ConnectionData connection_data Modified connection data
+local function ensure_odbc_driver(connection_data)
+  -- Only for SQL Server with Windows authentication
+  if connection_data.type ~= "sqlserver" then
+    return connection_data
+  end
+
+  if not connection_data.auth or connection_data.auth.type ~= "windows" then
+    return connection_data
+  end
+
+  -- Check if ODBC driver already specified
+  if connection_data.options and connection_data.options.odbc_driver and connection_data.options.odbc_driver ~= "" then
+    return connection_data
+  end
+
+  -- Auto-detect best ODBC driver
+  local ConnectionString = require('ssns.connection_string')
+  local best_driver = ConnectionString.get_best_odbc_driver()
+
+  -- Ensure options table exists
+  if not connection_data.options then
+    connection_data.options = {}
+  end
+
+  connection_data.options.odbc_driver = best_driver
+  connection_data.options.trust_server_certificate = true
+
+  return connection_data
+end
+
 ---Add a server to the cache
 ---@param server ServerClass The server to add
 ---@return boolean success True if added, false if already exists
@@ -88,6 +122,9 @@ function Cache.find_or_create_server(server_name, connection_config)
   if existing then
     return existing, nil
   end
+
+  -- Ensure ODBC driver is set for SQL Server Windows auth
+  connection_config = ensure_odbc_driver(connection_config)
 
   -- Create new server
   local Factory = require('ssns.factory')
@@ -306,6 +343,9 @@ function Cache.load_from_config(config)
     if type(conn_data) == "table" then
       conn_data.name = conn_data.name or name
 
+      -- Ensure ODBC driver is set for SQL Server Windows auth
+      conn_data = ensure_odbc_driver(conn_data)
+
       local server, err = Factory.create_server(name, conn_data)
 
       if server then
@@ -343,6 +383,9 @@ function Cache.add_server_from_connection(connection_data)
   if Cache.server_exists(connection_data.name) then
     return nil, string.format("Server '%s' already exists in tree", connection_data.name)
   end
+
+  -- Ensure ODBC driver is set for SQL Server Windows auth
+  connection_data = ensure_odbc_driver(connection_data)
 
   local Factory = require('ssns.factory')
   local server, err = Factory.create_server(connection_data.name, connection_data)
@@ -479,7 +522,10 @@ function Cache.import(data)
   local Factory = require('ssns.factory')
 
   for _, server_data in ipairs(data.servers) do
-    local server, _ = Factory.create_server(server_data.name, server_data.connection_config)
+    -- Ensure ODBC driver is set for SQL Server Windows auth
+    local connection_config = ensure_odbc_driver(server_data.connection_config)
+
+    local server, _ = Factory.create_server(server_data.name, connection_config)
 
     if server then
       Cache.add_server(server)
