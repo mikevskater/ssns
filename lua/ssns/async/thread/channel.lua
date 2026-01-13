@@ -91,11 +91,21 @@ function ThreadChannel:connect(timeout_ms, callback)
   local retry_timer = vim.uv.new_timer()
   local connected = false
   local current_client = nil
+  local timer_closed = false  -- Track if timer has been closed
+
+  -- Helper to safely close the retry timer
+  local function close_retry_timer()
+    if timer_closed then return end
+    timer_closed = true
+    if retry_timer and not retry_timer:is_closing() then
+      retry_timer:stop()
+      retry_timer:close()
+    end
+  end
 
   local function try_connect()
     if self.is_closed or connected then
-      retry_timer:stop()
-      retry_timer:close()
+      close_retry_timer()
       if not connected and callback then callback(false, "Channel closed") end
       return
     end
@@ -103,8 +113,7 @@ function ThreadChannel:connect(timeout_ms, callback)
     -- Check timeout
     local elapsed = (vim.uv.hrtime() - start_time) / 1000000
     if elapsed > timeout_ms then
-      retry_timer:stop()
-      retry_timer:close()
+      close_retry_timer()
       -- Clean up any pending client
       if current_client and not current_client:is_closing() then
         current_client:close()
@@ -128,8 +137,7 @@ function ThreadChannel:connect(timeout_ms, callback)
 
       -- Connected successfully
       connected = true
-      retry_timer:stop()
-      retry_timer:close()
+      close_retry_timer()
       self.client = current_client
       self.is_connected = true
 

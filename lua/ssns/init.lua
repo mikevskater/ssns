@@ -339,6 +339,125 @@ function Ssns._setup_sql_filetype_keymaps()
         local FormatterCommands = require('ssns.formatter.commands')
         FormatterCommands.setup_buffer(bufnr)
       end
+
+      -- Setup history auto-save for SQL files (even when not connected)
+      Ssns._setup_sql_file_auto_save(bufnr)
+    end,
+  })
+end
+
+---Track auto-save debounce timers per SQL file buffer
+---@type table<number, userdata>
+Ssns._sql_file_auto_save_timers = {}
+
+---Setup auto-save for SQL files that are not connected to a server
+---This allows history tracking for edited SQL files before connecting
+---@param bufnr number The buffer number
+function Ssns._setup_sql_file_auto_save(bufnr)
+  local Config = require('ssns.config')
+  local config = Config.get()
+  local delay_ms = config.query_history and config.query_history.buffer_auto_save_delay_ms or -1
+
+  -- Skip if disabled
+  if delay_ms < 0 then
+    return
+  end
+
+  -- Skip if query history is disabled
+  if not config.query_history or not config.query_history.enabled then
+    return
+  end
+
+  -- Create autocmd namespace for this buffer
+  local augroup = vim.api.nvim_create_augroup('ssns_sql_file_auto_save_' .. bufnr, { clear = true })
+
+  -- Debounce function
+  local function trigger_auto_save()
+    -- Cancel existing timer for this buffer
+    if Ssns._sql_file_auto_save_timers[bufnr] then
+      Ssns._sql_file_auto_save_timers[bufnr]:stop()
+      Ssns._sql_file_auto_save_timers[bufnr] = nil
+    end
+
+    -- Skip if buffer is already tracked by UiQuery (connected buffer)
+    -- Those buffers have their own auto-save with server/database context
+    local UiQuery = require('ssns.ui.core.query')
+    if UiQuery.query_buffers[bufnr] then
+      return
+    end
+
+    -- Create new timer
+    local timer = vim.loop.new_timer()
+    Ssns._sql_file_auto_save_timers[bufnr] = timer
+
+    timer:start(delay_ms, 0, vim.schedule_wrap(function()
+      -- Check if buffer still exists
+      if not vim.api.nvim_buf_is_valid(bufnr) then
+        if Ssns._sql_file_auto_save_timers[bufnr] then
+          Ssns._sql_file_auto_save_timers[bufnr]:stop()
+          Ssns._sql_file_auto_save_timers[bufnr] = nil
+        end
+        return
+      end
+
+      -- Skip if buffer is now connected (became tracked by UiQuery)
+      if UiQuery.query_buffers[bufnr] then
+        Ssns._sql_file_auto_save_timers[bufnr] = nil
+        return
+      end
+
+      -- Get buffer content
+      local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+      local content = table.concat(lines, "\n")
+
+      -- Skip empty content
+      if content:match("^%s*$") then
+        Ssns._sql_file_auto_save_timers[bufnr] = nil
+        return
+      end
+
+      -- Get buffer name (file path or buffer name)
+      local buffer_name = vim.api.nvim_buf_get_name(bufnr)
+      if buffer_name ~= "" then
+        buffer_name = vim.fn.fnamemodify(buffer_name, ':t')
+      else
+        buffer_name = string.format("SQL Buffer %d", bufnr)
+      end
+
+      -- Add auto-save entry with "(Unconnected)" as server name
+      local QueryHistory = require('ssns.query_history')
+      QueryHistory.add_auto_save_entry(
+        bufnr,
+        buffer_name,
+        content,
+        "(Unconnected)",  -- Placeholder server name for unconnected files
+        nil               -- No database
+      )
+
+      -- Clear timer reference
+      Ssns._sql_file_auto_save_timers[bufnr] = nil
+    end))
+  end
+
+  -- Setup autocmds for text changes
+  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
+    group = augroup,
+    buffer = bufnr,
+    callback = trigger_auto_save,
+  })
+
+  -- Cleanup on buffer delete
+  vim.api.nvim_create_autocmd("BufDelete", {
+    group = augroup,
+    buffer = bufnr,
+    callback = function()
+      -- Cancel any pending timer
+      if Ssns._sql_file_auto_save_timers[bufnr] then
+        Ssns._sql_file_auto_save_timers[bufnr]:stop()
+        Ssns._sql_file_auto_save_timers[bufnr] = nil
+      end
+      -- Clean up the autocmd group
+      vim.api.nvim_del_augroup_by_id(augroup)
     end,
   })
 end
