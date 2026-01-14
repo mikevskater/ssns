@@ -132,14 +132,82 @@ function QueryExecute.execute_query(bufnr, visual)
     QueryExecute.cancel_query(bufnr)
   end
 
-  -- Get SQL to execute
+  -- Get SQL to execute and track selection info for history
   local sql
+  local selection_start_line = 1 -- 1-based, default to first line (no offset needed)
+  local buffer_content = nil     -- Full buffer content (only set for selections)
+  local selection_info = nil     -- Selection range info (only set for selections)
+
   if visual then
-    -- Get visual selection
-    local start_line = vim.fn.line("'<") - 1
-    local end_line = vim.fn.line("'>")
-    local lines = vim.api.nvim_buf_get_lines(bufnr, start_line, end_line, false)
+    -- Use vim.fn.getregion() - the recommended way to get visual selection text
+    -- See: https://github.com/neovim/neovim/issues/16843
+    --
+    -- When called from visual mode keymap callback:
+    --   - Use "." (current cursor) and "v" (where visual started)
+    --   - Use vim.fn.mode() for current mode
+    -- When called after visual mode:
+    --   - Use "'<" and "'>" marks
+    --   - Use vim.fn.visualmode() for last visual mode
+
+    local cur_mode = vim.fn.mode()
+    local in_visual = cur_mode:match("[vV\x16]") ~= nil
+
+    local start_pos, end_pos, vis_mode
+    if in_visual then
+      -- Still in visual mode - use current positions
+      start_pos = vim.fn.getpos("v")  -- where visual mode started
+      end_pos = vim.fn.getpos(".")    -- current cursor position
+      vis_mode = cur_mode
+    else
+      -- After visual mode - use marks
+      start_pos = vim.fn.getpos("'<")
+      end_pos = vim.fn.getpos("'>")
+      vis_mode = vim.fn.visualmode()
+    end
+
+    -- Validate positions are set (non-zero line numbers)
+    if start_pos[2] == 0 or end_pos[2] == 0 then
+      vim.notify("SSNS: No visual selection found", vim.log.levels.WARN)
+      return
+    end
+
+    -- Store selection start for error line adjustment (1-based)
+    -- Use the earlier line number (selection might be made bottom-to-top)
+    selection_start_line = math.min(start_pos[2], end_pos[2])
+
+    -- Use getregion() which handles all visual modes correctly (charwise, linewise, blockwise)
+    local ok, lines = pcall(vim.fn.getregion, start_pos, end_pos, { mode = vis_mode })
+    if not ok or #lines == 0 then
+      vim.notify("SSNS: No visual selection found", vim.log.levels.WARN)
+      return
+    end
+
     sql = table.concat(lines, "\n")
+
+    -- Capture full buffer content for history (so we can restore the full context)
+    local all_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    buffer_content = table.concat(all_lines, "\n")
+
+    -- Normalize positions so start is always before end
+    local sel_start_line = math.min(start_pos[2], end_pos[2])
+    local sel_end_line = math.max(start_pos[2], end_pos[2])
+    local sel_start_col, sel_end_col
+    if start_pos[2] < end_pos[2] or (start_pos[2] == end_pos[2] and start_pos[3] <= end_pos[3]) then
+      sel_start_col = start_pos[3]
+      sel_end_col = end_pos[3]
+    else
+      sel_start_col = end_pos[3]
+      sel_end_col = start_pos[3]
+    end
+
+    -- Store selection info for history
+    selection_info = {
+      start_line = sel_start_line,
+      start_col = sel_start_col,
+      end_line = sel_end_line,
+      end_col = sel_end_col,
+      mode = vis_mode,
+    }
   else
     -- Get entire buffer
     local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
@@ -233,6 +301,8 @@ function QueryExecute.execute_query(bufnr, visual)
           local error_obj = result and result.error or { message = "Unknown error" }
           QueryHistory.add_entry(bufnr, buffer_name, {
             query = sql,
+            buffer_content = buffer_content,  -- Full buffer (nil if not a selection)
+            selection = selection_info,        -- Selection range (nil if not a selection)
             server_name = server.name,
             database = current_database,
             timestamp = os.date("%Y-%m-%d %H:%M:%S"),
@@ -243,7 +313,8 @@ function QueryExecute.execute_query(bufnr, visual)
           })
 
           -- Display detailed error with structured information
-          QueryExecute.display_error(error_obj, sql, bufnr)
+          -- Pass selection_start_line offset for error line adjustment
+          QueryExecute.display_error(error_obj, sql, bufnr, selection_start_line)
           return
         end
 
@@ -255,6 +326,8 @@ function QueryExecute.execute_query(bufnr, visual)
 
         QueryHistory.add_entry(bufnr, buffer_name, {
           query = sql,
+          buffer_content = buffer_content,  -- Full buffer (nil if not a selection)
+          selection = selection_info,        -- Selection range (nil if not a selection)
           server_name = server.name,
           database = current_database,
           timestamp = os.date("%Y-%m-%d %H:%M:%S"),
@@ -336,7 +409,11 @@ end
 ---@param error table Error object { message, code, lineNumber, procName }
 ---@param sql string The SQL that was executed
 ---@param query_bufnr number The query buffer number
-function QueryExecute.display_error(error, sql, query_bufnr)
+---@param selection_start_line number? The 1-based line where the selection started (for offset adjustment)
+function QueryExecute.display_error(error, sql, query_bufnr, selection_start_line)
+  -- Default to line 1 if not provided (no offset)
+  selection_start_line = selection_start_line or 1
+
   -- Clean up error message - remove ODBC driver prefix
   local clean_message = error.message or "Unknown error"
   -- Pattern: "[Microsoft][ODBC Driver 17 for SQL Server][SQL Server]Actual message"
@@ -355,7 +432,14 @@ function QueryExecute.display_error(error, sql, query_bufnr)
 
   -- Highlight error line in query buffer if lineNumber is available
   if error.lineNumber and error.lineNumber ~= vim.NIL and query_bufnr and vim.api.nvim_buf_is_valid(query_bufnr) then
-    local line_num = error.lineNumber - 1  -- Convert to 0-based
+    -- Adjust line number for selection offset
+    -- error.lineNumber is relative to the SQL sent (1-based)
+    -- selection_start_line is the buffer line where selection started (1-based)
+    -- Formula: buffer_line = selection_start_line + error_line - 1
+    local buffer_line = selection_start_line + error.lineNumber - 1
+
+    -- Convert to 0-based for Neovim API
+    local line_num = buffer_line - 1
     line_num = math.min(math.max(0, line_num), vim.api.nvim_buf_line_count(query_bufnr) - 1)  -- Ensure within buffer range
     -- Create namespace for error highlighting
     local ns_id = vim.api.nvim_create_namespace('ssns_sql_error')

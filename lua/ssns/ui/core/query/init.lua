@@ -693,8 +693,8 @@ UiQuery.execute_statement_under_cursor = function(bufnr)
   QueryExecute.execute_statement_under_cursor(bufnr)
 end
 
-UiQuery.display_error = function(error, sql, query_bufnr)
-  QueryExecute.display_error(error, sql, query_bufnr)
+UiQuery.display_error = function(error, sql, query_bufnr, selection_start_line)
+  QueryExecute.display_error(error, sql, query_bufnr, selection_start_line)
 end
 
 -- Results module delegation
