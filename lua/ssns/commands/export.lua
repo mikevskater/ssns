@@ -6,14 +6,43 @@ local M = {}
 function M.register()
   local Ssns = require('ssns')
 
-  -- :SSNSExportResults - Export query results to CSV
+  -- :SSNSExportResults - Export query results (format based on config)
   vim.api.nvim_create_user_command("SSNSExportResults", function(opts)
+    local Query = require('ssns.ui.core.query')
+    Query.export_results(opts.args ~= "" and opts.args or nil)
+  end, {
+    nargs = "?",
+    desc = "Export query results (CSV or Excel based on config)",
+    complete = "file",
+  })
+
+  -- :SSNSExportResultsCSV - Force export to CSV
+  vim.api.nvim_create_user_command("SSNSExportResultsCSV", function(opts)
     local Query = require('ssns.ui.core.query')
     Query.export_results_to_csv(opts.args ~= "" and opts.args or nil)
   end, {
     nargs = "?",
-    desc = "Export query results to CSV file and open in default app",
+    desc = "Export query results to CSV file",
     complete = "file",
+  })
+
+  -- :SSNSExportResultsXLSX - Force export to Excel
+  vim.api.nvim_create_user_command("SSNSExportResultsXLSX", function(opts)
+    local Query = require('ssns.ui.core.query')
+    Query.export_results_to_xlsx(opts.args ~= "" and opts.args or nil)
+  end, {
+    nargs = "?",
+    desc = "Export query results to Excel file (requires nvim-xlsx)",
+    complete = "file",
+  })
+
+  -- :SSNSExportAllResults - Export all result sets (format based on config)
+  vim.api.nvim_create_user_command("SSNSExportAllResults", function()
+    local Query = require('ssns.ui.core.query')
+    Query.export_all_results()
+  end, {
+    nargs = 0,
+    desc = "Export all result sets (CSV or Excel based on config)",
   })
 
   -- :SSNSYankResultsCSV - Yank query results as CSV to clipboard

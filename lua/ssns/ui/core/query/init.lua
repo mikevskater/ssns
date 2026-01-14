@@ -747,6 +747,32 @@ UiQuery.yank_all_results_as_csv = function()
   QueryExport.yank_all_results_as_csv()
 end
 
+-- Excel export functions
+UiQuery.results_to_xlsx = function(resultSets, result_set_index, opts)
+  return QueryExport.results_to_xlsx(resultSets, result_set_index, opts)
+end
+
+UiQuery.export_results_to_xlsx = function(filepath)
+  QueryExport.export_results_to_xlsx(filepath)
+end
+
+UiQuery.export_all_results_to_xlsx = function()
+  QueryExport.export_all_results_to_xlsx()
+end
+
+-- Smart export functions (respect config format, fallback to CSV)
+UiQuery.export_results = function(filepath)
+  QueryExport.export_results(filepath)
+end
+
+UiQuery.export_all_results = function()
+  QueryExport.export_all_results()
+end
+
+UiQuery.is_xlsx_available = function()
+  return QueryExport.is_xlsx_available()
+end
+
 UiQuery.get_buffer_results = function(query_bufnr)
   return QueryExport.get_buffer_results(query_bufnr)
 end

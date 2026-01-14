@@ -67,7 +67,21 @@
 ---@field default_limit number Default LIMIT for SELECT queries (0 = no limit)
 ---@field timeout number Query timeout in milliseconds (0 = no timeout)
 ---@field auto_execute_on_open boolean Auto-execute query when opening action (default: false)
----@field export_directory string? Directory for CSV exports (nil = system temp, "" = prompt)
+---@field export_directory string? Directory for exports (nil = system temp, "" = prompt)
+---@field export ExportConfig Export configuration
+
+---@class ExportConfig Export configuration
+---@field format string Default export format: "excel" | "csv" (default: "csv")
+---@field include_headers boolean Include column headers in export (default: true)
+---@field header_style ExportHeaderStyle? Custom header style for Excel exports
+---@field multi_result_mode string How to handle multiple result sets: "sheets" | "workbooks" (default: "sheets")
+
+---@class ExportHeaderStyle Excel header styling options
+---@field bold boolean Bold text (default: true)
+---@field font_color string Font color hex (default: "#FFFFFF")
+---@field bg_color string Background color hex (default: "#4472C4")
+---@field font_size number? Font size (default: nil = Excel default)
+---@field halign string? Horizontal alignment: "left" | "center" | "right" (default: "center")
 
 ---@class ResultsConfig Result buffer display configuration
 ---@field color_mode string Styling mode: "datatype" | "uniform" | "none" (default: "datatype")
@@ -566,7 +580,21 @@ local default_config = {
     default_limit = 100,  -- Default LIMIT for SELECT queries (0 = no limit)
     timeout = 30000,  -- Query timeout in milliseconds (30 seconds, 0 = no timeout)
     auto_execute_on_open = false,  -- Auto-execute query when opening action
-    export_directory = nil,  -- Directory for CSV exports (nil = system temp, "" = prompt for location)
+    export_directory = nil,  -- Directory for exports (nil = system temp, "" = prompt for location)
+
+    -- Export configuration
+    export = {
+      format = "excel",           -- Default format: "excel" | "csv" (requires nvim-xlsx for Excel)
+      include_headers = true,   -- Include column headers in exports
+      header_style = {          -- Excel header styling (only used when format = "excel")
+        bold = true,
+        font_color = "#FFFFFF",
+        bg_color = "#4472C4",
+        font_size = nil,        -- nil = Excel default
+        halign = "center",
+      },
+      multi_result_mode = "sheets",  -- Multiple result sets: "sheets" (one workbook) | "workbooks" (separate files)
+    },
   },
 
   results = {
@@ -1210,6 +1238,37 @@ function Config.validate(config)
     end
     if config.query.timeout and config.query.timeout < 0 then
       return false, "query.timeout must be non-negative"
+    end
+
+    -- Validate export configuration
+    if config.query.export then
+      local exp = config.query.export
+      if exp.format then
+        local valid_formats = { csv = true, excel = true }
+        if not valid_formats[exp.format] then
+          return false, "query.export.format must be 'csv' or 'excel'"
+        end
+      end
+      if exp.include_headers ~= nil and type(exp.include_headers) ~= "boolean" then
+        return false, "query.export.include_headers must be a boolean"
+      end
+      if exp.multi_result_mode then
+        local valid_modes = { sheets = true, workbooks = true }
+        if not valid_modes[exp.multi_result_mode] then
+          return false, "query.export.multi_result_mode must be 'sheets' or 'workbooks'"
+        end
+      end
+      -- Validate header_style only if nvim-xlsx is installed (styling only applies to Excel exports)
+      if exp.header_style then
+        local xlsx_ok, xlsx = pcall(require, 'nvim-xlsx')
+        if xlsx_ok and xlsx.validate_style then
+          local valid, errors = xlsx.validate_style(exp.header_style)
+          if not valid then
+            return false, "query.export.header_style: " .. errors[1]
+          end
+        end
+        -- Skip validation if nvim-xlsx not installed - style is ignored for CSV exports
+      end
     end
   end
 

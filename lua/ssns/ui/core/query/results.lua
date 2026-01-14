@@ -856,15 +856,15 @@ function QueryResults.setup_results_keymaps(result_buf)
       QueryResults.toggle_results()
     end, desc = "Toggle results window" },
 
-    -- Export cursor-hovered result set to CSV
+    -- Export cursor-hovered result set (format based on config)
     { mode = "n", lhs = km.export_csv or "<A-e>", rhs = function()
-      QueryExport.export_results_to_csv()
-    end, desc = "Export cursor result set to CSV" },
+      QueryExport.export_results()
+    end, desc = "Export cursor result set (CSV or Excel)" },
 
-    -- Export ALL result sets to separate CSV files
+    -- Export ALL result sets (format based on config)
     { mode = "n", lhs = km.export_all_csv or "<A-E>", rhs = function()
-      QueryExport.export_all_results_to_csv()
-    end, desc = "Export ALL result sets to CSV files" },
+      QueryExport.export_all_results()
+    end, desc = "Export ALL result sets (CSV or Excel)" },
 
     -- Yank cursor-hovered result set as CSV to clipboard
     { mode = "n", lhs = km.yank_csv or "<A-y>", rhs = function()

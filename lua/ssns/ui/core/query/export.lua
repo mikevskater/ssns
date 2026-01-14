@@ -894,6 +894,434 @@ function QueryExport.export_all_with_progress()
   })
 end
 
+-- ============================================================================
+-- Excel Export Functions (requires nvim-xlsx plugin)
+-- ============================================================================
+
+---Check if nvim-xlsx plugin is available
+---@return boolean available Whether the plugin is installed
+---@return table? xlsx The xlsx module or nil
+local function check_xlsx_available()
+  local ok, xlsx = pcall(require, 'nvim-xlsx')
+  return ok, ok and xlsx or nil
+end
+
+---Get ordered column names from a result set
+---@param resultSet table The result set with columns metadata
+---@return string[] columns Ordered column names
+local function get_ordered_columns(resultSet)
+  local columns = {}
+  local columns_metadata = resultSet.columns
+
+  if columns_metadata and type(columns_metadata) == "table" then
+    local col_list = {}
+    for col_name, col_info in pairs(columns_metadata) do
+      if col_name ~= vim.NIL then
+        table.insert(col_list, { name = col_name, index = col_info.index or 0 })
+      end
+    end
+
+    if #col_list > 0 then
+      table.sort(col_list, function(a, b) return a.index < b.index end)
+      for _, col in ipairs(col_list) do
+        table.insert(columns, col.name)
+      end
+      return columns
+    end
+  end
+
+  -- Fallback: get column names from first row
+  local rows = resultSet.rows or {}
+  if #rows > 0 then
+    for key, _ in pairs(rows[1]) do
+      table.insert(columns, key)
+    end
+    table.sort(columns)
+  end
+
+  return columns
+end
+
+---Convert result sets to Excel workbook
+---@param resultSets table[] Array of result sets
+---@param result_set_index number? Which result set to export (nil = first, 0 = all)
+---@param opts ExportConfig? Export options
+---@return table? workbook The xlsx workbook or nil
+---@return string? error Error message if failed
+function QueryExport.results_to_xlsx(resultSets, result_set_index, opts)
+  local ok, xlsx = check_xlsx_available()
+  if not ok then
+    return nil, "nvim-xlsx not installed"
+  end
+
+  if not resultSets or #resultSets == 0 then
+    return nil, "No results to export"
+  end
+
+  opts = opts or {}
+  local wb = xlsx.new_workbook()
+
+  -- Create header style if headers enabled
+  local header_style_idx = nil
+  if opts.include_headers ~= false then
+    local style = opts.header_style or {}
+    local style_err
+    header_style_idx, style_err = wb:create_style({
+      bold = style.bold ~= false,
+      font_color = style.font_color or "#FFFFFF",
+      bg_color = style.bg_color or "#4472C4",
+      font_size = style.font_size,
+      halign = style.halign or "center",
+      border = true,
+      border_style = "thin",
+    })
+    if style_err then
+      vim.notify(string.format("SSNS: Header style warning: %s", style_err), vim.log.levels.WARN)
+      -- Continue without styling rather than failing
+      header_style_idx = nil
+    end
+  end
+
+  -- Determine which result sets to export
+  local sets_to_export = {}
+  local export_indices = {}
+  if result_set_index == 0 or result_set_index == nil then
+    -- Export all result sets
+    for i, rs in ipairs(resultSets) do
+      table.insert(sets_to_export, rs)
+      table.insert(export_indices, i)
+    end
+  else
+    -- Export specific result set
+    if resultSets[result_set_index] then
+      table.insert(sets_to_export, resultSets[result_set_index])
+      table.insert(export_indices, result_set_index)
+    end
+  end
+
+  if #sets_to_export == 0 then
+    return nil, "No result sets to export"
+  end
+
+  -- Export each result set as a sheet
+  for idx, resultSet in ipairs(sets_to_export) do
+    local sheet_name = string.format("Result %d", export_indices[idx])
+    local sheet = wb:add_sheet(sheet_name)
+    if not sheet then
+      -- If sheet name fails, try generic name
+      sheet = wb:add_sheet(string.format("Sheet%d", idx))
+    end
+
+    local rows = resultSet.rows or {}
+    local columns = get_ordered_columns(resultSet)
+
+    if #columns == 0 then
+      goto continue_xlsx
+    end
+
+    local data_start_row = 1
+
+    -- Write headers
+    if opts.include_headers ~= false and #columns > 0 then
+      for col_idx, col_name in ipairs(columns) do
+        sheet:set_cell(1, col_idx, col_name)
+        if header_style_idx then
+          sheet:set_cell_style(1, col_idx, header_style_idx)
+        end
+      end
+      data_start_row = 2
+    end
+
+    -- Write data rows
+    for row_idx, row in ipairs(rows) do
+      for col_idx, col_name in ipairs(columns) do
+        local value = row[col_name]
+        if value ~= nil and value ~= vim.NIL then
+          sheet:set_cell(data_start_row + row_idx - 1, col_idx, value)
+        end
+      end
+    end
+
+    ::continue_xlsx::
+  end
+
+  return wb, nil
+end
+
+---Export results to Excel file and open in default application
+---Exports only the result set under the cursor
+---@param filepath string? Optional file path (uses config export_directory if not provided)
+function QueryExport.export_results_to_xlsx(filepath)
+  local query_bufnr = get_current_query_bufnr()
+  local stored = query_bufnr and UiQuery.buffer_results[query_bufnr]
+
+  if not stored or not stored.resultSets then
+    vim.notify("SSNS: No results to export", vim.log.levels.WARN)
+    return
+  end
+
+  -- Check if xlsx is available
+  local xlsx_ok = check_xlsx_available()
+  if not xlsx_ok then
+    vim.notify("SSNS: nvim-xlsx not installed, cannot export to Excel", vim.log.levels.ERROR)
+    return
+  end
+
+  -- Get export configuration
+  local Config = require('ssns.config')
+  local query_config = Config.get_query()
+  local export_config = query_config.export or {}
+
+  -- Determine which result set to export based on cursor position
+  local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
+  local result_set_index = get_result_set_at_cursor(query_bufnr, cursor_line)
+
+  if not result_set_index then
+    result_set_index = 1
+  end
+
+  -- Create workbook with single result set
+  local wb, err = QueryExport.results_to_xlsx(stored.resultSets, result_set_index, export_config)
+  if not wb then
+    vim.notify(string.format("SSNS: Failed to create Excel file: %s", err or "unknown error"), vim.log.levels.ERROR)
+    return
+  end
+
+  -- Generate filename with timestamp
+  local filename
+  if #stored.resultSets > 1 then
+    filename = os.date("ssns_result_set_" .. result_set_index .. "_%Y%m%d_%H%M%S.xlsx")
+  else
+    filename = os.date("ssns_results_%Y%m%d_%H%M%S.xlsx")
+  end
+
+  if not filepath then
+    local export_dir = query_config.export_directory
+
+    if export_dir == "" then
+      -- Empty string means prompt for location
+      filepath = vim.fn.input({
+        prompt = "Export Excel to: ",
+        default = filename,
+        completion = "file",
+      })
+
+      if filepath == "" then
+        vim.notify("SSNS: Export cancelled", vim.log.levels.INFO)
+        return
+      end
+
+      filepath = vim.fn.expand(filepath)
+    else
+      -- Use configured directory or fall back to temp
+      local dir = export_dir or get_temp_dir()
+      dir = vim.fn.expand(dir)
+
+      if vim.fn.isdirectory(dir) == 0 then
+        vim.fn.mkdir(dir, "p")
+      end
+
+      filepath = dir .. "/" .. filename
+
+      if vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1 then
+        filepath = filepath:gsub("/", "\\")
+      end
+    end
+  else
+    filepath = vim.fn.expand(filepath)
+  end
+
+  -- Ensure .xlsx extension
+  if not filepath:match("%.xlsx$") then
+    filepath = filepath .. ".xlsx"
+  end
+
+  -- Save workbook
+  local save_ok, save_err = wb:save(filepath)
+  if not save_ok then
+    vim.notify(string.format("SSNS: Failed to save Excel file: %s", save_err or "unknown error"), vim.log.levels.ERROR)
+    return
+  end
+
+  -- Count rows
+  local row_count = 0
+  if stored.resultSets[result_set_index] and stored.resultSets[result_set_index].rows then
+    row_count = #stored.resultSets[result_set_index].rows
+  end
+
+  if #stored.resultSets > 1 then
+    vim.notify(string.format("SSNS: Result set %d (%d rows) exported to %s", result_set_index, row_count, filepath), vim.log.levels.INFO)
+  else
+    vim.notify(string.format("SSNS: Results (%d rows) exported to %s", row_count, filepath), vim.log.levels.INFO)
+  end
+
+  open_with_default_app(filepath)
+end
+
+---Export ALL result sets to Excel
+---Uses config multi_result_mode to determine sheets vs workbooks
+function QueryExport.export_all_results_to_xlsx()
+  local query_bufnr = get_current_query_bufnr()
+  local stored = query_bufnr and UiQuery.buffer_results[query_bufnr]
+
+  if not stored or not stored.resultSets or #stored.resultSets == 0 then
+    vim.notify("SSNS: No results to export", vim.log.levels.WARN)
+    return
+  end
+
+  -- Check if xlsx is available
+  local xlsx_ok = check_xlsx_available()
+  if not xlsx_ok then
+    vim.notify("SSNS: nvim-xlsx not installed, cannot export to Excel", vim.log.levels.ERROR)
+    return
+  end
+
+  -- Get export configuration
+  local Config = require('ssns.config')
+  local query_config = Config.get_query()
+  local export_config = query_config.export or {}
+  local mode = export_config.multi_result_mode or "sheets"
+  local export_dir = query_config.export_directory
+
+  -- Determine export directory
+  local dir
+  if export_dir == "" then
+    dir = vim.fn.input({
+      prompt = "Export directory: ",
+      default = vim.fn.getcwd(),
+      completion = "dir",
+    })
+
+    if dir == "" then
+      vim.notify("SSNS: Export cancelled", vim.log.levels.INFO)
+      return
+    end
+  else
+    dir = export_dir or get_temp_dir()
+  end
+
+  dir = vim.fn.expand(dir)
+
+  if vim.fn.isdirectory(dir) == 0 then
+    vim.fn.mkdir(dir, "p")
+  end
+
+  local timestamp = os.date("%Y%m%d_%H%M%S")
+  local total_rows = 0
+
+  if mode == "sheets" then
+    -- Single workbook with multiple sheets
+    local wb, err = QueryExport.results_to_xlsx(stored.resultSets, 0, export_config)
+    if not wb then
+      vim.notify(string.format("SSNS: Failed to create Excel file: %s", err or "unknown error"), vim.log.levels.ERROR)
+      return
+    end
+
+    local filepath = dir .. "/ssns_results_" .. timestamp .. ".xlsx"
+    if vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1 then
+      filepath = filepath:gsub("/", "\\")
+    end
+
+    local save_ok, save_err = wb:save(filepath)
+    if not save_ok then
+      vim.notify(string.format("SSNS: Failed to save Excel file: %s", save_err or "unknown error"), vim.log.levels.ERROR)
+      return
+    end
+
+    -- Count total rows
+    for _, rs in ipairs(stored.resultSets) do
+      if rs.rows then
+        total_rows = total_rows + #rs.rows
+      end
+    end
+
+    vim.notify(string.format("SSNS: Exported %d result sets (%d total rows) to %s", #stored.resultSets, total_rows, filepath), vim.log.levels.INFO)
+    open_with_default_app(filepath)
+  else
+    -- Separate workbooks per result set
+    local exported_files = {}
+
+    for i, resultSet in ipairs(stored.resultSets) do
+      local wb, err = QueryExport.results_to_xlsx(stored.resultSets, i, export_config)
+      if wb then
+        local filepath = string.format("%s/ssns_result_set_%d_%s.xlsx", dir, i, timestamp)
+        if vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1 then
+          filepath = filepath:gsub("/", "\\")
+        end
+
+        local save_ok, save_err = wb:save(filepath)
+        if save_ok then
+          table.insert(exported_files, filepath)
+          if resultSet.rows then
+            total_rows = total_rows + #resultSet.rows
+          end
+        else
+          vim.notify(string.format("SSNS: Failed to write result set %d: %s", i, save_err or "unknown"), vim.log.levels.WARN)
+        end
+      else
+        vim.notify(string.format("SSNS: Failed to create result set %d: %s", i, err or "unknown"), vim.log.levels.WARN)
+      end
+    end
+
+    if #exported_files == 0 then
+      vim.notify("SSNS: No data to export", vim.log.levels.WARN)
+      return
+    end
+
+    vim.notify(string.format("SSNS: Exported %d result sets (%d total rows) to %s", #exported_files, total_rows, dir), vim.log.levels.INFO)
+
+    for _, file_path in ipairs(exported_files) do
+      open_with_default_app(file_path)
+    end
+  end
+end
+
+-- ============================================================================
+-- Smart Export Functions (respect config, fallback to CSV)
+-- ============================================================================
+
+---Smart export: uses configured format with fallback to CSV
+---@param filepath string? Optional file path
+function QueryExport.export_results(filepath)
+  local Config = require('ssns.config')
+  local export_config = Config.get_query().export or {}
+
+  if export_config.format == "excel" then
+    local xlsx_ok = check_xlsx_available()
+    if xlsx_ok then
+      return QueryExport.export_results_to_xlsx(filepath)
+    else
+      vim.notify("SSNS: nvim-xlsx not installed, falling back to CSV", vim.log.levels.WARN)
+    end
+  end
+
+  return QueryExport.export_results_to_csv(filepath)
+end
+
+---Smart export all: uses configured format with fallback to CSV
+function QueryExport.export_all_results()
+  local Config = require('ssns.config')
+  local export_config = Config.get_query().export or {}
+
+  if export_config.format == "excel" then
+    local xlsx_ok = check_xlsx_available()
+    if xlsx_ok then
+      return QueryExport.export_all_results_to_xlsx()
+    else
+      vim.notify("SSNS: nvim-xlsx not installed, falling back to CSV", vim.log.levels.WARN)
+    end
+  end
+
+  return QueryExport.export_all_results_to_csv()
+end
+
+---Check if Excel export is available
+---@return boolean available
+function QueryExport.is_xlsx_available()
+  local ok = check_xlsx_available()
+  return ok
+end
+
 ---Initialize the export module with parent reference
 ---@param parent UiQuery The parent UiQuery module
 function QueryExport._init(parent)
