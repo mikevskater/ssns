@@ -403,6 +403,8 @@ function QueryResults.format_results_styled(resultSets, sql, execution_time_ms, 
 
   -- Check if empty (no result sets) - show rowsAffected messages
   if #resultSets == 0 then
+    local showed_message = false
+
     if query_metadata and query_metadata.rowsAffected then
       local rows_affected = query_metadata.rowsAffected
 
@@ -410,6 +412,7 @@ function QueryResults.format_results_styled(resultSets, sql, execution_time_ms, 
       if type(rows_affected) == "table" then
         for _, count in ipairs(rows_affected) do
           if type(count) == "number" then
+            showed_message = true
             if count > 0 then
               local row_word = count == 1 and "row" or "rows"
               builder:result_message(string.format("(%d %s affected)", count, row_word))
@@ -420,6 +423,7 @@ function QueryResults.format_results_styled(resultSets, sql, execution_time_ms, 
           end
         end
       elseif type(rows_affected) == "number" then
+        showed_message = true
         if rows_affected > 0 then
           local row_word = rows_affected == 1 and "row" or "rows"
           builder:result_message(string.format("(%d %s affected)", rows_affected, row_word))
@@ -428,24 +432,21 @@ function QueryResults.format_results_styled(resultSets, sql, execution_time_ms, 
         end
         builder:blank()
       end
-
-      -- Add total execution time
-      local ms = query_metadata.total_execution_time_ms or execution_time_ms
-      if ms then
-        local time_str = ms < 1000 and string.format("%.0fms", ms) or string.format("%.2fs", ms / 1000)
-        builder:styled(string.format("Total execution time: %s", time_str), "muted")
-      end
-
-      return builder, result_set_ranges
     end
 
-    -- No metadata, just show completion message
-    builder:styled("Commands completed successfully.", "success")
-    if execution_time_ms then
-      local time_str = execution_time_ms < 1000 and string.format("%.0fms", execution_time_ms) or string.format("%.2fs", execution_time_ms / 1000)
+    -- If no rowsAffected messages were shown, show generic success message
+    if not showed_message then
+      builder:styled("Commands completed successfully.", "success")
+      builder:blank()
+    end
+
+    -- Add total execution time
+    local ms = (query_metadata and query_metadata.total_execution_time_ms) or execution_time_ms
+    if ms then
+      local time_str = ms < 1000 and string.format("%.0fms", ms) or string.format("%.2fs", ms / 1000)
       builder:styled(string.format("Total execution time: %s", time_str), "muted")
     end
-    builder:blank()
+
     return builder, result_set_ranges
   end
 
