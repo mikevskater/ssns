@@ -42,16 +42,10 @@ function Navigation.get_token_at_position(tokens, line, col)
         end
       elseif token.col == col then
         -- Token starts exactly at cursor position
-        -- This happens when blink.cmp triggers on a character like '.'
-        -- The cursor col reported is the position OF the trigger character
-        -- Include single-character tokens (triggers) at exact cursor position
-        -- since the cursor is logically "after" typing them
-        if #token.text == 1 then
-          best_token = token
-          best_index = i
-        end
-        -- For multi-character tokens starting at cursor, cursor is BEFORE them
-        break
+        -- In normal mode (e.g., F2 rename), cursor is ON this character
+        -- In insert mode after typing, cursor is after the character
+        -- Either way, this is the token the user is interacting with
+        return token, i
       else
         -- Token starts after cursor, we've gone past
         break
