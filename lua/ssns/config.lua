@@ -222,6 +222,7 @@
 ---@field change_connection string Change connection (hierarchical picker) (default: "<A-S>")
 ---@field change_database string Change database only (default: "<A-d>")
 ---@field cast_prefix string Prefix for cast keymaps in visual mode (default: "<Leader>c")
+---@field rename_identifier string Rename identifier under cursor (default: "<F2>")
 
 ---@class ResultsKeymaps Results buffer specific keymaps
 ---@field close string Close results window (default: "q")
@@ -923,6 +924,7 @@ local default_config = {
       change_connection = "<A-S>", -- Change connection (hierarchical server then database)
       change_database = "<A-d>", -- Change database only
       cast_prefix = "<Leader>c", -- Prefix for cast keymaps (e.g., <Leader>ci for INT)
+      rename_identifier = "<F2>", -- Rename identifier under cursor
     },
 
     -- Results buffer keymaps

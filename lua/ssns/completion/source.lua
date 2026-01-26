@@ -307,6 +307,13 @@ function Source:get_completions(ctx, callback)
   Debug.log(string.format("[COMPLETION] get_completions() called (filetype: %s, line: %s)",
     vim.bo.filetype, ctx.line or "nil"))
 
+  -- Skip completion during rename mode
+  if vim.b[ctx.bufnr].ssns_rename_active then
+    Debug.log("[COMPLETION] Skipping - rename mode active")
+    callback({ items = {} })
+    return
+  end
+
   -- Cancel any in-flight completion request
   if self._current_cancel_token then
     self._current_cancel_token:cancel("New completion request")

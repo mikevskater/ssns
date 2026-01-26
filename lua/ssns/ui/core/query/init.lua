@@ -249,6 +249,7 @@ function UiQuery.show_query_controls()
         { key = km.toggle_results or "C-r", desc = "Toggle results window" },
         { key = km.save or "Leader-s", desc = "Save query" },
         { key = km.expand_asterisk or "Leader-ce", desc = "Expand asterisk to columns" },
+        { key = km.rename_identifier or "F2", desc = "Rename identifier" },
         { key = km.new or "C-n", desc = "New query buffer" },
         { key = km.show_history or "Leader-@", desc = "Show query history" },
       },
@@ -318,6 +319,12 @@ function UiQuery.setup_query_keymaps(bufnr)
       local ViewMetadata = require('ssns.features.view_metadata')
       ViewMetadata.view_metadata_at_cursor()
     end, desc = "View object metadata" },
+
+    -- Rename identifier under cursor
+    { mode = "n", lhs = km.rename_identifier or "<F2>", rhs = function()
+      local RenameIdentifier = require('ssns.features.rename_identifier')
+      RenameIdentifier.start_rename()
+    end, desc = "Rename identifier under cursor" },
 
     -- Toggle results window
     { mode = "n", lhs = km.toggle_results or "<C-r>", rhs = function()
