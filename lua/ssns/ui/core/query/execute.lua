@@ -196,9 +196,25 @@ function QueryExecute.execute_query(bufnr, visual)
     -- Use the earlier line number (selection might be made bottom-to-top)
     selection_start_line = math.min(start_pos[2], end_pos[2])
 
-    -- Use getregion() which handles all visual modes correctly (charwise, linewise, blockwise)
-    local ok, lines = pcall(vim.fn.getregion, start_pos, end_pos, { mode = vis_mode })
-    if not ok or #lines == 0 then
+    -- For visual line mode, always get complete lines (ignore column positions)
+    -- This fixes truncation when cursor column position is mid-line
+    local lines
+    if vis_mode == "V" then
+      -- Line mode: get full lines regardless of cursor column positions
+      local start_line = math.min(start_pos[2], end_pos[2])
+      local end_line = math.max(start_pos[2], end_pos[2])
+      lines = vim.api.nvim_buf_get_lines(bufnr, start_line - 1, end_line, false)
+    else
+      -- Character mode or block mode: use getregion for precise selection
+      local ok, region = pcall(vim.fn.getregion, start_pos, end_pos, { mode = vis_mode })
+      if not ok or #region == 0 then
+        vim.notify("SSNS: No visual selection found", vim.log.levels.WARN)
+        return
+      end
+      lines = region
+    end
+
+    if #lines == 0 then
       vim.notify("SSNS: No visual selection found", vim.log.levels.WARN)
       return
     end
@@ -222,13 +238,24 @@ function QueryExecute.execute_query(bufnr, visual)
     end
 
     -- Store selection info for history
-    selection_info = {
-      start_line = sel_start_line,
-      start_col = sel_start_col,
-      end_line = sel_end_line,
-      end_col = sel_end_col,
-      mode = vis_mode,
-    }
+    -- For line mode, columns should span full lines
+    if vis_mode == "V" then
+      selection_info = {
+        start_line = sel_start_line,
+        start_col = 1,  -- Line mode starts at column 1
+        end_line = sel_end_line,
+        end_col = -1,   -- Line mode ends at end of line (use -1 as sentinel)
+        mode = vis_mode,
+      }
+    else
+      selection_info = {
+        start_line = sel_start_line,
+        start_col = sel_start_col,
+        end_line = sel_end_line,
+        end_col = sel_end_col,
+        mode = vis_mode,
+      }
+    end
   else
     -- Get entire buffer
     local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)

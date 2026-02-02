@@ -333,11 +333,26 @@ class SqlServerDriver extends BaseDriver {
           const columns = {};
           const meta = results.meta || [];
 
-          // Build column metadata from meta array
+          // Generate unique column keys to handle duplicate/empty column names
+          const columnKeys = [];
+          const seenNames = {};
+          meta.forEach((colMeta) => {
+            const baseName = colMeta.name || '(No column name)';
+            if (seenNames[baseName] === undefined) {
+              seenNames[baseName] = 0;
+              columnKeys.push(baseName);
+            } else {
+              seenNames[baseName]++;
+              columnKeys.push(`${baseName}_${seenNames[baseName]}`);
+            }
+          });
+
+          // Build column metadata from meta array using unique keys
           meta.forEach((colMeta, index) => {
-            columns[colMeta.name] = {
+            const key = columnKeys[index];
+            columns[key] = {
               index: index,
-              name: colMeta.name,
+              name: colMeta.name || '(No column name)',
               type: this.mapSqlType(colMeta.sqlType) || 'unknown',
               nullable: colMeta.nullable !== false,
               size: colMeta.size
@@ -345,10 +360,16 @@ class SqlServerDriver extends BaseDriver {
           });
 
           // Convert rows from array of arrays to array of objects
+          // Also convert Date objects to ISO strings for JSON serialization
           const rowObjects = results.rows.map(rowArray => {
             const rowObj = {};
             meta.forEach((colMeta, index) => {
-              rowObj[colMeta.name] = rowArray[index];
+              const value = rowArray[index];
+              const key = columnKeys[index];
+              // Convert Date to SQL Server format (YYYY-MM-DD HH:mm:ss.SSS) for display
+              rowObj[key] = value instanceof Date
+                ? value.toISOString().replace('T', ' ').slice(0, -1)
+                : value;
             });
             return rowObj;
           });
@@ -398,18 +419,36 @@ class SqlServerDriver extends BaseDriver {
       const formattedResultSets = resultSets
         .filter(rs => rs !== undefined) // Filter out undefined result sets
         .map(rs => {
-          // Get column metadata from result set
+          // Get column metadata from result set, sorted by index
           const columns = {};
+          const columnKeys = [];
+          const seenNames = {};
 
           if (rs.columns) {
-            Object.keys(rs.columns).forEach(colName => {
-              const col = rs.columns[colName];
-              columns[colName] = {
+            // Sort columns by index to ensure correct order
+            const sortedCols = Object.values(rs.columns).sort((a, b) => a.index - b.index);
+
+            // Generate unique column keys to handle duplicate/empty column names
+            sortedCols.forEach((col) => {
+              const baseName = col.name || '(No column name)';
+              if (seenNames[baseName] === undefined) {
+                seenNames[baseName] = 0;
+                columnKeys.push(baseName);
+              } else {
+                seenNames[baseName]++;
+                columnKeys.push(`${baseName}_${seenNames[baseName]}`);
+              }
+            });
+
+            // Build column metadata using unique keys
+            sortedCols.forEach((col, index) => {
+              const key = columnKeys[index];
+              columns[key] = {
                 index: col.index,
-                name: col.name,
+                name: col.name || '(No column name)',
                 length: col.length,
                 type: this.mapSqlType(col.type),
-                nullable: col.nullable !== false, // Default to nullable if not specified
+                nullable: col.nullable !== false,
                 caseSensitive: col.caseSensitive,
                 identity: col.identity || false,
                 readOnly: col.readOnly || false
@@ -417,10 +456,37 @@ class SqlServerDriver extends BaseDriver {
             });
           }
 
+          // Convert rows to plain objects with Date → string conversion for JSON serialization
+          // Use columnKeys to map values correctly for duplicate column names
+          const rowObjects = (rs || []).map(row => {
+            const rowObj = {};
+            if (columnKeys.length > 0) {
+              // Use column keys for proper ordering
+              columnKeys.forEach((key, index) => {
+                const originalName = columns[key].name;
+                const value = row[originalName];
+                // Convert Date to SQL Server format (YYYY-MM-DD HH:mm:ss.SSS) for display
+                rowObj[key] = value instanceof Date
+                  ? value.toISOString().replace('T', ' ').slice(0, -1)
+                  : value;
+              });
+            } else {
+              // Fallback for when we don't have column metadata
+              for (const colName in row) {
+                const value = row[colName];
+                // Convert Date to SQL Server format (YYYY-MM-DD HH:mm:ss.SSS) for display
+                rowObj[colName] = value instanceof Date
+                  ? value.toISOString().replace('T', ' ').slice(0, -1)
+                  : value;
+              }
+            }
+            return rowObj;
+          });
+
           return {
             columns: columns,
-            rows: rs || [],
-            rowCount: rs ? rs.length : 0
+            rows: rowObjects,
+            rowCount: rowObjects.length
           };
         });
 
