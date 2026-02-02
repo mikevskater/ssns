@@ -569,6 +569,185 @@ function Connection.cancel_rpc_async(callback_id)
   return AsyncRPC.cancel(callback_id)
 end
 
+---@class RPCAsyncBufferContextOpts
+---@field on_complete fun(result: table, last_database: string|nil, error: string?)? Completion callback
+---@field timeout_ms number? Timeout per chunk in milliseconds (default: 60000)
+
+---Execute query with buffer context using truly non-blocking RPC async
+---Handles multi-database queries with USE statements and GO separators
+---The event loop stays free during execution, allowing spinner animation
+---@param connection_config ConnectionData Connection configuration
+---@param query string SQL query (may contain USE statements and GO)
+---@param buffer_database string|nil Current buffer database context
+---@param opts RPCAsyncBufferContextOpts? Options
+---@return string first_callback_id For tracking (first chunk's callback ID)
+function Connection.execute_with_buffer_context_rpc_async(connection_config, query, buffer_database, opts)
+  opts = opts or {}
+  local QueryParser = require('ssns.query_parser')
+  local AsyncRPC = require('ssns.async.rpc')
+  local Connections = require('ssns.connections')
+
+  -- Parse query into chunks (sync operation, fast)
+  local chunks, debug_info = QueryParser.parse_query(query, buffer_database)
+
+  -- If no chunks, return empty success result immediately
+  if #chunks == 0 then
+    if opts.on_complete then
+      vim.schedule(function()
+        opts.on_complete({
+          success = true,
+          resultSets = {},
+          metadata = {
+            total_chunks = 0,
+            execution_time = 0
+          }
+        }, buffer_database, nil)
+      end)
+    end
+    return "empty_query"
+  end
+
+  -- State for sequential chunk execution
+  local all_results = {}
+  local last_database = buffer_database
+  local total_start_time = vim.loop.hrtime()
+  local current_chunk_idx = 1
+  local first_callback_id = nil
+  local timeout_ms = opts.timeout_ms or 60000
+
+  -- Forward declaration for recursive execution
+  local execute_next_chunk
+
+  ---Combine results from all chunks and call completion callback
+  local function finalize_results()
+    local total_time = (vim.loop.hrtime() - total_start_time) / 1e9
+    local total_time_ms = total_time * 1000
+
+    -- Combine results using the same logic as sync version
+    local combined = combine_multi_chunk_results(all_results, {
+      total_chunks = #chunks,
+      go_batches = debug_info.go_batches,
+      total_execution_time = total_time,
+      total_execution_time_ms = total_time_ms
+    })
+
+    if opts.on_complete then
+      opts.on_complete(combined, last_database, nil)
+    end
+  end
+
+  ---Execute a single chunk and chain to the next
+  ---@param chunk_idx number Index of chunk to execute (1-based)
+  execute_next_chunk = function(chunk_idx)
+    if chunk_idx > #chunks then
+      -- All chunks complete
+      finalize_results()
+      return
+    end
+
+    local chunk = chunks[chunk_idx]
+
+    -- Build connection config for this chunk's database
+    -- NOTE: SQLite doesn't support USE statements - the database IS the file
+    local is_sqlite = connection_config.type == "sqlite"
+    local chunk_config
+    if chunk.database and not is_sqlite then
+      chunk_config = Connections.with_database(connection_config, chunk.database)
+    else
+      chunk_config = connection_config
+    end
+
+    -- Track timing for this chunk
+    local chunk_start_time = vim.loop.hrtime()
+
+    -- Execute chunk using truly async RPC
+    local callback_id = AsyncRPC.execute_async(chunk_config, chunk.sql, {
+      timeout_ms = timeout_ms,
+      on_complete = function(result, err)
+        local chunk_end_time = vim.loop.hrtime()
+        local chunk_execution_time_ms = (chunk_end_time - chunk_start_time) / 1000000
+
+        -- Handle RPC-level error
+        if err then
+          if opts.on_complete then
+            opts.on_complete({
+              success = false,
+              resultSets = {},
+              metadata = {},
+              error = {
+                message = err,
+                chunk_number = chunk_idx,
+                total_chunks = #chunks,
+              }
+            }, last_database, err)
+          end
+          return
+        end
+
+        -- Handle SQL error in result
+        if not result or not result.success then
+          local error_obj = result and result.error or { message = "Unknown error" }
+          -- Add chunk context to error and adjust line number
+          error_obj.chunk_number = chunk_idx
+          error_obj.total_chunks = #chunks
+          error_obj.batch_number = chunk.batch_number
+          error_obj.chunk_database = chunk.database
+
+          -- Adjust error line number to account for removed USE statements
+          -- and position within original query
+          if error_obj.lineNumber and chunk.start_line then
+            local line_num = tonumber(error_obj.lineNumber)
+            if line_num then
+              error_obj.lineNumber = line_num + chunk.start_line - 1
+            end
+          end
+
+          if opts.on_complete then
+            opts.on_complete({
+              success = false,
+              resultSets = {},
+              metadata = result and result.metadata or {},
+              error = error_obj
+            }, last_database, nil)
+          end
+          return
+        end
+
+        -- Add chunk execution time and line mapping to each result set
+        if result.resultSets then
+          for _, resultSet in ipairs(result.resultSets) do
+            resultSet.chunk_execution_time_ms = chunk_execution_time_ms
+            resultSet.chunk_number = chunk_idx
+            resultSet.batch_number = chunk.batch_number
+            resultSet.chunk_start_line = chunk.start_line
+          end
+        end
+
+        table.insert(all_results, result)
+
+        -- Track last database for buffer state update
+        if chunk.database then
+          last_database = chunk.database
+        end
+
+        -- Execute next chunk
+        execute_next_chunk(chunk_idx + 1)
+      end,
+    })
+
+    -- Track first callback ID for the caller
+    if chunk_idx == 1 then
+      first_callback_id = callback_id
+    end
+  end
+
+  -- Start executing chunks
+  execute_next_chunk(1)
+
+  -- Return a tracking ID (first callback ID or a generated one)
+  return first_callback_id or ("rpc_multi_" .. os.time() .. "_" .. math.random(10000, 99999))
+end
+
 -- ============================================================================
 -- ASYNC EXECUTION METHODS (vim.schedule based - UI freezes during query)
 -- ============================================================================

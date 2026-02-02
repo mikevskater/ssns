@@ -83,13 +83,34 @@ local function show_results_window(result_buf)
 end
 
 ---Cancel any running query for a buffer
+---Handles both spinner IDs (non-blocking) and task IDs (blocking fallback)
 ---@param bufnr number Query buffer number
 ---@return boolean cancelled True if a query was cancelled
 function QueryExecute.cancel_query(bufnr)
   local task_id = active_query_tasks[bufnr]
   if task_id then
+    local Spinner = require('ssns.async.spinner')
+    local AsyncRPC = require('ssns.async.rpc')
     local Async = require('ssns.async')
-    local cancelled = Async.cancel(task_id, "Query cancelled by user")
+
+    local cancelled = false
+
+    -- Stop spinner if active (for non-blocking path)
+    if Spinner.is_active(task_id) then
+      Spinner.stop(task_id)
+      cancelled = true
+    end
+
+    -- Cancel pending RPC callback (query continues in Node.js but callback won't fire)
+    if AsyncRPC.cancel(task_id) then
+      cancelled = true
+    end
+
+    -- Also try to cancel via Async module (for blocking fallback path)
+    if Async.cancel(task_id, "Query cancelled by user") then
+      cancelled = true
+    end
+
     if cancelled then
       active_query_tasks[bufnr] = nil
       vim.notify("SSNS: Query cancelled", vim.log.levels.INFO)
@@ -243,125 +264,181 @@ function QueryExecute.execute_query(bufnr, visual)
   -- Capture start time for tracking
   local start_time = vim.loop.hrtime()
 
-  -- Execute async with spinner in results buffer
+  -- Execute query - prefer truly async path for non-blocking spinner animation
   local Connection = require('ssns.connection')
-  local Async = require('ssns.async')
+  local AsyncRPC = require('ssns.async.rpc')
+  local Spinner = require('ssns.async.spinner')
 
-  local task_id = Connection.execute_with_buffer_context_async(
-    server.connection_config,
-    sql,
-    buffer_db,
-    {
-      bufnr = results_bufnr,
-      spinner_text = "Executing query...",
+  -- Completion handler (shared between async and fallback paths)
+  local function handle_completion(result, last_database, err, execution_time_ms)
+    -- Clear task tracking
+    active_query_tasks[bufnr] = nil
+
+    -- Handle cancellation
+    if err and (err:match("cancelled") or err:match("Operation cancelled") or err:match("timed out")) then
+      QueryResults.show_cancelled(results_bufnr, execution_time_ms)
+      return
+    end
+
+    -- Handle other errors
+    if err then
+      vim.notify("SSNS: Query error: " .. tostring(err), vim.log.levels.ERROR)
+      return
+    end
+
+    -- Update buffer state with last database used
+    if last_database then
+      buffer_info.last_database = last_database
+      -- Update buffer variable for completion source
+      vim.api.nvim_buf_set_var(bufnr, 'ssns_db_key', string.format("%s:%s", server.name, last_database))
+    end
+
+    -- Track query in history
+    local buffer_name = vim.api.nvim_buf_get_name(bufnr)
+    if buffer_name == "" then
+      buffer_name = string.format("Query Buffer %d", bufnr)
+    else
+      buffer_name = vim.fn.fnamemodify(buffer_name, ':t')
+    end
+
+    local current_database = buffer_info.last_database
+      or (buffer_info.database and buffer_info.database.db_name)
+      or "master"
+
+    -- Check if query succeeded
+    if not result or not result.success then
+      -- Track error in history
+      local error_obj = result and result.error or { message = "Unknown error" }
+      QueryHistory.add_entry(bufnr, buffer_name, {
+        query = sql,
+        buffer_content = buffer_content,  -- Full buffer (nil if not a selection)
+        selection = selection_info,        -- Selection range (nil if not a selection)
+        server_name = server.name,
+        database = current_database,
+        timestamp = os.date("%Y-%m-%d %H:%M:%S"),
+        execution_time_ms = execution_time_ms,
+        status = "error",
+        error_message = error_obj.message or "Unknown error",
+        error_line = error_obj.lineNumber,
+      })
+
+      -- Display detailed error with structured information
+      -- Pass selection_start_line offset for error line adjustment
+      QueryExecute.display_error(error_obj, sql, bufnr, selection_start_line)
+      return
+    end
+
+    -- Track success in history
+    local row_count = 0
+    if result.resultSets and result.resultSets[1] and result.resultSets[1].rows then
+      row_count = #result.resultSets[1].rows
+    end
+
+    QueryHistory.add_entry(bufnr, buffer_name, {
+      query = sql,
+      buffer_content = buffer_content,  -- Full buffer (nil if not a selection)
+      selection = selection_info,        -- Selection range (nil if not a selection)
+      server_name = server.name,
+      database = current_database,
+      timestamp = os.date("%Y-%m-%d %H:%M:%S"),
+      execution_time_ms = execution_time_ms,
+      status = "success",
+      row_count = row_count,
+    })
+
+    -- Track usage from query analysis
+    local Config = require('ssns.config')
+    local config = Config.get()
+
+    if config.completion and config.completion.track_usage then
+      local success_usage, err_usage = pcall(function()
+        local UsageAnalyzer = require('ssns.completion.usage_analyzer')
+        UsageAnalyzer.analyze_and_record(sql, {
+          connection_config = server.connection_config
+        })
+      end)
+
+      if not success_usage then
+        local Debug = require('ssns.debug')
+        Debug.log("[USAGE] Query analysis error: " .. tostring(err_usage))
+      end
+    end
+
+    -- Display results with execution metadata (pass pre-created results buffer)
+    QueryResults.display_results(result, sql, execution_time_ms, bufnr, results_bufnr)
+  end
+
+  -- Check if truly async RPC is available (non-blocking path)
+  if AsyncRPC.is_available() then
+    -- ========================================================================
+    -- NON-BLOCKING PATH: Spinner animates freely while query runs in Node.js
+    -- ========================================================================
+
+    -- Start spinner BEFORE async call (runs independently on vim.loop timer)
+    local spinner_id = Spinner.start_in_buffer(results_bufnr, {
+      text = "Executing query...",
+      style = "braille",
       show_runtime = true,
       line = 0,
-      timeout_ms = 300000, -- 5 minutes for long queries
-      on_complete = function(result, last_database, err)
-        -- Clear task tracking
-        active_query_tasks[bufnr] = nil
+    })
 
-        local end_time = vim.loop.hrtime()
-        local execution_time_ms = (end_time - start_time) / 1000000
+    -- Track spinner for cancellation
+    active_query_tasks[bufnr] = spinner_id
 
-        -- Handle cancellation
-        if err and (err:match("cancelled") or err:match("Operation cancelled")) then
-          QueryResults.show_cancelled(results_bufnr, execution_time_ms)
-          return
-        end
+    -- Use truly async path - returns immediately, calls back when done
+    Connection.execute_with_buffer_context_rpc_async(
+      server.connection_config,
+      sql,
+      buffer_db,
+      {
+        timeout_ms = 300000, -- 5 minutes for long queries
+        on_complete = function(result, last_database, err)
+          -- Calculate execution time
+          local end_time = vim.loop.hrtime()
+          local execution_time_ms = (end_time - start_time) / 1000000
 
-        -- Handle other errors
-        if err then
-          vim.notify("SSNS: Query error: " .. tostring(err), vim.log.levels.ERROR)
-          return
-        end
+          -- Stop spinner
+          Spinner.stop(spinner_id)
 
-        -- Update buffer state with last database used
-        if last_database then
-          buffer_info.last_database = last_database
-          -- Update buffer variable for completion source
-          vim.api.nvim_buf_set_var(bufnr, 'ssns_db_key', string.format("%s:%s", server.name, last_database))
-        end
+          -- Handle completion
+          handle_completion(result, last_database, err, execution_time_ms)
+        end,
+      }
+    )
+  else
+    -- ========================================================================
+    -- BLOCKING FALLBACK: Use vim.schedule-based async (spinner freezes)
+    -- ========================================================================
 
-        -- Track query in history
-        local buffer_name = vim.api.nvim_buf_get_name(bufnr)
-        if buffer_name == "" then
-          buffer_name = string.format("Query Buffer %d", bufnr)
-        else
-          buffer_name = vim.fn.fnamemodify(buffer_name, ':t')
-        end
+    -- Show one-time warning about non-blocking mode not available
+    AsyncRPC.check_and_notify()
 
-        local current_database = buffer_info.last_database
-          or (buffer_info.database and buffer_info.database.db_name)
-          or "master"
+    local Async = require('ssns.async')
 
-        -- Check if query succeeded
-        if not result or not result.success then
-          -- Track error in history
-          local error_obj = result and result.error or { message = "Unknown error" }
-          QueryHistory.add_entry(bufnr, buffer_name, {
-            query = sql,
-            buffer_content = buffer_content,  -- Full buffer (nil if not a selection)
-            selection = selection_info,        -- Selection range (nil if not a selection)
-            server_name = server.name,
-            database = current_database,
-            timestamp = os.date("%Y-%m-%d %H:%M:%S"),
-            execution_time_ms = execution_time_ms,
-            status = "error",
-            error_message = error_obj.message or "Unknown error",
-            error_line = error_obj.lineNumber,
-          })
+    local task_id = Connection.execute_with_buffer_context_async(
+      server.connection_config,
+      sql,
+      buffer_db,
+      {
+        bufnr = results_bufnr,
+        spinner_text = "Executing query...",
+        show_runtime = true,
+        line = 0,
+        timeout_ms = 300000, -- 5 minutes for long queries
+        on_complete = function(result, last_database, err)
+          -- Calculate execution time
+          local end_time = vim.loop.hrtime()
+          local execution_time_ms = (end_time - start_time) / 1000000
 
-          -- Display detailed error with structured information
-          -- Pass selection_start_line offset for error line adjustment
-          QueryExecute.display_error(error_obj, sql, bufnr, selection_start_line)
-          return
-        end
+          -- Handle completion
+          handle_completion(result, last_database, err, execution_time_ms)
+        end,
+      }
+    )
 
-        -- Track success in history
-        local row_count = 0
-        if result.resultSets and result.resultSets[1] and result.resultSets[1].rows then
-          row_count = #result.resultSets[1].rows
-        end
-
-        QueryHistory.add_entry(bufnr, buffer_name, {
-          query = sql,
-          buffer_content = buffer_content,  -- Full buffer (nil if not a selection)
-          selection = selection_info,        -- Selection range (nil if not a selection)
-          server_name = server.name,
-          database = current_database,
-          timestamp = os.date("%Y-%m-%d %H:%M:%S"),
-          execution_time_ms = execution_time_ms,
-          status = "success",
-          row_count = row_count,
-        })
-
-        -- Track usage from query analysis
-        local Config = require('ssns.config')
-        local config = Config.get()
-
-        if config.completion and config.completion.track_usage then
-          local success_usage, err_usage = pcall(function()
-            local UsageAnalyzer = require('ssns.completion.usage_analyzer')
-            UsageAnalyzer.analyze_and_record(sql, {
-              connection_config = server.connection_config
-            })
-          end)
-
-          if not success_usage then
-            local Debug = require('ssns.debug')
-            Debug.log("[USAGE] Query analysis error: " .. tostring(err_usage))
-          end
-        end
-
-        -- Display results with execution metadata (pass pre-created results buffer)
-        QueryResults.display_results(result, sql, execution_time_ms, bufnr, results_bufnr)
-      end,
-    }
-  )
-
-  -- Track the task for potential cancellation
-  active_query_tasks[bufnr] = task_id
+    -- Track the task for potential cancellation
+    active_query_tasks[bufnr] = task_id
+  end
 end
 
 ---Execute statement under cursor
