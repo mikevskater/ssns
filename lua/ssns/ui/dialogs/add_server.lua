@@ -274,6 +274,7 @@ function AddServerUI.show_form_controls()
       keys = {
         { key = km.save or "s", desc = "Save connection" },
         { key = km.test or "T", desc = "Test connection" },
+        { key = km.set_color or "c", desc = "Set lualine color" },
         { key = km.toggle_favorite or "f", desc = "Toggle favorite" },
         { key = km.toggle_auto_connect or "a", desc = "Toggle auto-connect" },
         { key = km.back or "b", desc = "Back to list" },
@@ -756,9 +757,11 @@ function AddServerUI.show_new_connection_form_with_state(form_state, edit_connec
   cb:spans({
     { text = "  ", style = "text" },
     { text = "s", style = "key" },
-    { text = "   Save    ", style = "muted" },
+    { text = " Save  ", style = "muted" },
     { text = "T", style = "key" },
     { text = " Test  ", style = "muted" },
+    { text = "c", style = "key" },
+    { text = " Color  ", style = "muted" },
     { text = "b", style = "key" },
     { text = " Back  ", style = "muted" },
     { text = "q", style = "key" },
@@ -803,6 +806,10 @@ function AddServerUI.show_new_connection_form_with_state(form_state, edit_connec
   keymaps[km.test or "T"] = function()
     AddServerUI._sync_inputs_to_form_state(form_state)
     AddServerUI.test_connection(form_state)
+  end
+  keymaps[km.set_color or "c"] = function()
+    AddServerUI._sync_inputs_to_form_state(form_state)
+    AddServerUI.set_connection_color(form_state)
   end
   keymaps["?"] = function() AddServerUI.show_form_controls() end
 
@@ -974,6 +981,46 @@ function AddServerUI.test_connection(form_state)
       vim.notify(string.format("Connection failed: %s", connect_err or "Could not connect"), vim.log.levels.ERROR)
     end
   end)
+end
+
+---Set lualine color for the connection being edited
+---@param form_state table Current form values
+function AddServerUI.set_connection_color(form_state)
+  -- Validate - need a name to set color
+  if not form_state.name or form_state.name == "" then
+    vim.notify("Please enter a connection name first", vim.log.levels.WARN)
+    return
+  end
+
+  -- Determine the lookup name based on db type
+  local lookup_name
+  if form_state.db_type == "sqlite" then
+    -- For SQLite, use the file path
+    lookup_name = form_state.server_path and form_state.server_path:gsub("\\", "/") or ":memory:"
+  else
+    -- For other databases, use host[\instance]
+    local host, instance = parse_server_path(form_state.server_path)
+    lookup_name = host
+    if instance then
+      lookup_name = lookup_name .. "\\" .. instance
+    end
+  end
+
+  if not lookup_name or lookup_name == "" then
+    vim.notify("Please enter a server path first", vim.log.levels.WARN)
+    return
+  end
+
+  -- Close the current form temporarily
+  local saved_float = current_float
+  current_float = nil
+  if saved_float then
+    pcall(function() saved_float:close() end)
+  end
+
+  -- Open the color picker
+  local LualineColors = require('ssns.lualine_colors')
+  LualineColors.prompt_set_color(lookup_name, true)
 end
 
 return AddServerUI

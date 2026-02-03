@@ -263,6 +263,7 @@
 ---@field set_path string Set server path (default: "p")
 ---@field save string Save connection (default: "s")
 ---@field test string Test connection (default: "T")
+---@field set_color string Set lualine color (default: "c")
 ---@field back string Go back (default: "b")
 ---@field toggle_auto_connect string Toggle auto-connect (default: "a")
 
@@ -976,6 +977,7 @@ local default_config = {
       set_path = "p",        -- Set server path
       save = "s",            -- Save connection
       test = "T",            -- Test connection
+      set_color = "c",       -- Set lualine color
       back = "b",            -- Go back
       toggle_auto_connect = "a", -- Toggle auto-connect (form view)
     },

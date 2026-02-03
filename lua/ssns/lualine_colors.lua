@@ -7,6 +7,322 @@ local colors_cache = nil
 local cache_timestamp = 0
 local CACHE_TTL_MS = 5000  -- 5 seconds cache TTL
 
+-- Color presets for quick selection
+local COLOR_PRESETS = {
+  { key = "1", label = "Red (Production)", color = { fg = '#ffffff', bg = '#cc0000', gui = 'bold' } },
+  { key = "2", label = "Green (Development)", color = { fg = '#000000', bg = '#00cc00' } },
+  { key = "3", label = "Yellow (Staging)", color = { fg = '#000000', bg = '#cccc00' } },
+  { key = "4", label = "Blue (QA/Testing)", color = { fg = '#ffffff', bg = '#0066cc' } },
+  { key = "5", label = "Orange (UAT)", color = { fg = '#000000', bg = '#ff9900' } },
+  { key = "6", label = "Purple (Backup/Reporting)", color = { fg = '#ffffff', bg = '#9933cc' } },
+  { key = "7", label = "Gray (Default)", color = { fg = '#ffffff', bg = '#666666' } },
+}
+
+---Validate hex color format
+---@param hex string Color string to validate
+---@return boolean valid True if valid hex color
+local function is_valid_hex(hex)
+  if not hex or type(hex) ~= "string" then return false end
+  return hex:match("^#[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]$") ~= nil
+end
+
+---Open nvim-colorpicker to select custom color
+---@param name string Server or database name
+---@param current_color table? Current color if editing
+---@param on_complete fun(color: table?) Callback when color is selected
+local function open_colorpicker(name, current_color, on_complete)
+  local has_colorpicker, colorpicker = pcall(require, 'nvim-colorpicker')
+  if not has_colorpicker then
+    -- Fallback to text input if colorpicker not available
+    vim.notify('SSNS: nvim-colorpicker not available. Using text input.', vim.log.levels.INFO)
+    local fg = vim.fn.input('Foreground color (hex, e.g., #ffffff): ')
+    if not is_valid_hex(fg) then
+      vim.notify('SSNS: Invalid foreground color. Must be hex format like #ffffff', vim.log.levels.ERROR)
+      on_complete(nil)
+      return
+    end
+
+    local bg = vim.fn.input('Background color (hex, e.g., #ff0000): ')
+    if not is_valid_hex(bg) then
+      vim.notify('SSNS: Invalid background color. Must be hex format like #ff0000', vim.log.levels.ERROR)
+      on_complete(nil)
+      return
+    end
+
+    local gui = vim.fn.input('Text style (bold/italic/underline, or leave empty): ')
+    vim.cmd('redraw!')
+
+    local color = { fg = fg, bg = bg }
+    if gui ~= '' then
+      color.gui = gui
+    end
+    on_complete(color)
+    return
+  end
+
+  -- Use nvim-colorpicker for visual color selection
+  -- Working copies of fg/bg colors
+  local working_colors = {
+    fg = current_color and current_color.fg or "#ffffff",
+    bg = current_color and current_color.bg or "#0066cc",
+    gui = current_color and current_color.gui or nil,
+  }
+
+  -- Track original colors for comparison in picker
+  local original_colors = {
+    fg = working_colors.fg,
+    bg = working_colors.bg,
+  }
+
+  -- Determine initial target (bg by default for status line colors)
+  local initial_target = "bg"
+
+  colorpicker.pick({
+    color = working_colors[initial_target],
+    title = "Lualine Color: " .. name,
+
+    -- Inject custom controls for fg/bg selection and style
+    custom_controls = {
+      {
+        id = "target",
+        type = "select",
+        label = "Target",
+        options = { "bg", "fg" },
+        default = initial_target,
+        key = "B",
+        on_change = function(new_target, old_target)
+          -- Save current picker color to the old target
+          local current_color_val = colorpicker.get_color()
+          if current_color_val then
+            working_colors[old_target] = current_color_val
+          end
+          -- Load the new target's color into the picker
+          local new_color_val = working_colors[new_target]
+          local new_original = original_colors[new_target]
+          colorpicker.set_color(new_color_val, new_original)
+        end,
+      },
+      {
+        id = "bold",
+        type = "toggle",
+        label = "Bold",
+        default = working_colors.gui and working_colors.gui:match("bold") ~= nil or false,
+        key = "b",
+      },
+    },
+
+    on_select = function(result)
+      -- Save the final color from picker to the active target
+      local target = result.custom and result.custom.target or "bg"
+      working_colors[target] = result.color
+
+      -- Build final color spec
+      local final_color = {
+        fg = working_colors.fg,
+        bg = working_colors.bg,
+      }
+
+      -- Add bold if enabled
+      if result.custom and result.custom.bold then
+        final_color.gui = "bold"
+      end
+
+      on_complete(final_color)
+    end,
+
+    on_cancel = function()
+      on_complete(nil)
+    end,
+  })
+end
+
+---Show color picker menu using a floating window
+---@param name string Server or database name
+---@param is_server boolean True if setting color for server, false for database
+---@param current_color table? Current saved color if any
+function M.show_color_picker_menu(name, is_server, current_color)
+  local has_float, UiFloat = pcall(require, 'nvim-float.window')
+  if not has_float then
+    -- Fallback to simpler UI
+    M._show_color_picker_menu_simple(name, is_server, current_color)
+    return
+  end
+
+  local type_str = is_server and "server" or "database"
+
+  -- Build menu content
+  local menu_float = UiFloat.create({
+    title = " Set Lualine Color ",
+    width = 45,
+    height = 14,
+    center = true,
+    content_builder = true,
+  })
+
+  if not menu_float then
+    M._show_color_picker_menu_simple(name, is_server, current_color)
+    return
+  end
+
+  local cb = menu_float:get_content_builder()
+
+  -- Header
+  cb:line("")
+  cb:styled("  " .. type_str:gsub("^%l", string.upper) .. ": ", "NvimFloatLabel")
+  cb:append(name, "NvimFloatTitle")
+  cb:line("")
+  cb:line("")
+
+  -- Presets
+  cb:styled("  Color Presets:", "NvimFloatTitle")
+  cb:line("")
+
+  for _, preset in ipairs(COLOR_PRESETS) do
+    -- Create highlight for this preset's color swatch
+    local hl_name = "SSNSColorPreset" .. preset.key
+    vim.api.nvim_set_hl(0, hl_name, { fg = preset.color.fg, bg = preset.color.bg, bold = preset.color.gui == "bold" })
+
+    cb:text("  ")
+    cb:styled(preset.key, "NvimFloatKeyHint")
+    cb:text(". ")
+    cb:styled("  ", hl_name) -- Color swatch
+    cb:text(" " .. preset.label)
+    cb:line("")
+  end
+
+  cb:line("")
+  cb:text("  ")
+  cb:styled("c", "NvimFloatKeyHint")
+  cb:text(". Custom (color picker)")
+  cb:line("")
+  cb:text("  ")
+  cb:styled("r", "NvimFloatKeyHint")
+  cb:text(". Remove color (use default)")
+  cb:line("")
+
+  -- Footer
+  cb:line("")
+  cb:styled("  Press key to select, ", "NvimFloatHint")
+  cb:styled("Esc", "NvimFloatKeyHint")
+  cb:styled(" to cancel", "NvimFloatHint")
+
+  menu_float:render()
+
+  -- Setup keymaps
+  local bufnr = menu_float.buf
+
+  -- Close handler
+  local function close()
+    menu_float:close()
+  end
+
+  -- Apply color and close
+  local function apply_color(color)
+    menu_float:close()
+    if color then
+      M.set_color(name, color)
+      vim.notify(string.format('SSNS: Color set for %s', name), vim.log.levels.INFO)
+      if vim.fn.exists(':LualineRefresh') == 2 then
+        vim.cmd('LualineRefresh')
+      end
+    end
+  end
+
+  -- Preset keymaps
+  for _, preset in ipairs(COLOR_PRESETS) do
+    vim.keymap.set("n", preset.key, function()
+      apply_color(preset.color)
+    end, { buffer = bufnr, nowait = true })
+  end
+
+  -- Custom color
+  vim.keymap.set("n", "c", function()
+    menu_float:close()
+    open_colorpicker(name, current_color, function(color)
+      if color then
+        M.set_color(name, color)
+        vim.notify(string.format('SSNS: Custom color set for %s', name), vim.log.levels.INFO)
+        if vim.fn.exists(':LualineRefresh') == 2 then
+          vim.cmd('LualineRefresh')
+        end
+      end
+    end)
+  end, { buffer = bufnr, nowait = true })
+
+  -- Remove color
+  vim.keymap.set("n", "r", function()
+    menu_float:close()
+    M.remove_color(name)
+  end, { buffer = bufnr, nowait = true })
+
+  -- Cancel
+  vim.keymap.set("n", "<Esc>", close, { buffer = bufnr, nowait = true })
+  vim.keymap.set("n", "q", close, { buffer = bufnr, nowait = true })
+end
+
+---Fallback simple menu when nvim-float is not available
+---@param name string Server or database name
+---@param is_server boolean True if setting color for server, false for database
+---@param current_color table? Current saved color if any
+function M._show_color_picker_menu_simple(name, is_server, current_color)
+  local type_str = is_server and 'server' or 'database'
+
+  -- Build menu message
+  local lines = {
+    string.format('Set color for %s: %s', type_str, name),
+    '',
+    '1. Red (Production)',
+    '2. Green (Development)',
+    '3. Yellow (Staging)',
+    '4. Blue (QA/Testing)',
+    '5. Orange (UAT)',
+    '6. Purple (Backup/Reporting)',
+    '7. Gray (Default)',
+    'c. Custom (color picker)',
+    'r. Remove color',
+  }
+
+  vim.notify(table.concat(lines, '\n'), vim.log.levels.INFO)
+
+  local choice = vim.fn.input('Enter choice (1-7, c, or r): ')
+  vim.cmd('redraw!')
+
+  local color = nil
+
+  -- Check presets
+  for _, preset in ipairs(COLOR_PRESETS) do
+    if choice == preset.key then
+      color = preset.color
+      break
+    end
+  end
+
+  if color then
+    M.set_color(name, color)
+    vim.notify(string.format('SSNS: Color set for %s', name), vim.log.levels.INFO)
+    if vim.fn.exists(':LualineRefresh') == 2 then
+      vim.cmd('LualineRefresh')
+    end
+    return
+  end
+
+  if choice == 'c' then
+    open_colorpicker(name, current_color, function(custom_color)
+      if custom_color then
+        M.set_color(name, custom_color)
+        vim.notify(string.format('SSNS: Custom color set for %s', name), vim.log.levels.INFO)
+        if vim.fn.exists(':LualineRefresh') == 2 then
+          vim.cmd('LualineRefresh')
+        end
+      end
+    end)
+  elseif choice == 'r' then
+    M.remove_color(name)
+  else
+    vim.notify('SSNS: Invalid choice', vim.log.levels.WARN)
+  end
+end
+
 ---Prompt user to set color for a server or database
 ---@param name string Server or database name
 ---@param is_server boolean True if setting color for server, false for database
@@ -18,89 +334,11 @@ function M.prompt_set_color(name, is_server)
     return
   end
 
-  local type_str = is_server and 'server' or 'database'
+  -- Get current color if any
+  local current_color = M.get_color(name)
 
-  -- Display color presets
-  local lines = {
-    string.format('Set color for %s: %s', type_str, name),
-    '',
-    'Select a color preset or choose custom:',
-    '  1. Red (Production)',
-    '  2. Green (Development)',
-    '  3. Yellow (Staging)',
-    '  4. Blue (QA/Testing)',
-    '  5. Orange (UAT)',
-    '  6. Purple (Backup/Reporting)',
-    '  7. Gray (Default)',
-    '  8. Custom (enter hex codes)',
-    '  9. Remove color (use lualine default)',
-    '',
-  }
-
-  -- Print all lines
-  for _, line in ipairs(lines) do
-    print(line)
-  end
-
-  local choice = vim.fn.input('Enter choice (1-9): ')
-  vim.cmd('redraw!')
-
-  local color = nil
-
-  if choice == '1' then
-    color = { fg = '#ffffff', bg = '#cc0000', gui = 'bold' }
-  elseif choice == '2' then
-    color = { fg = '#000000', bg = '#00cc00' }
-  elseif choice == '3' then
-    color = { fg = '#000000', bg = '#cccc00' }
-  elseif choice == '4' then
-    color = { fg = '#ffffff', bg = '#0066cc' }
-  elseif choice == '5' then
-    color = { fg = '#000000', bg = '#ff9900' }
-  elseif choice == '6' then
-    color = { fg = '#ffffff', bg = '#9933cc' }
-  elseif choice == '7' then
-    color = { fg = '#ffffff', bg = '#666666' }
-  elseif choice == '8' then
-    -- Custom color entry
-    print('')
-    local fg = vim.fn.input('Foreground color (hex, e.g., #ffffff): ')
-    if not fg:match('^#[0-9a-fA-F]\\{6\\}$') then
-      vim.notify('SSNS: Invalid foreground color. Must be hex format like #ffffff', vim.log.levels.ERROR)
-      return
-    end
-
-    local bg = vim.fn.input('Background color (hex, e.g., #ff0000): ')
-    if not bg:match('^#[0-9a-fA-F]\\{6\\}$') then
-      vim.notify('SSNS: Invalid background color. Must be hex format like #ff0000', vim.log.levels.ERROR)
-      return
-    end
-
-    local gui = vim.fn.input('Text style (bold/italic/underline, or leave empty): ')
-
-    color = { fg = fg, bg = bg }
-    if gui ~= '' then
-      color.gui = gui
-    end
-    vim.cmd('redraw!')
-  elseif choice == '9' then
-    -- Remove color
-    M.remove_color(name)
-    return
-  else
-    vim.notify('SSNS: Invalid choice', vim.log.levels.WARN)
-    return
-  end
-
-  -- Save the color
-  M.set_color(name, color)
-
-  vim.notify(string.format('SSNS: Color set for %s: %s', name, vim.inspect(color)), vim.log.levels.INFO)
-
-  -- Refresh lualine if available
-  if vim.fn.exists(':LualineRefresh') == 2 then
-    vim.cmd('LualineRefresh')
-  end
+  -- Show the color picker menu
+  M.show_color_picker_menu(name, is_server, current_color)
 end
 
 ---Set color for a connection (uses lualine component's set_color)
