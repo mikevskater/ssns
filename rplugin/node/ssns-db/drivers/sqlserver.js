@@ -2,6 +2,17 @@ const sql = require('mssql');
 const msnodesqlv8 = require('msnodesqlv8'); // Use raw msnodesqlv8, not mssql wrapper
 const BaseDriver = require('./base');
 const { ssnsLog } = require('../ssns-log');
+const packageJson = require('../package.json');
+
+/**
+ * Get the application name to display in SQL Server connections
+ * Shows as "Sql Server NeoVim Studio | SSNS vX.X.X" in Activity Monitor/sp_who2
+ * @returns {string} The formatted application name
+ */
+function getAppName() {
+  const version = packageJson.version || '0.0.0';
+  return `Sql Server NeoVim Studio | SSNS v${version}`;
+}
 
 /**
  * SqlServerDriver - SQL Server database driver using mssql package
@@ -114,6 +125,9 @@ class SqlServerDriver extends BaseDriver {
       parts.push('TrustServerCertificate=yes');
     }
 
+    // Application name (shown in Activity Monitor/sp_who2)
+    parts.push(`APP=${this.escapeOdbcValue(getAppName())}`);
+
     const connectionString = parts.join(';') + ';';
 
     ssnsLog(`[sqlserver] Built ODBC connection string: ${connectionString}`);
@@ -146,6 +160,7 @@ class SqlServerDriver extends BaseDriver {
         trustServerCertificate: options.trust_server_certificate !== false,
         enableArithAbort: true,
         encrypt: options.ssl === true,
+        appName: getAppName(), // Shown in Activity Monitor/sp_who2
       },
       pool: {
         max: 10,
