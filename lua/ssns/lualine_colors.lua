@@ -169,7 +169,7 @@ function M.show_color_picker_menu(name, is_server, current_color)
   -- Header
   cb:line("")
   cb:styled("  " .. type_str:gsub("^%l", string.upper) .. ": ", "NvimFloatLabel")
-  cb:append(name, "NvimFloatTitle")
+  cb:styled(name, "NvimFloatTitle")
   cb:line("")
   cb:line("")
 
