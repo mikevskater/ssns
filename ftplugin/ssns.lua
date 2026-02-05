@@ -2,7 +2,7 @@
 -- Sets up buffer-local options and keymaps for .ssns files
 
 -- Lazy-load ETL commands and macros on first .ssns file open
-local Commands = require('ssns.commands')
+local Commands = require('nvim-ssns.commands')
 Commands.setup_etl()
 
 -- Set comment string for ETL directives

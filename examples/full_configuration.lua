@@ -5,14 +5,14 @@
 -- and explanations. Copy sections you want to customize into your init.lua.
 --
 -- Minimal setup:
---   require('ssns').setup({
+--   require('nvim-ssns').setup({
 --     connections = {
 --       my_db = "sqlserver://localhost/MyDatabase"
 --     }
 --   })
 -- ============================================================================
 
-require('ssns').setup({
+require('nvim-ssns').setup({
   -- ============================================================================
   -- CONNECTIONS
   -- ============================================================================
@@ -276,13 +276,13 @@ require('ssns').setup({
 -- ============================================================================
 
 -- You can also add connections dynamically after setup:
--- require('ssns.config').add_connection('new_db', 'sqlserver://localhost/NewDB')
+-- require('nvim-ssns.config').add_connection('new_db', 'sqlserver://localhost/NewDB')
 
 -- Or remove connections:
--- require('ssns.config').remove_connection('dev_sqlserver')
+-- require('nvim-ssns.config').remove_connection('dev_sqlserver')
 
 -- Get current configuration:
--- local config = require('ssns.config').get()
+-- local config = require('nvim-ssns.config').get()
 -- print(vim.inspect(config))
 
 -- ============================================================================

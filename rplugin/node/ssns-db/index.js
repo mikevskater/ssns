@@ -263,7 +263,7 @@ module.exports = (plugin) => {
         // Call back to Lua with result
         try {
           await plugin.nvim.call('luaeval', [
-            'require("ssns.async.rpc").handle_callback(_A.id, _A.result, nil)',
+            'require("nvim-ssns.async.rpc").handle_callback(_A.id, _A.result, nil)',
             { id: callbackId, result: result }
           ]);
         } catch (callbackErr) {
@@ -286,7 +286,7 @@ module.exports = (plugin) => {
             }
           };
           await plugin.nvim.call('luaeval', [
-            'require("ssns.async.rpc").handle_callback(_A.id, _A.result, _A.err)',
+            'require("nvim-ssns.async.rpc").handle_callback(_A.id, _A.result, _A.err)',
             { id: callbackId, result: errorResult, err: err.message }
           ]);
         } catch (callbackErr) {
