@@ -1037,7 +1037,7 @@ end
 --- Scan for async integration test files
 --- @return table test_files Array of test file info
 function M.scan_tests()
-  local test_dir = vim.fn.stdpath("data") .. "/ssns/lua/ssns/testing/tests/integration/async"
+  local test_dir = vim.fn.stdpath("data") .. "/nvim-ssns/lua/nvim-ssns/testing/tests/integration/async"
   local files = vim.fn.glob(test_dir .. "/*.lua", false, true)
 
   local test_files = {}

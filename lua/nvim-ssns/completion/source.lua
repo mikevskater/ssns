@@ -274,11 +274,23 @@ end
 function Source:enabled()
   Debug.log("[COMPLETION] enabled() called")
 
-  -- Only enable for SQL file types
+  -- Only enable for SQL file types and SSNS ETL files
   local ft = vim.bo.filetype
-  if not (ft == 'sql' or ft == 'mysql' or ft == 'plsql' or ft == 'pgsql') then
+  if not (ft == 'sql' or ft == 'mysql' or ft == 'plsql' or ft == 'pgsql' or ft == 'ssns') then
     Debug.log(string.format("[COMPLETION] enabled() = false (filetype: %s)", ft))
     return false
+  end
+
+  -- For SSNS ETL files, only enable if cursor is in SQL block
+  if ft == 'ssns' then
+    local ok, EtlHighlighting = pcall(require, 'nvim-ssns.etl.highlighting')
+    if ok then
+      local block = EtlHighlighting.get_block_at_cursor(vim.api.nvim_get_current_buf())
+      if not block or block.type ~= 'sql' then
+        Debug.log("[COMPLETION] enabled() = false (not in SQL block)")
+        return false
+      end
+    end
   end
 
   -- Check if completion is enabled in config
@@ -659,6 +671,21 @@ end
 ---@return table? connection { server: ServerClass, database: DbClass, connection_config: table }
 function Source:get_connection(bufnr)
   local Cache = require('nvim-ssns.cache')
+
+  -- Check if this is an ETL buffer (.ssns) with block-aware connections
+  if vim.bo[bufnr].filetype == "ssns" then
+    local ok, EtlHighlighting = pcall(require, 'nvim-ssns.etl.highlighting')
+    if ok then
+      local connection = EtlHighlighting.get_connection_at_cursor(bufnr)
+      if connection then
+        Debug.log(string.format("[CONNECTION] get_connection(%d): ETL block connection - server=%s, db=%s",
+          bufnr,
+          connection.server and connection.server.name or "nil",
+          connection.database and connection.database.db_name or "nil"))
+        return connection
+      end
+    end
+  end
 
   -- Try to get buffer-local database connection
   local db_key = vim.b[bufnr].ssns_db_key

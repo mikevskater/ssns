@@ -178,7 +178,7 @@ function Snippets.load_user_snippets_async(callback)
   local FileIO = require('nvim-ssns.async.file_io')
 
   local data_path = vim.fn.stdpath('data')
-  local snippets_file = data_path .. '/ssns/snippets.json'
+  local snippets_file = data_path .. '/nvim-ssns/snippets.json'
 
   -- Check if file exists
   FileIO.exists_async(snippets_file, function(exists, _)

@@ -66,7 +66,7 @@ function QueryHistory.configure()
   QueryHistory.max_buffers = cfg.max_buffers or 100
   QueryHistory.max_entries_per_buffer = cfg.max_entries_per_buffer or 100
   QueryHistory.auto_persist = cfg.auto_persist ~= false  -- Default true
-  QueryHistory.persist_file = cfg.persist_file or (vim.fn.stdpath('data') .. '/ssns/query_history.json')
+  QueryHistory.persist_file = cfg.persist_file or (vim.fn.stdpath('data') .. '/nvim-ssns/query_history.json')
   QueryHistory.exclude_patterns = cfg.exclude_patterns or {}
   QueryHistory.max_auto_saves_per_buffer = cfg.max_auto_saves_per_buffer or 100
 

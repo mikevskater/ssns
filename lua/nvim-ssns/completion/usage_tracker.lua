@@ -24,7 +24,7 @@ local UsageTracker = {}
 
 -- Module state
 UsageTracker.weights = { connections = {} }
-UsageTracker.persist_file = vim.fn.stdpath('data') .. '/ssns/completion_usage.json'
+UsageTracker.persist_file = vim.fn.stdpath('data') .. '/nvim-ssns/completion_usage.json'
 UsageTracker.is_dirty = false
 UsageTracker.save_timer = nil
 UsageTracker.initialized = false
@@ -238,7 +238,7 @@ function UsageTracker.init()
   end
 
   -- Create data directory if needed
-  local data_dir = vim.fn.stdpath('data') .. '/ssns'
+  local data_dir = vim.fn.stdpath('data') .. '/nvim-ssns'
   vim.fn.mkdir(data_dir, 'p')
 
   -- Load from file if exists
@@ -772,7 +772,7 @@ function UsageTracker.init_async(callback)
   local FileIO = require('nvim-ssns.async.file_io')
 
   -- Create data directory if needed
-  local data_dir = vim.fn.stdpath('data') .. '/ssns'
+  local data_dir = vim.fn.stdpath('data') .. '/nvim-ssns'
 
   FileIO.mkdir_async(data_dir, function(mkdir_success, mkdir_err)
     if not mkdir_success then

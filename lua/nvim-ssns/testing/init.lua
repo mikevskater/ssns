@@ -10,8 +10,8 @@ local unit_runner = require("nvim-ssns.testing.unit_runner")
 
 --- Default configuration
 M.config = {
-  test_file = vim.fn.stdpath("data") .. "/ssns/roadmap/phase-10/test_queries.sql",
-  output_dir = vim.fn.stdpath("data") .. "/ssns/test_results",
+  test_file = vim.fn.stdpath("data") .. "/nvim-ssns/roadmap/phase-10/test_queries.sql",
+  output_dir = vim.fn.stdpath("data") .. "/nvim-ssns/test_results",
 
   -- Connection configs by database type (ConnectionData structures)
   connections = {
@@ -72,7 +72,7 @@ function M.run_all_tests(opts)
   reporter.display_results(results)
 
   -- Write markdown report
-  local output_path = vim.fn.stdpath("data") .. "/ssns/test_results.md"
+  local output_path = vim.fn.stdpath("data") .. "/nvim-ssns/test_results.md"
   local success = reporter.write_markdown(results, output_path)
 
   if success then
@@ -105,7 +105,7 @@ function M.run_category_tests(category_folder, opts)
   reporter.display_results(results)
 
   -- Write markdown report
-  local output_path = vim.fn.stdpath("data") .. "/ssns/test_results.md"
+  local output_path = vim.fn.stdpath("data") .. "/nvim-ssns/test_results.md"
   local success = reporter.write_markdown(results, output_path)
 
   if success then
@@ -144,7 +144,7 @@ function M.run_test(test_number, opts)
   reporter.display_results(results)
 
   -- Write markdown report
-  local output_path = vim.fn.stdpath("data") .. string.format("/ssns/test_%d_result.md", test_number)
+  local output_path = vim.fn.stdpath("data") .. string.format("/nvim-ssns/test_%d_result.md", test_number)
   local success = reporter.write_markdown(results, output_path)
 
   if success then
@@ -197,7 +197,7 @@ function M.run_tests(test_numbers, opts)
   reporter.display_results(results)
 
   -- Write markdown report
-  local output_path = vim.fn.stdpath("data") .. "/ssns/test_batch_results.md"
+  local output_path = vim.fn.stdpath("data") .. "/nvim-ssns/test_batch_results.md"
   local success = reporter.write_markdown(results, output_path)
 
   if success then
@@ -228,7 +228,7 @@ function M.run_tests_by_type(completion_type, opts)
   reporter.display_results(results)
 
   -- Write markdown report
-  local output_path = vim.fn.stdpath("data") .. string.format("/ssns/test_results_%s.md", completion_type)
+  local output_path = vim.fn.stdpath("data") .. string.format("/nvim-ssns/test_results_%s.md", completion_type)
   local success = reporter.write_markdown(results, output_path)
 
   if success then
@@ -286,7 +286,7 @@ function M.run_tests_by_database(database_type, opts)
   reporter.display_results(results)
 
   -- Write markdown report
-  local output_path = vim.fn.stdpath("data") .. string.format("/ssns/test_results_%s.md", database_type)
+  local output_path = vim.fn.stdpath("data") .. string.format("/nvim-ssns/test_results_%s.md", database_type)
   local success = reporter.write_markdown(results, output_path)
 
   if success then
@@ -317,7 +317,7 @@ function M.run_unit_tests(opts)
   reporter.display_unit_results(results)
 
   -- Write markdown report
-  local output_path = vim.fn.stdpath("data") .. "/ssns/unit_test_results.md"
+  local output_path = vim.fn.stdpath("data") .. "/nvim-ssns/unit_test_results.md"
   local success = reporter.write_unit_markdown(results, output_path)
 
   if success then
@@ -398,7 +398,7 @@ function M.run_unit_tests_by_id_range(start_id, end_id, opts)
   reporter.display_unit_results(results)
 
   -- Write markdown report
-  local output_path = vim.fn.stdpath("data") .. string.format("/ssns/unit_test_results_%d_%d.md", start_id, end_id)
+  local output_path = vim.fn.stdpath("data") .. string.format("/nvim-ssns/unit_test_results_%d_%d.md", start_id, end_id)
   local success = reporter.write_unit_markdown(results, output_path)
 
   if success then
@@ -437,7 +437,7 @@ function M.run_provider_tests(opts)
 
   -- Write markdown report
   local suffix = opts.provider and string.format("_provider_%s", opts.provider) or "_providers"
-  local output_path = vim.fn.stdpath("data") .. string.format("/ssns/unit_test_results%s.md", suffix)
+  local output_path = vim.fn.stdpath("data") .. string.format("/nvim-ssns/unit_test_results%s.md", suffix)
   local success = reporter.write_unit_markdown(results, output_path)
 
   if success then
@@ -476,7 +476,7 @@ function M.run_context_tests(opts)
 
   -- Write markdown report
   local suffix = opts.context_type and string.format("_context_%s", opts.context_type) or "_context"
-  local output_path = vim.fn.stdpath("data") .. string.format("/ssns/unit_test_results%s.md", suffix)
+  local output_path = vim.fn.stdpath("data") .. string.format("/nvim-ssns/unit_test_results%s.md", suffix)
   local success = reporter.write_unit_markdown(results, output_path)
 
   if success then
@@ -541,7 +541,7 @@ function M.run_intellisense_tests(opts)
   reporter.display_unit_results(all_results)
 
   -- Write markdown report
-  local output_path = vim.fn.stdpath("data") .. "/ssns/unit_test_results_intellisense.md"
+  local output_path = vim.fn.stdpath("data") .. "/nvim-ssns/unit_test_results_intellisense.md"
   local success = reporter.write_unit_markdown(all_results, output_path)
 
   if success then
@@ -570,7 +570,7 @@ function M.run_formatter_tests(opts)
   reporter.display_unit_results(results)
 
   -- Write markdown report
-  local output_path = vim.fn.stdpath("data") .. "/ssns/formatter_test_results.md"
+  local output_path = vim.fn.stdpath("data") .. "/nvim-ssns/formatter_test_results.md"
   local success = reporter.write_unit_markdown(results, output_path)
 
   if success then
@@ -606,7 +606,7 @@ function M.run_async_integration_tests(opts)
     results.failed > 0 and vim.log.levels.WARN or vim.log.levels.INFO)
 
   -- Write markdown report
-  local output_path = vim.fn.stdpath("data") .. "/ssns/async_integration_test_results.md"
+  local output_path = vim.fn.stdpath("data") .. "/nvim-ssns/async_integration_test_results.md"
   local success = reporter.write_unit_markdown(results, output_path)
 
   if success then

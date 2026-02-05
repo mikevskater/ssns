@@ -8,6 +8,13 @@ Commands.setup_etl()
 -- Set comment string for ETL directives
 vim.bo.commentstring = "-- %s"
 
+-- Enable SSNS semantic highlighting for SQL blocks in ETL files
+-- Each SQL block gets highlighted using its own --@server and --@database connection
+local ok, EtlHighlighting = pcall(require, 'nvim-ssns.etl.highlighting')
+if ok then
+  EtlHighlighting.setup_buffer(vim.api.nvim_get_current_buf())
+end
+
 -- Enable SQL-like indentation
 vim.bo.tabstop = 2
 vim.bo.shiftwidth = 2

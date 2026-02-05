@@ -65,7 +65,7 @@ function Channel.create(on_message)
   if vim.fn.has('win32') == 1 then
     socket_path = string.format("\\\\.\\pipe\\ssns_thread_%s", id)
   else
-    socket_path = string.format("%s/ssns_thread_%s.sock", temp_dir, id)
+    socket_path = string.format("%s/nvim-ssns_thread_%s.sock", temp_dir, id)
   end
 
   local channel = setmetatable({

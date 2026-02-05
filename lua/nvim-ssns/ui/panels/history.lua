@@ -1331,7 +1331,7 @@ end
 
 ---Export history
 local function export_history()
-  local default_path = vim.fn.stdpath('data') .. '/ssns/history_export.txt'
+  local default_path = vim.fn.stdpath('data') .. '/nvim-ssns/history_export.txt'
 
   local export_win = UiFloat.create({
     title = "Export History",

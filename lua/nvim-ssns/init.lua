@@ -138,6 +138,15 @@ function Ssns.setup(user_config)
         end
         vim.notify(msg, vim.log.levels.INFO)
       end
+
+      -- Re-render tree if it's already open (servers were added after initial render)
+      if favorite_count > 0 then
+        local Buffer = require('nvim-ssns.ui.core.buffer')
+        local Tree = require('nvim-ssns.ui.core.tree')
+        if Buffer.is_open() then
+          Tree.render()
+        end
+      end
     end)
 
     -- Second pass: auto-connect servers asynchronously
@@ -674,7 +683,7 @@ function Ssns.run_category_tests(category)
   end
 
   Testing.reporter.display_results(results)
-  local output_path = vim.fn.stdpath("data") .. string.format("/ssns/test_results_%s.md", category)
+  local output_path = vim.fn.stdpath("data") .. string.format("/nvim-ssns/test_results_%s.md", category)
   local success = Testing.reporter.write_markdown(results, output_path)
 
   if success then
@@ -693,7 +702,7 @@ end
 
 ---Open the test results markdown file
 function Ssns.view_test_results()
-  local results_path = vim.fn.stdpath("data") .. "/ssns/test_results.md"
+  local results_path = vim.fn.stdpath("data") .. "/nvim-ssns/test_results.md"
 
   if vim.fn.filereadable(results_path) ~= 1 then
     vim.notify("Test results file not found. Run :SSNSRunTests first.", vim.log.levels.WARN)

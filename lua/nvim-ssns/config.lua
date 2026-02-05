@@ -861,7 +861,7 @@ local default_config = {
     max_buffers = 100,  -- Maximum buffer histories to keep (RedGate-style per-file tracking)
     max_entries_per_buffer = 100,  -- Maximum entries per buffer (100 changes per file)
     auto_persist = true,  -- Auto-save history to file after each query
-    persist_file = vim.fn.stdpath('data') .. '/ssns/query_history.json',
+    persist_file = vim.fn.stdpath('data') .. '/nvim-ssns/query_history.json',
     exclude_patterns = {
       "SELECT 1",  -- Health check queries
       "SELECT @@",  -- Server variable queries

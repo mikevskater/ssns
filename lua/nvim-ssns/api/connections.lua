@@ -132,7 +132,7 @@ function M.export_history(filepath)
   local QueryHistory = require('nvim-ssns.query_history')
 
   if not filepath or filepath == "" then
-    filepath = vim.fn.stdpath('data') .. '/ssns/history_export.txt'
+    filepath = vim.fn.stdpath('data') .. '/nvim-ssns/history_export.txt'
   end
 
   local format = filepath:match("%.([^.]+)$")

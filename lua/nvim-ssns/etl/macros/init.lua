@@ -192,8 +192,8 @@ function M.setup_auto_reload()
   reload_autocmd_id = vim.api.nvim_create_autocmd("BufWritePost", {
     group = group,
     pattern = {
-      "*/.ssns/macros/*.lua",
-      "*/ssns/macros/*.lua",
+      "*/.nvim-ssns/macros/*.lua",
+      "*/nvim-ssns/macros/*.lua",
     },
     callback = function(args)
       vim.schedule(function()

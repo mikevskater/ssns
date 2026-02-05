@@ -66,7 +66,7 @@ local current_theme = nil
 local loaded_themes = {}
 
 -- Theme persistence file path
-local persistence_file = vim.fn.stdpath("data") .. "/ssns_theme.txt"
+local persistence_file = vim.fn.stdpath("data") .. "/nvim-ssns/ssns_theme.txt"
 
 -- Themes directory paths
 local themes_dir = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":h") .. "/themes"

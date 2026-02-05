@@ -500,7 +500,7 @@ function M.run_and_report(opts)
   local report = M.generate_report(results, all_passed)
 
   -- Save report
-  local filepath = vim.fn.stdpath("data") .. "/ssns/regression_test_results.md"
+  local filepath = vim.fn.stdpath("data") .. "/nvim-ssns/regression_test_results.md"
   local dir = vim.fn.fnamemodify(filepath, ":h")
   vim.fn.mkdir(dir, "p")
   vim.fn.writefile(vim.split(report, "\n"), filepath)

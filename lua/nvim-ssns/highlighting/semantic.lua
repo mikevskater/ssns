@@ -272,7 +272,18 @@ end
 function SemanticHighlighter._get_connection(bufnr)
   local Cache = require('nvim-ssns.cache')
 
-  -- Try to get from UiQuery.query_buffers first
+  -- Tier 0: Check if this is an ETL buffer (.ssns) with block-aware connections
+  if vim.bo[bufnr].filetype == "ssns" then
+    local ok, EtlHighlighting = pcall(require, 'nvim-ssns.etl.highlighting')
+    if ok then
+      local connection = EtlHighlighting.get_connection_at_cursor(bufnr)
+      if connection then
+        return connection
+      end
+    end
+  end
+
+  -- Tier 1: Try to get from UiQuery.query_buffers first
   local success, UiQuery = pcall(require, 'ssns.ui.query')
   if success and UiQuery.query_buffers[bufnr] then
     local buffer_info = UiQuery.query_buffers[bufnr]

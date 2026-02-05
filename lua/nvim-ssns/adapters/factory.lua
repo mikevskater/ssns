@@ -25,7 +25,7 @@ function AdapterFactory.create_adapter_for_type(db_type, connection_config)
   end
 
   -- Load the appropriate adapter module
-  local adapter_module_name = string.format("ssns.adapters.%s", db_type)
+  local adapter_module_name = string.format("nvim-ssns.adapters.%s", db_type)
   local ok, adapter_module = pcall(require, adapter_module_name)
 
   if not ok then
@@ -61,7 +61,7 @@ end
 ---@param db_type string
 ---@return boolean exists
 function AdapterFactory.adapter_exists(db_type)
-  local adapter_module_name = string.format("ssns.adapters.%s", db_type)
+  local adapter_module_name = string.format("nvim-ssns.adapters.%s", db_type)
   local ok, _ = pcall(require, adapter_module_name)
   return ok
 end

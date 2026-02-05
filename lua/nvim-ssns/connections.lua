@@ -42,14 +42,14 @@ local FILE_VERSION = 2
 ---@return string path Full path to connections.json
 function Connections.get_file_path()
   local data_path = vim.fn.stdpath("data")
-  local ssns_path = data_path .. "/ssns"
+  local ssns_path = data_path .. "/nvim-ssns"
   return ssns_path .. "/connections.json"
 end
 
 ---Ensure the ssns data directory exists
 function Connections.ensure_directory()
   local data_path = vim.fn.stdpath("data")
-  local ssns_path = data_path .. "/ssns"
+  local ssns_path = data_path .. "/nvim-ssns"
   vim.fn.mkdir(ssns_path, "p")
 end
 

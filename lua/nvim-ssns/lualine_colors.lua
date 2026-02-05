@@ -502,7 +502,7 @@ end
 ---Get the colors file path
 ---@return string path
 local function get_colors_file_path()
-  return vim.fn.stdpath('data') .. '/ssns/lualine_colors.json'
+  return vim.fn.stdpath('data') .. '/nvim-ssns/lualine_colors.json'
 end
 
 ---Check if cache is still valid

@@ -293,7 +293,7 @@ function M.run_all_tests(opts)
   vim.notify(string.format("Running %d tests across %d database types...", #test_files, vim.tbl_count(tests_by_db)), vim.log.levels.INFO)
 
   -- Start incremental results file
-  local output_path = vim.fn.stdpath("data") .. "/ssns/test_results_live.md"
+  local output_path = vim.fn.stdpath("data") .. "/nvim-ssns/test_results_live.md"
   reporter.start_incremental(output_path, #test_files)
 
   local results = {}

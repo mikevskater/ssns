@@ -3,7 +3,7 @@
 local Debug = {}
 
 -- Log file path
-local log_file = vim.fn.stdpath('data') .. '/ssns_debug.log'
+local log_file = vim.fn.stdpath('data') .. '/nvim-ssns/debug.log'
 
 -- Buffer for pending log messages
 local log_buffer = {}

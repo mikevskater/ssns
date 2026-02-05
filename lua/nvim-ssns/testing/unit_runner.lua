@@ -162,7 +162,7 @@ UnitRunner.SKIP_TESTS = {
 ---@return table[] tests Array of test definitions with metadata
 function UnitRunner.scan_tests()
   local tests = {}
-  local base_path = vim.fn.stdpath("data") .. "/ssns/lua/ssns/testing/tests/unit"
+  local base_path = vim.fn.stdpath("data") .. "/nvim-ssns/lua/nvim-ssns/testing/tests/unit"
 
   -- Helper to load tests from a file
   local function load_test_file(filepath)
@@ -432,7 +432,7 @@ local function create_mock_table(name, schema, columns)
 end
 
 ---Create mock database structure for provider tests
----Matches the structure in lua/ssns/testing/database_structure.md
+---Matches the structure in lua/nvim-ssns/testing/database_structure.md
 ---@param connection_config table Connection configuration from test.context.connection
 ---@return table database Mock database object
 function UnitRunner._create_mock_database(connection_config)
@@ -1132,7 +1132,7 @@ end
 ---Generate a unique temp file path for testing
 ---@return string path Unique temp file path
 local function get_temp_file_path()
-  local temp_dir = vim.fn.stdpath("cache") .. "/ssns_test"
+  local temp_dir = vim.fn.stdpath("cache") .. "/nvim-ssns/test"
   vim.fn.mkdir(temp_dir, "p")
   return temp_dir .. "/test_" .. os.time() .. "_" .. math.random(10000, 99999) .. ".tmp"
 end
@@ -1140,7 +1140,7 @@ end
 ---Generate a unique temp directory path for testing
 ---@return string path Unique temp directory path
 local function get_temp_dir_path()
-  local temp_dir = vim.fn.stdpath("cache") .. "/ssns_test"
+  local temp_dir = vim.fn.stdpath("cache") .. "/nvim-ssns/test"
   return temp_dir .. "/dir_" .. os.time() .. "_" .. math.random(10000, 99999)
 end
 
@@ -1434,7 +1434,7 @@ function UnitRunner._run_async_connections_test(test)
   local expected = test.expected or {}
 
   -- Create a temp connections file for isolation
-  local temp_dir = vim.fn.stdpath("cache") .. "/ssns_test_connections"
+  local temp_dir = vim.fn.stdpath("cache") .. "/nvim-ssns/test_connections"
   vim.fn.mkdir(temp_dir, "p")
   local temp_file = temp_dir .. "/connections_" .. os.time() .. "_" .. math.random(10000, 99999) .. ".json"
 

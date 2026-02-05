@@ -312,9 +312,9 @@ end
 
 --- Save report to file
 --- @param report string Report content
---- @param filepath string? Output path (default: stdpath("data")/ssns/benchmark_results.md)
+--- @param filepath string? Output path (default: stdpath("data")/nvim-ssns/benchmark_results.md)
 function M.save_report(report, filepath)
-  filepath = filepath or (vim.fn.stdpath("data") .. "/ssns/benchmark_results.md")
+  filepath = filepath or (vim.fn.stdpath("data") .. "/nvim-ssns/benchmark_results.md")
   local dir = vim.fn.fnamemodify(filepath, ":h")
   vim.fn.mkdir(dir, "p")
   vim.fn.writefile(vim.split(report, "\n"), filepath)

@@ -50,7 +50,7 @@ local M = {}
 -- The cache is populated asynchronously at startup via LualineColors.init_async()
 local function load_colors_from_file()
   -- Use the lualine_colors module which has async-populated cache
-  local ok, lualine_colors = pcall(require, 'ssns.lualine_colors')
+  local ok, lualine_colors = pcall(require, 'nvim-ssns.lualine_colors')
   if ok and lualine_colors._get_cache then
     -- Get from cache only (never block on file I/O)
     -- Returns empty table if cache not yet populated
@@ -63,7 +63,7 @@ end
 
 -- Save colors to JSON file
 local function save_colors_to_file(colors)
-  local save_location = vim.fn.stdpath('data') .. '/ssns'
+  local save_location = vim.fn.stdpath('data') .. '/nvim-ssns'
 
   -- Create directory if it doesn't exist
   vim.fn.mkdir(save_location, 'p')

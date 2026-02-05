@@ -46,20 +46,20 @@ syn match ssnsInputPlaceholder /@input\>/
 " Template variable substitution
 syn match ssnsTemplateVar /{{[^}]\+}}/
 
-" Highlighting
-hi def link ssnsDirectiveKeyword Keyword
-hi def link ssnsBlockName Function
-hi def link ssnsServerName Identifier
-hi def link ssnsDatabaseName Type
-hi def link ssnsDescription Comment
-hi def link ssnsInputRef Special
-hi def link ssnsOutputType Constant
-hi def link ssnsMode Constant
-hi def link ssnsTarget Type
-hi def link ssnsVarName Identifier
-hi def link ssnsVarValue String
-hi def link ssnsNumber Number
-hi def link ssnsInputPlaceholder Special
-hi def link ssnsTemplateVar PreProc
+" Highlighting - Use SSNS theme groups for consistent styling
+hi def link ssnsDirectiveKeyword SsnsKeywordStatement
+hi def link ssnsBlockName SsnsFunction
+hi def link ssnsServerName SsnsSchema
+hi def link ssnsDatabaseName SsnsDatabase
+hi def link ssnsDescription SsnsComment
+hi def link ssnsInputRef SsnsParameter
+hi def link ssnsOutputType SsnsKeywordModifier
+hi def link ssnsMode SsnsKeywordModifier
+hi def link ssnsTarget SsnsTable
+hi def link ssnsVarName SsnsColumn
+hi def link ssnsVarValue SsnsString
+hi def link ssnsNumber SsnsNumber
+hi def link ssnsInputPlaceholder SsnsParameter
+hi def link ssnsTemplateVar SsnsKeywordGlobalVariable
 
 let b:current_syntax = "ssns"

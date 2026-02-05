@@ -21,10 +21,10 @@ end
 ---Get user macros directory path
 ---@return string
 local function get_user_path()
-  -- ~/.config/nvim/ssns/macros/ on Unix
-  -- ~/AppData/Local/nvim/ssns/macros/ on Windows
+  -- ~/.config/nvim/nvim-ssns/macros/ on Unix
+  -- ~/AppData/Local/nvim/nvim-ssns/macros/ on Windows
   local config_path = vim.fn.stdpath("config")
-  return config_path .. "/ssns/macros"
+  return config_path .. "/nvim-ssns/macros"
 end
 
 ---Get project macros directory path

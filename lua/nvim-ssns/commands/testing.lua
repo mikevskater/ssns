@@ -35,7 +35,7 @@ function M.register()
     desc = "Run tests in a specific category folder",
     complete = function()
       -- Get list of category folders from the tests directory
-      local tests_path = vim.fn.stdpath("config") .. "/lua/ssns/testing/tests"
+      local tests_path = vim.fn.stdpath("config") .. "/lua/nvim-ssns/testing/tests"
       local categories = {}
 
       local handle = vim.loop.fs_scandir(tests_path)

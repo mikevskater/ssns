@@ -135,7 +135,7 @@ end
 --- @param base_path string? Base path to scan (defaults to testing/tests)
 --- @return table test_files Array of {path: string, category: string, database_type: string, name: string, is_integration: boolean}
 function M.scan_test_folders(base_path)
-  base_path = base_path or (vim.fn.stdpath("data") .. "/ssns/lua/ssns/testing/tests")
+  base_path = base_path or (vim.fn.stdpath("data") .. "/nvim-ssns/lua/nvim-ssns/testing/tests")
 
   -- Ensure path exists
   local stat = vim.loop.fs_stat(base_path)
