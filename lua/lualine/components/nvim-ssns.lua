@@ -175,13 +175,137 @@ local function get_db_type_icon(server)
   end
 end
 
+-- Build server/database display parts from a server object and optional database
+-- @param server: ServerClass - Server object
+-- @param database: DatabaseClass? - Database object
+-- @param last_database: string? - Last used database name (overrides database object)
+-- @return: string - Formatted "ICON SERVER | DATABASE" or empty string
+local function build_connection_display(server, database, last_database)
+  local db_icon = get_db_type_icon(server)
+  local conn_config = server.connection_config
+  local parts = {}
+
+  -- Add server/file display
+  if conn_config and conn_config.type == "sqlite" then
+    local server_info = conn_config.server or {}
+    local file_display = server_info.database and server_info.database:gsub("\\", "/") or ":memory:"
+    table.insert(parts, db_icon .. ' ' .. file_display)
+  elseif conn_config and conn_config.server then
+    local server_info = conn_config.server
+    local server_display = server_info.host or "unknown"
+    if server_info.instance then
+      server_display = server_display .. "\\" .. server_info.instance
+    end
+    table.insert(parts, db_icon .. ' ' .. server_display)
+  end
+
+  -- Determine current database context
+  local current_db = last_database
+  if not current_db and database then
+    current_db = database.db_name
+  end
+
+  if current_db and current_db ~= '' then
+    table.insert(parts, current_db)
+  end
+
+  if #parts > 0 then
+    return table.concat(parts, ' | ')
+  end
+
+  return ''
+end
+
+-- Get ETL block info for the current cursor position
+-- @return: string - Formatted ETL status or empty string
+local function get_etl_status(bufnr)
+  local ok, EtlHighlighting = pcall(require, 'nvim-ssns.etl.highlighting')
+  if not ok or not EtlHighlighting.is_enabled(bufnr) then
+    return ''
+  end
+
+  local block = EtlHighlighting.get_block_at_cursor(bufnr)
+  if not block then
+    return ''
+  end
+
+  -- For SQL blocks, try to get connection context
+  if block.type == "sql" then
+    local connection = EtlHighlighting.get_connection_at_cursor(bufnr)
+    if connection and connection.server then
+      local display = build_connection_display(connection.server, connection.database)
+      if display ~= '' then
+        return display .. ' | [' .. block.name .. ']'
+      end
+    end
+    -- SQL block without resolved connection — show block name with server/db directives
+    local parts = {}
+    if block.server then table.insert(parts, block.server) end
+    if block.database then table.insert(parts, block.database) end
+    table.insert(parts, '[' .. block.name .. ']')
+    return table.concat(parts, ' | ')
+  end
+
+  -- Lua block — just show block name with type indicator
+  return '[' .. block.name .. '] (lua)'
+end
+
+-- Get ETL color for the current cursor position
+-- @return: table? - Color spec or nil
+local function get_etl_color(bufnr)
+  local ok, EtlHighlighting = pcall(require, 'nvim-ssns.etl.highlighting')
+  if not ok or not EtlHighlighting.is_enabled(bufnr) then
+    return nil
+  end
+
+  local connection = EtlHighlighting.get_connection_at_cursor(bufnr)
+  if not connection or not connection.server then
+    return nil
+  end
+
+  -- Reuse the same color lookup logic as query buffers
+  local conn_config = connection.server.connection_config
+  local lookup_name = nil
+
+  if conn_config and conn_config.type == "sqlite" then
+    local server_info = conn_config.server or {}
+    lookup_name = server_info.database and server_info.database:gsub("\\", "/") or ":memory:"
+  elseif conn_config and conn_config.server then
+    local server_info = conn_config.server
+    if server_info.database and server_info.database ~= '' then
+      if connection.database then
+        lookup_name = connection.database.db_name
+      else
+        lookup_name = server_info.database
+      end
+    elseif server_info.host then
+      lookup_name = server_info.host
+      if server_info.instance then
+        lookup_name = lookup_name .. "\\" .. server_info.instance
+      end
+    end
+  end
+
+  if not lookup_name then
+    return nil
+  end
+
+  return get_connection_color(lookup_name)
+end
+
 -- Main component function - returns the statusline text
--- Format: "ICON SERVER" or "ICON SERVER | DATABASE"
+-- Format: "ICON SERVER" or "ICON SERVER | DATABASE" or "ICON SERVER | DATABASE | [BLOCK]"
 -- @return: String - Formatted database connection info
 function M.ssns()
-  -- Check if we're in an SSNS query buffer
-  local UiQuery = require('nvim-ssns.ui.core.query')
   local bufnr = vim.api.nvim_get_current_buf()
+
+  -- ETL files: show current block with connection context
+  if vim.bo[bufnr].filetype == "ssns" then
+    return get_etl_status(bufnr)
+  end
+
+  -- Query buffers: show connection info
+  local UiQuery = require('nvim-ssns.ui.core.query')
 
   if not UiQuery.is_query_buffer(bufnr) then
     return ''
@@ -200,67 +324,30 @@ function M.ssns()
 
   -- Get server and database from buffer
   local server = UiQuery.get_server(bufnr)
-  local database = UiQuery.get_database(bufnr)
-
   if not server then
     return ''
   end
 
-  -- Get database type icon
-  local db_icon = get_db_type_icon(server)
-
-  -- Get buffer info for last_database
+  local database = UiQuery.get_database(bufnr)
   local buffer_info = UiQuery.query_buffers[bufnr]
   local last_database = buffer_info and buffer_info.last_database
 
-  -- Use connection_config directly
-  local conn_config = server.connection_config
-
-  -- Build the status string
-  local parts = {}
-
-  -- Add server/file display
-  if conn_config and conn_config.type == "sqlite" then
-    -- For SQLite, show the full file path
-    local server_info = conn_config.server or {}
-    local file_display = server_info.database and server_info.database:gsub("\\", "/") or ":memory:"
-    table.insert(parts, db_icon .. ' ' .. file_display)
-  elseif conn_config and conn_config.server then
-    -- For other databases, show host[\instance]
-    local server_info = conn_config.server
-    local server_display = server_info.host or "unknown"
-    if server_info.instance then
-      server_display = server_display .. "\\" .. server_info.instance
-    end
-    table.insert(parts, db_icon .. ' ' .. server_display)
-  end
-
-  -- Determine current database context
-  -- Priority: last_database (from attachment) > database.db_name (from tree)
-  local current_db = last_database
-  if not current_db and database then
-    current_db = database.db_name
-  end
-
-  -- Add database if we have one
-  if current_db and current_db ~= '' then
-    table.insert(parts, current_db)
-  end
-
-  -- Format: "ICON SERVER" or "ICON SERVER | DATABASE"
-  if #parts > 0 then
-    return table.concat(parts, ' | ')
-  end
-
-  return ''
+  return build_connection_display(server, database, last_database)
 end
 
 -- Color function for the component - returns dynamic color based on connection
 -- Uses server name for server-level connections, database name for database-level connections
 -- @return: Table - Color spec or nil for default
 function M.ssns_color()
-  local UiQuery = require('nvim-ssns.ui.core.query')
   local bufnr = vim.api.nvim_get_current_buf()
+
+  -- ETL files: color based on block's connection
+  if vim.bo[bufnr].filetype == "ssns" then
+    return get_etl_color(bufnr)
+  end
+
+  -- Query buffers
+  local UiQuery = require('nvim-ssns.ui.core.query')
 
   if not UiQuery.is_query_buffer(bufnr) then
     return nil
@@ -287,7 +374,6 @@ function M.ssns_color()
 
   -- SQLite always uses file path for color lookup (not database name)
   if conn_config and conn_config.type == "sqlite" then
-    -- For SQLite, use the full file path for color lookup
     local server_info = conn_config.server or {}
     if server_info.database then
       lookup_name = server_info.database:gsub("\\", "/")
@@ -296,9 +382,7 @@ function M.ssns_color()
     end
   elseif conn_config and conn_config.server then
     local server_info = conn_config.server
-    -- Check if database was specified in connection
     if server_info.database and server_info.database ~= '' then
-      -- Database-level connection: use database name for color
       local database = UiQuery.get_database(bufnr)
       if database then
         lookup_name = database.db_name
@@ -306,7 +390,6 @@ function M.ssns_color()
         lookup_name = server_info.database
       end
     elseif server_info.host then
-      -- Server-level connection: use server name for color
       lookup_name = server_info.host
       if server_info.instance then
         lookup_name = lookup_name .. "\\" .. server_info.instance
@@ -318,7 +401,6 @@ function M.ssns_color()
     return nil
   end
 
-  -- Get color for this connection
   return get_connection_color(lookup_name)
 end
 

@@ -642,6 +642,9 @@ function QueryResults.display_results(result, sql, execution_time_ms, query_bufn
     end
   end
 
+  -- Ensure query buffer association is set (needed for toggle/export on pre-created buffers)
+  pcall(vim.api.nvim_buf_set_var, result_buf, 'ssns_query_bufnr', query_bufnr)
+
   -- Format results with styled ContentBuilder (also returns line ranges and cell maps)
   local builder, result_set_ranges, cell_maps = QueryResults.format_results_styled(result.resultSets, sql, execution_time_ms, result.metadata)
 
@@ -716,28 +719,43 @@ function QueryResults.toggle_results(query_bufnr)
       -- Current buffer is a query buffer
       query_bufnr = current_buf
     else
-      vim.notify("SSNS: No query buffer context - run a query first", vim.log.levels.INFO)
-      return
+      -- Check if any results buffer is associated with this buffer (handles ETL and other sources)
+      local found = false
+      for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_is_valid(buf) then
+          local ok2, assoc = pcall(vim.api.nvim_buf_get_var, buf, 'ssns_query_bufnr')
+          if ok2 and assoc == current_buf then
+            query_bufnr = current_buf
+            found = true
+            break
+          end
+        end
+      end
+      if not found then
+        vim.notify("SSNS: No query buffer context - run a query first", vim.log.levels.INFO)
+        return
+      end
     end
   end
 
-  -- Generate the expected results buffer name
+  -- Find existing results buffer for this query buffer
+  -- First try name-based lookup, then fall back to ssns_query_bufnr var search
+  local result_buf = nil
+
+  -- Name-based lookup (standard SQL query results)
   local query_buf_name = vim.api.nvim_buf_get_name(query_bufnr)
   local short_name = query_buf_name:match("%[([^%]]+)%]") or tostring(query_bufnr)
   local results_buf_name = string.format("SSNS Results [%s]", short_name)
 
-  -- Find existing results buffer for this query buffer
-  -- Use bufnr() which handles unlisted/hidden buffers better than manual iteration
-  local result_buf = nil
   local existing_bufnr = vim.fn.bufnr(results_buf_name)
   if existing_bufnr ~= -1 and vim.api.nvim_buf_is_valid(existing_bufnr) then
     result_buf = existing_bufnr
   else
-    -- Fallback: iterate through all buffers (handles edge cases)
+    -- Fallback: find any buffer with ssns_query_bufnr pointing to our query buffer
     for _, buf in ipairs(vim.api.nvim_list_bufs()) do
       if vim.api.nvim_buf_is_valid(buf) then
-        local buf_name = vim.api.nvim_buf_get_name(buf)
-        if buf_name == results_buf_name then
+        local ok, assoc = pcall(vim.api.nvim_buf_get_var, buf, 'ssns_query_bufnr')
+        if ok and assoc == query_bufnr then
           result_buf = buf
           break
         end

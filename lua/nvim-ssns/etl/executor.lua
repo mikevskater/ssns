@@ -561,6 +561,154 @@ function EtlExecutor:execute()
   return summary
 end
 
+---Execute all blocks asynchronously with vim.schedule between blocks
+---This allows the event loop to process UI updates (spinner, progress) between blocks
+---@param on_complete fun(summary: EtlExecutionSummary) Callback when execution finishes
+function EtlExecutor:execute_async(on_complete)
+  self.context:start()
+
+  -- Report start (direct call, not vim.schedule - we're already in the event loop)
+  if self.progress_callback then
+    self.progress_callback({
+      type = "start",
+      script = self.script,
+      total_blocks = #self.script.blocks,
+    })
+  end
+
+  local blocks = self.script.blocks
+  local executor = self
+
+  -- Process blocks one at a time, yielding to event loop between each
+  local function process_block(i)
+    -- Check for cancellation
+    if executor.cancelled then
+      executor.context:cancel()
+      if executor.progress_callback then
+        executor.progress_callback({
+          type = "cancelled",
+          block = blocks[i],
+          block_index = i,
+          total_blocks = #blocks,
+        })
+      end
+      executor:_finalize(on_complete)
+      return
+    end
+
+    -- All blocks done
+    if i > #blocks then
+      executor:_finalize(on_complete)
+      return
+    end
+
+    local block = blocks[i]
+
+    -- Report block start (direct call)
+    executor.context:set_current_block(block.name)
+    if executor.progress_callback then
+      executor.progress_callback({
+        type = "block_start",
+        block = block,
+        block_index = i,
+        total_blocks = #blocks,
+      })
+    end
+
+    -- Defer the actual execution to allow UI to render the "block_start" update
+    vim.schedule(function()
+      -- Execute block
+      local result, err
+      local block_start = vim.loop.hrtime()
+
+      if block.type == "sql" then
+        result, err = executor:_execute_sql_block(block)
+      else
+        result, err = executor:_execute_lua_block(block)
+      end
+
+      local block_time = (vim.loop.hrtime() - block_start) / 1000000
+      executor.context:set_block_timing(block.name, block_time)
+
+      if err then
+        -- Block failed
+        executor.context:set_error(block.name, err)
+
+        if executor.progress_callback then
+          executor.progress_callback({
+            type = "block_error",
+            block = block,
+            block_index = i,
+            total_blocks = #blocks,
+            error = err,
+          })
+        end
+
+        -- Check if we should continue
+        if not block.options.continue_on_error then
+          executor.context:finish(false)
+          executor:_finalize(on_complete)
+          return
+        end
+      else
+        -- Block succeeded
+        executor.context:set_result(block.name, result)
+
+        if executor.progress_callback then
+          executor.progress_callback({
+            type = "block_complete",
+            block = block,
+            block_index = i,
+            total_blocks = #blocks,
+            result = result,
+          })
+        end
+      end
+
+      -- Schedule next block (yields to event loop for UI updates)
+      vim.schedule(function()
+        process_block(i + 1)
+      end)
+    end)
+  end
+
+  -- Start processing from block 1
+  process_block(1)
+end
+
+---Finalize execution and call completion callback
+---@param on_complete fun(summary: EtlExecutionSummary)?
+function EtlExecutor:_finalize(on_complete)
+  -- Cleanup temp tables created for cross-server transfers
+  local _, cleanup_errors = Transfer.cleanup(self.context)
+  if #cleanup_errors > 0 then
+    for _, err in ipairs(cleanup_errors) do
+      vim.schedule(function()
+        vim.notify("ETL cleanup warning: " .. err, vim.log.levels.WARN)
+      end)
+    end
+  end
+
+  -- Finalize
+  if self.context.status == "running" then
+    local has_errors = self.context:has_any_error()
+    self.context:finish(not has_errors)
+  end
+
+  local summary = self.context:get_summary()
+
+  if self.progress_callback then
+    self.progress_callback({
+      type = "complete",
+      summary = summary,
+    })
+  end
+
+  if on_complete then
+    on_complete(summary)
+  end
+end
+
 ---Cancel execution
 function EtlExecutor:cancel()
   self.cancelled = true

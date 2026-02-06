@@ -4,6 +4,23 @@ local EtlResults = {}
 
 local ContentBuilder = require("nvim-float.content")
 
+-- Lazy-loaded dependencies for styled result tables
+local QueryResults
+local function get_query_results()
+  if not QueryResults then
+    QueryResults = require("nvim-ssns.ui.core.query.results")
+  end
+  return QueryResults
+end
+
+local Config
+local function get_config()
+  if not Config then
+    Config = require("nvim-ssns.config")
+  end
+  return Config
+end
+
 ---@class EtlDisplayState
 ---@field script EtlScript The script being executed
 ---@field context EtlContext? Execution context (set after execution)
@@ -232,13 +249,11 @@ function EtlResults.build_results(script, context, opts)
         cb:blank()
       end
 
-      -- Format result table
-      local preview_rows = math.min(#result.rows, max_preview_rows)
-      EtlResults._format_result_table(cb, result.rows, result.columns, preview_rows)
-
-      if #result.rows > preview_rows then
-        cb:styled(string.format("  ... and %d more rows", #result.rows - preview_rows), "muted")
-      end
+      -- Format result table using styled query results formatter
+      local results_config = vim.tbl_deep_extend("force", get_config().get_results(), {
+        max_display_rows = max_preview_rows,
+      })
+      get_query_results().format_single_result_set_styled(result.rows, result.columns, cb, results_config)
       cb:blank()
     elseif result and result.rows_affected then
       cb:styled("  Commands completed successfully.", "success")
@@ -284,70 +299,6 @@ function EtlResults.build_results(script, context, opts)
   end
 
   return cb
-end
-
----Format a result table with columns
----@param cb ContentBuilder
----@param rows table[]
----@param columns table<string, ColumnMeta>?
----@param max_rows number
-function EtlResults._format_result_table(cb, rows, columns, max_rows)
-  if #rows == 0 then
-    return
-  end
-
-  -- Get column names from first row
-  local col_names = {}
-  for col_name, _ in pairs(rows[1]) do
-    table.insert(col_names, col_name)
-  end
-  table.sort(col_names)
-
-  -- Calculate column widths
-  local col_widths = {}
-  for _, col_name in ipairs(col_names) do
-    col_widths[col_name] = #col_name
-  end
-
-  local preview_rows = {}
-  for i = 1, math.min(#rows, max_rows) do
-    local row = rows[i]
-    for _, col_name in ipairs(col_names) do
-      local val = row[col_name]
-      local val_str = val == nil and "NULL" or tostring(val)
-      if #val_str > col_widths[col_name] then
-        col_widths[col_name] = math.min(#val_str, 30) -- Max 30 chars per column
-      end
-    end
-    table.insert(preview_rows, row)
-  end
-
-  -- Build header
-  local header_parts = {}
-  local separator_parts = {}
-  for _, col_name in ipairs(col_names) do
-    local width = col_widths[col_name]
-    table.insert(header_parts, string.format("%-" .. width .. "s", col_name:sub(1, width)))
-    table.insert(separator_parts, string.rep("-", width))
-  end
-
-  cb:styled("  | " .. table.concat(header_parts, " | ") .. " |", "header")
-  cb:styled("  |-" .. table.concat(separator_parts, "-|-") .. "-|", "muted")
-
-  -- Build rows
-  for _, row in ipairs(preview_rows) do
-    local row_parts = {}
-    for _, col_name in ipairs(col_names) do
-      local val = row[col_name]
-      local val_str = val == nil and "NULL" or tostring(val)
-      local width = col_widths[col_name]
-      if #val_str > width then
-        val_str = val_str:sub(1, width - 1) .. "…"
-      end
-      table.insert(row_parts, string.format("%-" .. width .. "s", val_str))
-    end
-    cb:line("  | " .. table.concat(row_parts, " | ") .. " |")
-  end
 end
 
 ---Create or get results buffer
@@ -398,30 +349,21 @@ local function show_results_window(bufnr)
   return winid
 end
 
+---Namespace for ETL results highlights
+local etl_ns_id = vim.api.nvim_create_namespace("ssns_etl_results")
+
 ---Update buffer content from ContentBuilder
 ---@param bufnr number Buffer number
 ---@param builder ContentBuilder
 local function update_buffer(bufnr, builder)
-  local lines = builder:build_lines()
-  local highlights = builder:build_highlights()
-
-  vim.api.nvim_buf_set_option(bufnr, "modifiable", true)
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
-  vim.api.nvim_buf_set_option(bufnr, "modifiable", false)
-
-  -- Apply highlights
-  local ns_id = vim.api.nvim_create_namespace("ssns_etl_results")
-  vim.api.nvim_buf_clear_namespace(bufnr, ns_id, 0, -1)
-
-  for _, hl in ipairs(highlights) do
-    pcall(vim.api.nvim_buf_add_highlight, bufnr, ns_id, hl.group, hl.line, hl.col_start, hl.col_end)
-  end
+  builder:render_to_buffer(bufnr, etl_ns_id)
 end
 
 ---Create a progress callback for ETL execution
 ---@param script_id string Unique script identifier
 ---@param script EtlScript The script being executed
 ---@return fun(event: EtlProgressEvent) callback
+---@return number bufnr The results buffer number (for reuse by QueryResults)
 function EtlResults.create_progress_callback(script_id, script)
   -- Initialize display state
   local bufnr = get_or_create_buffer(script_id)
@@ -435,67 +377,63 @@ function EtlResults.create_progress_callback(script_id, script)
     mode = "progress",
   }
 
-  return function(event)
+  local callback = function(event)
     local state = active_displays[script_id]
     if not state then
       return
     end
 
-    vim.schedule(function()
-      if event.type == "start" then
-        -- Show initial progress
-        local context = require("nvim-ssns.etl.context").new(script)
-        state.context = context
-        local builder = EtlResults.build_progress(script, context, nil)
-        update_buffer(state.bufnr, builder)
-      elseif event.type == "block_start" then
-        -- Update progress with current block
-        if state.context and event.block_index then
-          local builder = EtlResults.build_progress(script, state.context, event.block_index)
-          update_buffer(state.bufnr, builder)
-        end
-      elseif event.type == "block_complete" or event.type == "block_error" then
-        -- Update progress with completed block
-        if state.context and event.block_index then
-          -- Copy result/error to our tracking context
-          if event.result then
-            state.context:set_result(event.block.name, event.result)
-          end
-          if event.error then
-            state.context:set_error(event.block.name, event.error)
-          end
-          if event.block_index then
-            state.context:set_block_timing(
-              event.block.name,
-              event.result and event.result.execution_time_ms or 0
-            )
-          end
-          local builder = EtlResults.build_progress(script, state.context, event.block_index + 1)
-          update_buffer(state.bufnr, builder)
-        end
-      elseif event.type == "complete" then
-        -- Switch to results mode
-        state.mode = "results"
-        if event.summary then
-          local builder = EtlResults.build_results(script, state.context)
-          update_buffer(state.bufnr, builder)
-        end
-      elseif event.type == "cancelled" then
-        -- Show cancellation
-        local builder = ContentBuilder.new()
-        builder:styled("ETL Execution Cancelled", "warning")
-        builder:blank()
-        if state.context then
-          local summary = state.context:get_summary()
-          builder:styled(
-            string.format("Completed %d/%d blocks before cancellation", summary.completed_blocks, summary.total_blocks),
-            "muted"
-          )
-        end
+    if event.type == "start" then
+      -- Show initial progress
+      local context = require("nvim-ssns.etl.context").new(script)
+      state.context = context
+      local builder = EtlResults.build_progress(script, context, nil)
+      update_buffer(state.bufnr, builder)
+    elseif event.type == "block_start" then
+      -- Update progress with current block
+      if state.context and event.block_index then
+        local builder = EtlResults.build_progress(script, state.context, event.block_index)
         update_buffer(state.bufnr, builder)
       end
-    end)
+    elseif event.type == "block_complete" or event.type == "block_error" then
+      -- Update progress with completed block
+      if state.context and event.block_index then
+        -- Copy result/error to our tracking context
+        if event.result then
+          state.context:set_result(event.block.name, event.result)
+        end
+        if event.error then
+          state.context:set_error(event.block.name, event.error)
+        end
+        if event.block_index then
+          state.context:set_block_timing(
+            event.block.name,
+            event.result and event.result.execution_time_ms or 0
+          )
+        end
+        local builder = EtlResults.build_progress(script, state.context, event.block_index + 1)
+        update_buffer(state.bufnr, builder)
+      end
+    elseif event.type == "complete" then
+      -- Mark as results mode; actual results rendering is handled by QueryResults
+      state.mode = "results"
+    elseif event.type == "cancelled" then
+      -- Show cancellation
+      local builder = ContentBuilder.new()
+      builder:styled("ETL Execution Cancelled", "warning")
+      builder:blank()
+      if state.context then
+        local summary = state.context:get_summary()
+        builder:styled(
+          string.format("Completed %d/%d blocks before cancellation", summary.completed_blocks, summary.total_blocks),
+          "muted"
+        )
+      end
+      update_buffer(state.bufnr, builder)
+    end
   end
+
+  return callback, bufnr
 end
 
 ---Display ETL results in a buffer (after execution)

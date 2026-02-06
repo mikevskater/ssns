@@ -341,14 +341,12 @@ function EtlContext.result_from_node(node_result, block_name, block_type, execut
 
     -- Convert columns to our format
     if rs.columns then
-      local idx = 1
       for col_name, col_info in pairs(rs.columns) do
         columns[col_name] = {
           name = col_name,
           type = col_info.type,
-          index = idx,
+          index = col_info.index or 0,
         }
-        idx = idx + 1
       end
     end
   end

@@ -8,7 +8,7 @@ local Config = require("nvim-ssns.config")
 local Macros = require("nvim-ssns.etl.macros")
 local ContentBuilder = require("nvim-float.content")
 
--- Lazy load UI module
+-- Lazy load modules
 local EtlResults
 local function get_results_ui()
   if not EtlResults then
@@ -17,9 +17,64 @@ local function get_results_ui()
   return EtlResults
 end
 
+local QueryResults
+local function get_query_results()
+  if not QueryResults then
+    -- Require the parent module first to ensure _init() runs (sets UiQuery reference)
+    require("nvim-ssns.ui.core.query")
+    QueryResults = require("nvim-ssns.ui.core.query.results")
+  end
+  return QueryResults
+end
+
 -- Track active executor for cancellation
 ---@type EtlExecutor?
 local active_executor = nil
+
+---Convert ETL execution results to the standard resultSets format
+---used by QueryResults.display_results()
+---@param script EtlScript
+---@param context EtlContext
+---@return table result { resultSets, metadata }
+---@return number total_time_ms
+local function convert_etl_to_result(script, context)
+  local resultSets = {}
+  local rowsAffected = {}
+  local total_time_ms = 0
+
+  for _, block in ipairs(script.blocks) do
+    local result = context:get_result(block.name)
+    local block_time = context:get_block_timing(block.name) or 0
+    total_time_ms = total_time_ms + block_time
+
+    if result then
+      if result.rows and #result.rows > 0 then
+        -- SELECT-like result: add as a result set
+        table.insert(resultSets, {
+          columns = result.columns,
+          rows = result.rows,
+          rowCount = result.row_count or #result.rows,
+          chunk_execution_time_ms = block_time,
+        })
+      elseif result.rows_affected then
+        -- DML result: track in rowsAffected
+        table.insert(rowsAffected, result.rows_affected)
+      else
+        -- Empty result (e.g. DDL success)
+        table.insert(rowsAffected, 0)
+      end
+    end
+  end
+
+  return {
+    success = true,
+    resultSets = resultSets,
+    metadata = {
+      rowsAffected = #rowsAffected > 0 and rowsAffected or nil,
+      total_execution_time_ms = total_time_ms,
+    },
+  }, total_time_ms
+end
 
 ---Parse current buffer as ETL script
 ---@param bufnr number? Buffer number (defaults to current)
@@ -72,12 +127,9 @@ function M.execute(opts)
   -- Generate unique script ID for progress tracking
   local script_id = tostring(os.time()) .. "_" .. math.random(1000, 9999)
 
-  -- Create progress callback
+  -- Create progress callback (this creates and shows the results buffer)
   local ui = get_results_ui()
-  local progress_callback = ui.create_progress_callback(script_id, script)
-
-  -- Notify start
-  vim.notify(string.format("Executing ETL script: %d blocks", #script.blocks), vim.log.levels.INFO)
+  local progress_callback, results_bufnr = ui.create_progress_callback(script_id, script)
 
   -- Execute with progress callback
   local executor = EtlExecutor.new(script, {
@@ -89,23 +141,20 @@ function M.execute(opts)
   -- Track for cancellation
   active_executor = executor
 
-  -- Execute (this is synchronous for now, could be made async)
-  local summary = executor:execute()
+  -- Set up Ctrl+R toggle on the ETL source buffer (matches SQL query buffer behavior)
+  vim.keymap.set("n", "<C-r>", function()
+    get_query_results().toggle_results(bufnr)
+  end, { buffer = bufnr, desc = "Toggle ETL results window" })
 
-  -- Clear active executor
-  active_executor = nil
+  -- Execute asynchronously - yields to event loop between blocks for UI updates
+  executor:execute_async(function()
+    active_executor = nil
 
-  -- Display final results
-  local context = executor:get_context()
-  ui.display(script, context, script_id)
-
-  -- Notify completion
-  if summary.success then
-    vim.notify(string.format("ETL complete: %d/%d blocks successful (%dms)",
-      summary.blocks_completed, summary.blocks_total, summary.total_time_ms), vim.log.levels.INFO)
-  else
-    vim.notify(string.format("ETL failed: %s", summary.error or "Unknown error"), vim.log.levels.ERROR)
-  end
+    -- Convert ETL results to standard format and display using SQL results pipeline
+    local context = executor:get_context()
+    local result, total_time_ms = convert_etl_to_result(script, context)
+    get_query_results().display_results(result, "ETL Script", total_time_ms, bufnr, results_bufnr)
+  end)
 end
 
 ---Execute single block under cursor
@@ -148,13 +197,16 @@ function M.execute_block()
   -- Generate unique script ID
   local script_id = tostring(os.time()) .. "_block_" .. target_block.name
 
-  -- Create progress callback
+  -- Create progress callback (this creates and shows the results buffer)
   local ui = get_results_ui()
-  local progress_callback = ui.create_progress_callback(script_id, single_block_script)
+  local progress_callback, results_bufnr = ui.create_progress_callback(script_id, single_block_script)
 
-  vim.notify(string.format("Executing block: %s", target_block.name), vim.log.levels.INFO)
+  -- Set up Ctrl+R toggle on the ETL source buffer (matches SQL query buffer behavior)
+  vim.keymap.set("n", "<C-r>", function()
+    get_query_results().toggle_results(bufnr)
+  end, { buffer = bufnr, desc = "Toggle ETL results window" })
 
-  -- Execute
+  -- Execute asynchronously
   local executor = EtlExecutor.new(single_block_script, {
     progress_callback = progress_callback,
     bufnr = bufnr,
@@ -162,20 +214,15 @@ function M.execute_block()
   })
 
   active_executor = executor
-  local summary = executor:execute()
-  active_executor = nil
 
-  -- Display results
-  local context = executor:get_context()
-  ui.display(single_block_script, context, script_id)
+  executor:execute_async(function()
+    active_executor = nil
 
-  if summary.success then
-    vim.notify(string.format("Block '%s' complete (%dms)",
-      target_block.name, summary.total_time_ms), vim.log.levels.INFO)
-  else
-    vim.notify(string.format("Block '%s' failed: %s",
-      target_block.name, summary.error or "Unknown error"), vim.log.levels.ERROR)
-  end
+    -- Convert ETL results to standard format and display using SQL results pipeline
+    local context = executor:get_context()
+    local result, total_time_ms = convert_etl_to_result(single_block_script, context)
+    get_query_results().display_results(result, "ETL Block: " .. target_block.name, total_time_ms, bufnr, results_bufnr)
+  end)
 end
 
 ---Validate ETL script without executing
