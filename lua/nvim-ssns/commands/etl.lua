@@ -48,13 +48,27 @@ local function convert_etl_to_result(script, context)
     total_time_ms = total_time_ms + block_time
 
     if result then
-      if result.rows and #result.rows > 0 then
-        -- SELECT-like result: add as a result set
+      if result.all_result_sets then
+        -- Multi-statement block: emit all result sets
+        for _, rs in ipairs(result.all_result_sets) do
+          if rs.rows and #rs.rows > 0 then
+            table.insert(resultSets, {
+              columns = rs.columns,
+              rows = rs.rows,
+              rowCount = #rs.rows,
+              chunk_execution_time_ms = block_time,
+              block_name = block.name,
+            })
+          end
+        end
+      elseif result.rows and #result.rows > 0 then
+        -- Single result set
         table.insert(resultSets, {
           columns = result.columns,
           rows = result.rows,
           rowCount = result.row_count or #result.rows,
           chunk_execution_time_ms = block_time,
+          block_name = block.name,
         })
       elseif result.rows_affected then
         -- DML result: track in rowsAffected

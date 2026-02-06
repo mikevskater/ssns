@@ -24,6 +24,7 @@ EtlContext.__index = EtlContext
 ---@field block_type "sql"|"lua" Source block type
 ---@field generated_sql string? For Lua blocks, the SQL that was generated
 ---@field output_type "sql"|"data" Whether result came from SQL execution or data() return
+---@field all_result_sets table[]? All result sets from Node.js (for multi-statement blocks)
 
 ---@class ColumnMeta
 ---@field name string Column name
@@ -351,6 +352,28 @@ function EtlContext.result_from_node(node_result, block_name, block_type, execut
     end
   end
 
+  -- Build all_result_sets when there are multiple result sets
+  local all_result_sets = nil
+  if node_result.resultSets and #node_result.resultSets > 1 then
+    all_result_sets = {}
+    for _, rs in ipairs(node_result.resultSets) do
+      local rs_columns = {}
+      if rs.columns then
+        for col_name, col_info in pairs(rs.columns) do
+          rs_columns[col_name] = {
+            name = col_name,
+            type = col_info.type,
+            index = col_info.index or 0,
+          }
+        end
+      end
+      table.insert(all_result_sets, {
+        rows = rs.rows or {},
+        columns = rs_columns,
+      })
+    end
+  end
+
   -- Extract rowsAffected from metadata
   if node_result.metadata and node_result.metadata.rowsAffected then
     local ra = node_result.metadata.rowsAffected
@@ -374,6 +397,7 @@ function EtlContext.result_from_node(node_result, block_name, block_type, execut
     block_type = block_type,
     generated_sql = generated_sql,
     output_type = "sql",
+    all_result_sets = all_result_sets,
   }
 end
 

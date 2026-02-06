@@ -466,6 +466,9 @@ function QueryResults.format_results_styled(resultSets, sql, execution_time_ms, 
     total_time = total_ms < 1000 and string.format("%.0fms", total_ms) or string.format("%.2fs", total_ms / 1000)
   end
 
+  -- Track previous block name for ETL block-change detection
+  local prev_block_name = nil
+
   for i, resultSet in ipairs(resultSets) do
     local rows = resultSet.rows or {}
     local row_count = #rows
@@ -482,9 +485,23 @@ function QueryResults.format_results_styled(resultSets, sql, execution_time_ms, 
       end
     end
 
-    -- Add divider if multiple result sets or configured
-    if #resultSets > 1 or show_result_set_info then
-      if i > 1 or show_result_set_info then
+    -- Add block label separator when block changes (ETL results)
+    local current_block = resultSet.block_name
+    if current_block and current_block ~= prev_block_name then
+      if i > 1 then
+        builder:blank()
+      end
+      -- Render block label: "── block_name ──────────────────────────"
+      local label = " " .. current_block .. " "
+      local pad_width = math.max(0, 60 - #label - 2)
+      local separator_line = "──" .. label .. string.rep("─", pad_width)
+      builder:styled(separator_line, "header")
+      builder:blank()
+      prev_block_name = current_block
+    elseif i > 1 then
+      -- Non-ETL or same block: use existing divider logic
+      -- Add divider if multiple result sets or configured
+      if #resultSets > 1 or show_result_set_info then
         -- Format per-result execution time
         local run_time = ""
         if resultSet.chunk_execution_time_ms then
@@ -507,11 +524,32 @@ function QueryResults.format_results_styled(resultSets, sql, execution_time_ms, 
           end
         end
       end
-    end
 
-    -- Add blank line between result sets
-    if i > 1 then
+      -- Add blank line between result sets
       builder:blank()
+    else
+      -- First result set with show_result_set_info: show divider info above
+      if show_result_set_info then
+        local run_time = ""
+        if resultSet.chunk_execution_time_ms then
+          local ms = resultSet.chunk_execution_time_ms
+          run_time = ms < 1000 and string.format("%.0fms", ms) or string.format("%.2fs", ms / 1000)
+        end
+
+        if divider_format ~= "" then
+          local metadata = {
+            row_count = row_count, col_count = col_count,
+            result_set_num = i, total_result_sets = #resultSets,
+            run_time = run_time, total_time = total_time,
+            chunk_number = resultSet.chunk_number, batch_number = resultSet.batch_number,
+            date = date_str, time = time_str, result_width = 80,
+          }
+          local divider_lines = QueryResults.parse_divider_format(divider_format, metadata)
+          for _, div_line in ipairs(divider_lines) do
+            builder:styled(div_line, "muted")
+          end
+        end
+      end
     end
 
     -- Track start line for this result set (1-indexed for cursor position)
