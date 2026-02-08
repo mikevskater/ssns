@@ -22,7 +22,7 @@ return {
   ---@return number result
   safe_divide = function(numerator, denominator, default)
     default = default or 0
-    if denominator == 0 or denominator == nil then
+    if denominator == 0 or denominator == nil or denominator == vim.NIL then
       return default
     end
     return numerator / denominator
@@ -66,14 +66,14 @@ return {
   ---@param value any Value to check
   ---@return boolean is_empty
   is_empty = function(value)
-    return value == nil or value == ""
+    return value == nil or value == vim.NIL or value == ""
   end,
 
   ---Check if value is not nil and not empty string
   ---@param value any Value to check
   ---@return boolean has_value
   has_value = function(value)
-    return value ~= nil and value ~= ""
+    return value ~= nil and value ~= vim.NIL and value ~= ""
   end,
 
   ---Default value if nil or empty
@@ -81,7 +81,7 @@ return {
   ---@param default any Default to return if nil or empty
   ---@return any result
   default_if_empty = function(value, default)
-    if value == nil or value == "" then
+    if value == nil or value == vim.NIL or value == "" then
       return default
     end
     return value
@@ -103,7 +103,7 @@ return {
   ---@return string result
   to_string = function(value, nil_value)
     nil_value = nil_value or ""
-    if value == nil then
+    if value == nil or value == vim.NIL then
       return nil_value
     end
     return tostring(value)
@@ -134,7 +134,7 @@ return {
         return default
       end
       current = current[key]
-      if current == nil then
+      if current == nil or current == vim.NIL then
         return default
       end
     end
@@ -180,7 +180,7 @@ return {
   ---@param value string String to trim
   ---@return string trimmed
   trim = function(value)
-    if value == nil then
+    if value == nil or value == vim.NIL then
       return ""
     end
     return tostring(value):match("^%s*(.-)%s*$")

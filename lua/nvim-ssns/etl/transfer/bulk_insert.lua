@@ -12,7 +12,7 @@ BulkInsert.DEFAULT_BATCH_SIZE = 1000
 ---@param db_type string Database type
 ---@return string
 local function escape_value(value, db_type)
-  if value == nil then
+  if value == nil or value == vim.NIL then
     return "NULL"
   end
 

@@ -17,7 +17,7 @@ local TypeMapper = {}
 ---@return number? max_length For strings
 ---@return boolean? has_decimal For numbers
 local function analyze_value(value)
-  if value == nil then
+  if value == nil or value == vim.NIL then
     return "nil", nil, nil
   end
 

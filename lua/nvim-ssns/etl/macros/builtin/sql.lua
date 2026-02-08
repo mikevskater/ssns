@@ -6,7 +6,7 @@ return {
   ---@param identifier string Identifier to quote
   ---@return string quoted
   quote_ident = function(identifier)
-    if identifier == nil then
+    if identifier == nil or identifier == vim.NIL then
       return "NULL"
     end
     -- Remove existing brackets and re-add
@@ -18,7 +18,7 @@ return {
   ---@param value string|nil Value to quote
   ---@return string quoted
   quote_string = function(value)
-    if value == nil then
+    if value == nil or value == vim.NIL then
       return "NULL"
     end
     return "'" .. tostring(value):gsub("'", "''") .. "'"
@@ -28,7 +28,7 @@ return {
   ---@param value any Value to quote
   ---@return string quoted
   quote_value = function(value)
-    if value == nil then
+    if value == nil or value == vim.NIL then
       return "NULL"
     elseif type(value) == "number" then
       return tostring(value)
@@ -49,13 +49,13 @@ return {
 
     for column, value in pairs(conditions) do
       local condition
-      if value == nil then
+      if value == nil or value == vim.NIL then
         condition = "[" .. column .. "] IS NULL"
       elseif type(value) == "table" then
         -- IN clause
         local values = {}
         for _, v in ipairs(value) do
-          if v == nil then
+          if v == nil or v == vim.NIL then
             table.insert(values, "NULL")
           elseif type(v) == "number" then
             table.insert(values, tostring(v))
@@ -126,7 +126,7 @@ return {
       local values = {}
       for _, col in ipairs(columns) do
         local val = row[col]
-        if val == nil then
+        if val == nil or val == vim.NIL then
           table.insert(values, "NULL")
         elseif type(val) == "number" then
           table.insert(values, tostring(val))
@@ -153,7 +153,7 @@ return {
 
     for column, value in pairs(set_values) do
       local val_str
-      if value == nil then
+      if value == nil or value == vim.NIL then
         val_str = "NULL"
       elseif type(value) == "number" then
         val_str = tostring(value)
@@ -172,7 +172,7 @@ return {
       local conditions = {}
       for column, value in pairs(where_conditions) do
         local condition
-        if value == nil then
+        if value == nil or value == vim.NIL then
           condition = "[" .. column .. "] IS NULL"
         elseif type(value) == "number" then
           condition = "[" .. column .. "] = " .. tostring(value)
@@ -200,7 +200,7 @@ return {
       local conditions = {}
       for column, value in pairs(where_conditions) do
         local condition
-        if value == nil then
+        if value == nil or value == vim.NIL then
           condition = "[" .. column .. "] IS NULL"
         elseif type(value) == "number" then
           condition = "[" .. column .. "] = " .. tostring(value)
@@ -223,7 +223,7 @@ return {
   in_clause = function(values)
     local parts = {}
     for _, v in ipairs(values) do
-      if v == nil then
+      if v == nil or v == vim.NIL then
         table.insert(parts, "NULL")
       elseif type(v) == "number" then
         table.insert(parts, tostring(v))
@@ -261,7 +261,7 @@ return {
       local conditions = {}
       for column, value in pairs(opts.where) do
         local condition
-        if value == nil then
+        if value == nil or value == vim.NIL then
           condition = "[" .. column .. "] IS NULL"
         elseif type(value) == "number" then
           condition = "[" .. column .. "] = " .. tostring(value)
@@ -300,7 +300,7 @@ return {
 
     for _, wt in ipairs(when_thens) do
       local then_str
-      if wt.then_value == nil then
+      if wt.then_value == nil or wt.then_value == vim.NIL then
         then_str = "NULL"
       elseif type(wt.then_value) == "number" then
         then_str = tostring(wt.then_value)
@@ -312,7 +312,7 @@ return {
       table.insert(parts, "  WHEN " .. wt.when_cond .. " THEN " .. then_str)
     end
 
-    if else_value ~= nil then
+    if else_value ~= nil and else_value ~= vim.NIL then
       local else_str
       if type(else_value) == "number" then
         else_str = tostring(else_value)

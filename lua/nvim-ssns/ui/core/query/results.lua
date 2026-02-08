@@ -552,6 +552,26 @@ function QueryResults.format_results_styled(resultSets, sql, execution_time_ms, 
       end
     end
 
+    -- Block error entry (from ETL execution) — render inline and skip table
+    if resultSet.block_error then
+      local err = resultSet.block_error
+      builder:styled("Error: " .. (err.message or "Unknown error"), "error")
+      if err.sql then
+        local sql_preview = err.sql:sub(1, 200)
+        if #err.sql > 200 then
+          sql_preview = sql_preview .. "..."
+        end
+        builder:blank()
+        builder:styled("SQL: " .. sql_preview:gsub("\n", " "), "muted")
+      end
+      if err.stack then
+        builder:blank()
+        builder:styled("Stack: " .. tostring(err.stack):gsub("\n", " "), "muted")
+      end
+      builder:blank()
+      goto continue_result_set
+    end
+
     -- Track start line for this result set (1-indexed for cursor position)
     local start_line = builder:line_count() + 1
 
@@ -582,6 +602,8 @@ function QueryResults.format_results_styled(resultSets, sql, execution_time_ms, 
     -- Track end line for this result set
     local end_line = builder:line_count()
     table.insert(result_set_ranges, { start_line = start_line, end_line = end_line, index = i })
+
+    ::continue_result_set::
   end
 
   -- After result sets, show rowsAffected for non-SELECT statements

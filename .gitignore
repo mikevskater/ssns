@@ -13,3 +13,5 @@ lua/ssns/ui/themes/user_themes/*
 
 # User formatter presets (custom presets created by user)
 lua/ssns/formatter/presets/user/*
+
+tests/*

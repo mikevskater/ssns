@@ -77,6 +77,16 @@ local function convert_etl_to_result(script, context)
         -- Empty result (e.g. DDL success)
         table.insert(rowsAffected, 0)
       end
+    else
+      -- Block had an error — include it so the results buffer shows it
+      local err = context:get_error(block.name)
+      if err then
+        table.insert(resultSets, {
+          block_error = err,
+          block_name = block.name,
+          chunk_execution_time_ms = block_time,
+        })
+      end
     end
   end
 
@@ -272,21 +282,35 @@ function M.validate()
   local server_list = vim.tbl_keys(servers)
   local database_list = vim.tbl_keys(databases)
 
-  local msg = string.format(
-    "ETL Script Valid:\n" ..
-    "  Blocks: %d (%d SQL, %d Lua)\n" ..
-    "  Variables: %d\n" ..
-    "  Servers: %s\n" ..
-    "  Databases: %s",
-    #script.blocks,
-    vim.tbl_count(vim.tbl_filter(function(b) return b.type == "sql" end, script.blocks)),
-    vim.tbl_count(vim.tbl_filter(function(b) return b.type == "lua" end, script.blocks)),
-    vim.tbl_count(script.variables),
-    #server_list > 0 and table.concat(server_list, ", ") or "none specified",
-    #database_list > 0 and table.concat(database_list, ", ") or "none specified"
-  )
+  local lines = {
+    "ETL Script Valid:",
+    string.format("  Blocks: %d (%d SQL, %d Lua)",
+      #script.blocks,
+      vim.tbl_count(vim.tbl_filter(function(b) return b.type == "sql" end, script.blocks)),
+      vim.tbl_count(vim.tbl_filter(function(b) return b.type == "lua" end, script.blocks))),
+    string.format("  Variables: %d", vim.tbl_count(script.variables)),
+    string.format("  Servers: %s", #server_list > 0 and table.concat(server_list, ", ") or "none specified"),
+    string.format("  Databases: %s", #database_list > 0 and table.concat(database_list, ", ") or "none specified"),
+  }
 
-  vim.notify(msg, vim.log.levels.INFO)
+  -- Per-block details
+  for i, block in ipairs(script.blocks) do
+    table.insert(lines, string.format("  [%d] %s (%s)", i, block.name, block.type))
+    local details = {}
+    if block.server then table.insert(details, "server=" .. block.server) end
+    if block.database then table.insert(details, "db=" .. block.database) end
+    if block.mode then table.insert(details, "mode=" .. block.mode) end
+    if block.target then table.insert(details, "target=" .. block.target) end
+    if block.input then table.insert(details, "input=" .. block.input) end
+    if block.options.skip_on_empty then table.insert(details, "skip_on_empty") end
+    if block.options.continue_on_error then table.insert(details, "continue_on_error") end
+    if block.options.timeout then table.insert(details, "timeout=" .. block.options.timeout) end
+    if #details > 0 then
+      table.insert(lines, "      " .. table.concat(details, ", "))
+    end
+  end
+
+  vim.notify(table.concat(lines, "\n"), vim.log.levels.INFO)
 end
 
 ---Show execution plan without running (dry run)

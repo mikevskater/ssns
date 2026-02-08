@@ -124,8 +124,8 @@ function EtlExecutor:_substitute_input(sql, block, target_server, target_connect
     if block.options.skip_on_empty then
       return "", nil -- Signal to skip
     end
-    -- Replace @input with empty subquery
-    return sql:gsub("@input", "(SELECT TOP 0 * FROM (SELECT 1 as _empty) t WHERE 1=0)"), nil
+    -- Replace @input with empty subquery (alias required for SQL Server derived tables)
+    return sql:gsub("@input", "(SELECT TOP 0 * FROM (SELECT 1 as _empty) t WHERE 1=0) AS _input"), nil
   end
 
   -- Find the source block to determine its server
@@ -147,7 +147,7 @@ function EtlExecutor:_substitute_input(sql, block, target_server, target_connect
   if not needs_transfer and #rows <= 100 then
     local values_sql = EtlExecutor._create_values_clause(rows, input_result.columns)
     if values_sql then
-      return sql:gsub("@input", "(" .. values_sql .. ")"), nil
+      return sql:gsub("@input", "(" .. values_sql .. ") AS _input"), nil
     end
   end
 
@@ -196,7 +196,7 @@ function EtlExecutor._create_values_clause(rows, columns)
     local values = {}
     for _, col_name in ipairs(col_names) do
       local val = row[col_name]
-      if val == nil then
+      if val == nil or val == vim.NIL then
         table.insert(values, "NULL")
       elseif type(val) == "string" then
         -- Escape single quotes
@@ -215,7 +215,7 @@ function EtlExecutor._create_values_clause(rows, columns)
   for i, col_name in ipairs(col_names) do
     local val = rows[1][col_name]
     local val_str
-    if val == nil then
+    if val == nil or val == vim.NIL then
       val_str = "NULL"
     elseif type(val) == "string" then
       val_str = "'" .. val:gsub("'", "''") .. "'"
@@ -386,9 +386,14 @@ function EtlExecutor:_execute_lua_block(block)
     }, nil
   end
 
-  -- Unknown return type
+  -- Plain table return → treat as implicit data()
+  if type(return_value) == "table" then
+    return EtlContext.result_from_data(return_value, block.name, execution_time_ms), nil
+  end
+
+  -- Unknown return type (string, number, boolean, etc.)
   return nil, {
-    message = "Lua block must return sql(...), data(...), or nil. Got: " .. type(return_value),
+    message = "Lua block must return sql(...), data(...), a table, or nil. Got: " .. type(return_value),
   }
 end
 
