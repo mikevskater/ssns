@@ -891,6 +891,16 @@ function TreeRender.render_object_group(UiTree, group, cb, indent_level)
 
   -- If expanded, render filtered children
   if group.ui_state.expanded and #filtered_children > 0 then
+    -- Sort by schema name then object name (case-insensitive)
+    table.sort(filtered_children, function(a, b)
+      local a_schema = (a.schema_name or ""):lower()
+      local b_schema = (b.schema_name or ""):lower()
+      if a_schema ~= b_schema then
+        return a_schema < b_schema
+      end
+      return (a.name or ""):lower() < (b.name or ""):lower()
+    end)
+
     for _, child in ipairs(filtered_children) do
       TreeRender.render_object(UiTree, child, cb, indent_level + 1)
     end
