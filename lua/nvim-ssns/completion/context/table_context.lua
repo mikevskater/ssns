@@ -22,14 +22,21 @@ function TableContext.detect(tokens, line, col)
 
   local extra = {}
 
-  -- Find the most recent keyword in the token stream
+  -- Find the most recent keyword in the token stream (paren-depth aware)
+  -- Only consider keywords at the same paren depth as cursor (depth 0)
   local keyword_token = nil
   local keyword_idx = nil
   local second_keyword_token = nil
   local second_keyword_idx = nil
 
+  local paren_depth = 0
   for i, t in ipairs(prev_tokens) do
-    if t.type == "keyword" then
+    if t.type == "paren_close" then
+      paren_depth = paren_depth + 1
+    elseif t.type == "paren_open" then
+      paren_depth = paren_depth - 1
+    end
+    if t.type == "keyword" and paren_depth == 0 then
       if not keyword_token then
         keyword_token = t
         keyword_idx = i

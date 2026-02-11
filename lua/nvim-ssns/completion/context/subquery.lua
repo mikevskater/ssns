@@ -15,7 +15,7 @@ local TokenContext = require('nvim-ssns.completion.token_context')
 function Subquery.detect_unparsed(tokens, line, col)
   -- Walk backwards from cursor looking for pattern: ( SELECT
   -- If we find this pattern with unclosed parens, we're in an unparsed subquery
-  local prev_tokens = TokenContext.get_tokens_before_cursor(tokens, line, col, 50)
+  local prev_tokens = TokenContext.get_tokens_before_cursor(tokens, line, col, 100)
   if not prev_tokens or #prev_tokens == 0 then
     return false, nil
   end
@@ -216,16 +216,14 @@ function Subquery.extract_tables_backward(tokens, cursor_idx)
   return #tables > 0 and tables or nil
 end
 
----Extract table references from a subquery's FROM clause
----Looks both backwards and forwards from cursor position to find FROM tablename pattern
----Handles multiple tables (JOINs, commas) within the subquery
+---Find the boundaries of the subquery containing the cursor in the token stream
+---Walks backward to find `( SELECT` and forward to find matching `)`
 ---@param tokens Token[] Parsed tokens
 ---@param line number 1-indexed line
 ---@param col number 1-indexed column
----@return table[]? tables Array of table references
-function Subquery.extract_tables(tokens, line, col)
-  local tables = {}
-
+---@return number? start_idx Token index of the SELECT keyword (inclusive)
+---@return number? end_idx Token index of the closing paren (exclusive - the token before `)`)
+function Subquery._find_subquery_bounds(tokens, line, col)
   -- Find cursor position in token stream
   local cursor_idx = nil
   for i, t in ipairs(tokens) do
@@ -234,157 +232,97 @@ function Subquery.extract_tables(tokens, line, col)
       break
     end
   end
-
   if not cursor_idx then
     cursor_idx = #tokens + 1
   end
 
-  -- First, try walking BACKWARDS from cursor to find FROM clause that's already parsed
-  -- This handles cases like: SELECT ... FROM Table WHERE |cursor|
-  local backward_tables = Subquery.extract_tables_backward(tokens, cursor_idx)
-  if backward_tables and #backward_tables > 0 then
-    return backward_tables
-  end
-
-  -- If not found backwards, walk forward from cursor looking for "FROM tablename"
-  -- This handles cases like: SELECT |cursor| FROM Table
-  local in_from_clause = false
+  -- Walk backwards to find ( SELECT pattern
+  local select_idx = nil
   local paren_depth = 0
-  local i = cursor_idx
-
-  while i <= #tokens do
+  for i = cursor_idx - 1, 1, -1 do
     local t = tokens[i]
-
-    -- Track parentheses to stay within the subquery
-    if t.type == "paren_open" then
+    if t.type == "paren_close" then
       paren_depth = paren_depth + 1
-      i = i + 1
-    elseif t.type == "paren_close" then
+    elseif t.type == "paren_open" then
       if paren_depth == 0 then
-        -- Hit the closing paren of our subquery - stop
+        -- This is the opening paren of our subquery
+        -- Check if next token is SELECT
+        if i + 1 <= #tokens and tokens[i + 1].type == "keyword" and tokens[i + 1].text:upper() == "SELECT" then
+          select_idx = i + 1
+        end
         break
       end
       paren_depth = paren_depth - 1
-      i = i + 1
-    elseif t.type == "keyword" then
-      local kw = t.text:upper()
-      if kw == "FROM" and paren_depth == 0 then
-        in_from_clause = true
-        i = i + 1
-      elseif in_from_clause and paren_depth == 0 and (kw == "WHERE" or kw == "GROUP" or kw == "HAVING" or kw == "ORDER" or kw == "UNION") then
-        -- Hit end of FROM clause
-        break
-      elseif in_from_clause and paren_depth == 0 and (kw == "JOIN" or kw == "INNER" or kw == "LEFT" or kw == "RIGHT" or kw == "FULL" or kw == "CROSS" or kw == "OUTER") then
-        -- JOIN keyword - continue parsing for more tables
-        i = i + 1
-      elseif in_from_clause and paren_depth == 0 and kw == "ON" then
-        -- Skip ON clause until we hit another JOIN or end of FROM
-        i = i + 1
-        while i <= #tokens do
-          local on_t = tokens[i]
-          if on_t.type == "paren_close" and paren_depth == 0 then
-            break
-          elseif on_t.type == "paren_open" then
-            paren_depth = paren_depth + 1
-          elseif on_t.type == "paren_close" then
-            paren_depth = paren_depth - 1
-          elseif on_t.type == "keyword" then
-            local on_kw = on_t.text:upper()
-            if on_kw == "JOIN" or on_kw == "INNER" or on_kw == "LEFT" or on_kw == "RIGHT" or on_kw == "FULL" or on_kw == "CROSS" or on_kw == "WHERE" or on_kw == "GROUP" or on_kw == "HAVING" or on_kw == "ORDER" then
-              break
-            end
-          end
-          i = i + 1
-        end
-      else
-        i = i + 1
-      end
-    elseif in_from_clause and paren_depth == 0 then
-      -- After FROM, look for table name
-      if t.type == "identifier" or t.type == "bracket_id" then
-        -- Build qualified name
-        local table_name = t.text
-        local schema = nil
-        local alias = nil
-        local skip_count = 1
-
-        -- Check for schema.table or db.schema.table pattern
-        local next_t = tokens[i + 1]
-        if next_t and next_t.type == "dot" then
-          local name_t = tokens[i + 2]
-          if name_t and (name_t.type == "identifier" or name_t.type == "bracket_id") then
-            -- Check if there's another dot (db.schema.table)
-            local next_next_t = tokens[i + 3]
-            if next_next_t and next_next_t.type == "dot" then
-              local final_name_t = tokens[i + 4]
-              if final_name_t and (final_name_t.type == "identifier" or final_name_t.type == "bracket_id") then
-                -- db.schema.table
-                schema = name_t.text
-                table_name = final_name_t.text
-                skip_count = 5
-              end
-            else
-              -- schema.table
-              schema = table_name
-              table_name = name_t.text
-              skip_count = 3
-            end
-          end
-        end
-
-        -- Check for alias after table name
-        local alias_idx = i + skip_count
-        local alias_t = tokens[alias_idx]
-        if alias_t then
-          if alias_t.type == "keyword" and alias_t.text:upper() == "AS" then
-            -- Explicit AS alias
-            local actual_alias_t = tokens[alias_idx + 1]
-            if actual_alias_t and (actual_alias_t.type == "identifier" or actual_alias_t.type == "bracket_id") then
-              alias = actual_alias_t.text
-              skip_count = skip_count + 2
-            end
-          elseif alias_t.type == "identifier" or alias_t.type == "bracket_id" then
-            -- Implicit alias (no AS keyword)
-            alias = alias_t.text
-            skip_count = skip_count + 1
-          end
-        end
-
-        -- Clean up bracket identifiers
-        table_name = table_name:gsub("^%[", ""):gsub("%]$", "")
-        if schema then
-          schema = schema:gsub("^%[", ""):gsub("%]$", "")
-        end
-        if alias then
-          alias = alias:gsub("^%[", ""):gsub("%]$", "")
-        end
-
-        -- Build full table reference
-        local full_name = table_name
-        if schema then
-          full_name = schema .. "." .. table_name
-        end
-
-        table.insert(tables, {
-          table = full_name,
-          name = table_name,
-          schema = schema,
-          alias = alias or table_name,
-        })
-
-        i = i + skip_count
-      elseif t.type == "comma" then
-        -- Multiple tables with comma
-        i = i + 1
-      else
-        i = i + 1
-      end
-    else
-      i = i + 1
     end
   end
 
-  return #tables > 0 and tables or nil
+  if not select_idx then return nil, nil end
+
+  -- Walk forward from cursor to find matching )
+  local end_idx = nil
+  paren_depth = 0
+  for i = cursor_idx, #tokens do
+    local t = tokens[i]
+    if t.type == "paren_open" then
+      paren_depth = paren_depth + 1
+    elseif t.type == "paren_close" then
+      if paren_depth == 0 then
+        end_idx = i - 1
+        break
+      end
+      paren_depth = paren_depth - 1
+    end
+  end
+
+  if not end_idx then
+    -- No closing paren found — use last token
+    end_idx = #tokens
+  end
+
+  return select_idx, end_idx
+end
+
+---Extract table references from a subquery using the full StatementParser
+---Finds the subquery boundaries and parses the extracted text for complete table extraction
+---@param tokens Token[] Parsed tokens
+---@param line number 1-indexed line
+---@param col number 1-indexed column
+---@return table[]? tables Array of table references
+function Subquery.extract_tables(tokens, line, col)
+  local start_idx, end_idx = Subquery._find_subquery_bounds(tokens, line, col)
+  if not start_idx or not end_idx or end_idx < start_idx then
+    return nil
+  end
+
+  -- Extract subquery text from tokens
+  local parts = {}
+  for i = start_idx, end_idx do
+    parts[#parts + 1] = tokens[i].text
+  end
+  local subquery_text = table.concat(parts, " ")
+
+  -- Parse using full StatementParser for complete table extraction
+  local StatementParser = require('nvim-ssns.completion.statement_parser')
+  local chunks = StatementParser.parse(subquery_text)
+
+  if chunks and #chunks > 0 then
+    local chunk = chunks[1]
+    local tables = {}
+    for _, t in ipairs(chunk.tables or {}) do
+      local full_name = t.name
+      if t.schema then full_name = t.schema .. "." .. t.name end
+      if t.database then full_name = t.database .. "." .. full_name end
+      table.insert(tables, {
+        table = full_name,
+        name = t.name,
+        schema = t.schema,
+        alias = t.alias or t.name,
+      })
+    end
+    return #tables > 0 and tables or nil
+  end
+
+  return nil
 end
 
 return Subquery

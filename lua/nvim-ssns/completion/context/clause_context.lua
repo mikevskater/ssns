@@ -166,7 +166,14 @@ function ClauseContext.handle_clause(bufnr, line_num, col, tokens, chunk, clause
 
   elseif clause == "set" then
     ctx_type = Type.COLUMN
-    mode = "set"
+    -- Distinguish SET left-side (target column) vs right-side (value expression)
+    local left_side = TokenContext.extract_left_side_column(tokens, line_num, col)
+    if left_side then
+      extra.left_side = left_side
+      mode = "set_value"
+    else
+      mode = "set"
+    end
 
   elseif clause == "into" then
     ctx_type = Type.TABLE
@@ -222,6 +229,7 @@ end
 
 ---Handle clause continuation (cursor past clause end but still in same context)
 ---Uses TOKEN-BASED detection for multi-line SQL support
+---Replaces line-number heuristics with token analysis for reliable multi-line FROM
 ---@param line_num number 1-indexed line
 ---@param col number 1-indexed column
 ---@param tokens Token[] Parsed tokens
@@ -231,49 +239,39 @@ end
 ---@return table? extra Extra context info
 function ClauseContext.handle_continuation(line_num, col, tokens, chunk)
   local extra = {}
-  local from_pos = chunk.clause_positions and chunk.clause_positions["from"]
-  local join_pos = nil
-  local where_pos = chunk.clause_positions and chunk.clause_positions["where"]
-  local group_by_pos = chunk.clause_positions and chunk.clause_positions["group_by"]
-  local having_pos = chunk.clause_positions and chunk.clause_positions["having"]
-  local order_by_pos = chunk.clause_positions and chunk.clause_positions["order_by"]
 
-  if chunk.clause_positions then
-    -- Find most recent join clause
-    for k, v in pairs(chunk.clause_positions) do
-      if k:match("^join_%d+$") or k == "join" then
-        if not join_pos or v.end_line > join_pos.end_line or
-           (v.end_line == join_pos.end_line and v.end_col > join_pos.end_col) then
-          join_pos = v
-        end
+  -- Token-based: check if recent tokens indicate FROM clause continuation
+  -- Look at tokens before cursor and see if last meaningful token is comma, JOIN, or FROM
+  local prev_tokens = TokenContext.get_tokens_before_cursor(tokens, line_num, col, 8)
+  if #prev_tokens == 0 then return nil, nil, nil end
+
+  local last_meaningful = nil
+  for _, t in ipairs(prev_tokens) do
+    if t.type == "comma" then
+      last_meaningful = "comma"
+      break
+    elseif t.type == "keyword" then
+      local kw = t.text:upper()
+      if kw == "JOIN" or kw == "INNER" or kw == "LEFT" or kw == "RIGHT"
+         or kw == "FULL" or kw == "CROSS" or kw == "OUTER" then
+        last_meaningful = "join"
+        break
+      elseif kw == "FROM" then
+        last_meaningful = "from"
+        break
+      else
+        -- Some other keyword (WHERE, ON, etc.) → not in FROM continuation
+        break
       end
+    elseif t.type == "identifier" or t.type == "bracket_id" or t.type == "dot" then
+      -- Could be typing partial table name after comma/join — keep looking
+    else
+      break
     end
   end
 
-  -- Helper to check if cursor is past a clause start
-  local function cursor_past_clause_start(clause_pos)
-    if not clause_pos then return false end
-    return line_num > clause_pos.start_line or
-           (line_num == clause_pos.start_line and col > clause_pos.start_col)
-  end
-
-  -- Don't consider FROM/JOIN context if cursor is past WHERE/GROUP BY/HAVING/ORDER BY
-  local past_where = cursor_past_clause_start(where_pos)
-  local past_group_by = cursor_past_clause_start(group_by_pos)
-  local past_having = cursor_past_clause_start(having_pos)
-  local past_order_by = cursor_past_clause_start(order_by_pos)
-  local in_later_clause = past_where or past_group_by or past_having or past_order_by
-
-  -- Check if cursor is on the same line as FROM/JOIN clause end or immediately after
-  local in_from_context = from_pos and not in_later_clause and
-    (line_num == from_pos.end_line or
-     (line_num == from_pos.end_line + 1 and col <= 50))
-  local in_join_context = join_pos and not in_later_clause and
-    (line_num == join_pos.end_line or
-     (line_num == join_pos.end_line + 1 and col <= 50))
-
-  if in_from_context or in_join_context then
-    -- We're continuing a FROM or JOIN clause - use token-based qualified name detection
+  if last_meaningful == "from" or last_meaningful == "comma" or last_meaningful == "join" then
+    -- We're continuing a FROM or JOIN clause — use token-based qualified name detection
     local is_after_dot, qualified = TokenContext.is_dot_triggered(tokens, line_num, col)
 
     if qualified and (qualified.database or qualified.schema) then
@@ -283,16 +281,16 @@ function ClauseContext.handle_continuation(line_num, col, tokens, chunk)
         extra.filter_database = qualified.database
         extra.filter_schema = qualified.schema
         extra.omit_schema = is_after_dot
-        return Type.TABLE, in_join_context and "join_cross_db_qualified" or "from_cross_db_qualified", extra
+        return Type.TABLE, last_meaningful == "join" and "join_cross_db_qualified" or "from_cross_db_qualified", extra
       elseif qualified.schema then
         extra.potential_database = qualified.schema
         extra.schema = qualified.schema
         extra.filter_schema = qualified.schema
         extra.omit_schema = is_after_dot
-        return Type.TABLE, in_join_context and "join_qualified" or "from_qualified", extra
+        return Type.TABLE, last_meaningful == "join" and "join_qualified" or "from_qualified", extra
       end
     end
-    return Type.TABLE, in_join_context and "join" or "from", extra
+    return Type.TABLE, last_meaningful == "join" and "join" or "from", extra
   end
 
   -- No continuation context found

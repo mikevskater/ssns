@@ -37,13 +37,21 @@ function ColumnContext.detect(tokens, line, col)
     end
   end
 
-  -- Find the most recent keywords in the token stream
+  -- Find the most recent keywords in the token stream (paren-depth aware)
+  -- Only consider keywords at the same paren depth as cursor (depth 0)
   local keyword_token = nil
   local keyword_idx = nil
   local second_keyword_token = nil
 
+  local paren_depth = 0
   for i, t in ipairs(prev_tokens) do
-    if t.type == "keyword" then
+    if t.type == "paren_close" then
+      paren_depth = paren_depth + 1
+    elseif t.type == "paren_open" then
+      paren_depth = paren_depth - 1
+    end
+    -- Only consider keywords at same paren depth as cursor
+    if t.type == "keyword" and paren_depth == 0 then
       if not keyword_token then
         keyword_token = t
         keyword_idx = i
@@ -99,9 +107,35 @@ function ColumnContext.detect(tokens, line, col)
     return "column", "where", extra
   end
 
-  -- AND/OR detection (could be in WHERE clause)
+  -- AND/OR detection — walk further back to find enclosing clause keyword
   if kw == "AND" or kw == "OR" then
-    return "column", "where", extra
+    local walk_paren_depth = 0
+    for j = keyword_idx + 1, #prev_tokens do
+      local pt = prev_tokens[j]
+      if pt.type == "paren_close" then
+        walk_paren_depth = walk_paren_depth + 1
+      elseif pt.type == "paren_open" then
+        walk_paren_depth = walk_paren_depth - 1
+      elseif pt.type == "keyword" and walk_paren_depth == 0 then
+        local pk = pt.text:upper()
+        if pk == "WHERE" then
+          return "column", "where", extra
+        elseif pk == "ON" then
+          local left_side = QualifiedNames.extract_left_side_column(tokens, line, col)
+          if left_side then extra.left_side = left_side end
+          return "column", "on", extra
+        elseif pk == "HAVING" then
+          return "column", "having", extra
+        elseif pk == "WHEN" or pk == "CASE" then
+          return "column", "case_expression", extra
+        elseif pk == "BETWEEN" then
+          return "column", "where", extra
+        elseif pk == "SELECT" or pk == "FROM" or pk == "SET" then
+          break
+        end
+      end
+    end
+    return "column", "where", extra  -- default fallback
   end
 
   -- ON detection (JOIN condition)
@@ -131,6 +165,11 @@ function ColumnContext.detect(tokens, line, col)
   -- HAVING detection
   if kw == "HAVING" then
     return "column", "having", extra
+  end
+
+  -- CASE/WHEN/THEN/ELSE detection (column-context within CASE expressions)
+  if kw == "CASE" or kw == "WHEN" or kw == "THEN" or kw == "ELSE" then
+    return "column", "case_expression", extra
   end
 
   -- OUTPUT detection

@@ -88,7 +88,17 @@ TokenContext.detect_output_into_from_tokens = SpecialContexts.detect_output_into
 -- Unified context detection (from context/init.lua)
 -- ============================================================================
 
-TokenContext.detect_context = Context.detect
+---Unified context detection — passes through optional chunk for alias disambiguation
+---@param tokens Token[] Parsed tokens
+---@param line number 1-indexed line
+---@param col number 1-indexed column
+---@param chunk StatementChunk? Optional parsed statement chunk
+---@return string ctx_type
+---@return string mode
+---@return table extra
+TokenContext.detect_context = function(tokens, line, col, chunk)
+  return Context.detect(tokens, line, col, chunk)
+end
 
 -- ============================================================================
 -- Debug utilities

@@ -122,9 +122,10 @@ local function build_tables_in_scope(cache_ctx)
   local seen_subqueries = {}
   local seen_temp_tables = {}
 
-  -- If we detected subquery tables, use those instead of outer query tables
+  -- If we detected subquery tables, include them plus outer tables for correlated subquery support
   if cache_ctx and cache_ctx._subquery_tables then
-    Debug.log(string.format("[statement_context] Using %d subquery tables", #cache_ctx._subquery_tables))
+    Debug.log(string.format("[statement_context] Using %d subquery tables + outer tables", #cache_ctx._subquery_tables))
+    local seen_aliases = {}
     for _, sq_table in ipairs(cache_ctx._subquery_tables) do
       table.insert(tables_in_scope, {
         alias = sq_table.alias,
@@ -133,6 +134,29 @@ local function build_tables_in_scope(cache_ctx)
         schema = sq_table.schema,
         scope = "subquery",
       })
+      if sq_table.alias then
+        seen_aliases[sq_table.alias:lower()] = true
+      end
+    end
+    -- Include outer tables (inner aliases shadow outer ones)
+    if cache_ctx.tables then
+      for _, table_ref in ipairs(cache_ctx.tables) do
+        local alias_lower = table_ref.alias and table_ref.alias:lower()
+        if not alias_lower or not seen_aliases[alias_lower] then
+          local table_name = table_ref.name
+          if table_ref.schema then
+            table_name = table_ref.schema .. "." .. table_ref.name
+          end
+          if table_ref.database then
+            table_name = table_ref.database .. "." .. table_name
+          end
+          table.insert(tables_in_scope, {
+            alias = table_ref.alias,
+            table = table_name,
+            scope = "outer",
+          })
+        end
+      end
     end
     return tables_in_scope
   end
@@ -294,8 +318,8 @@ function Context.detect(bufnr, line_num, col, tokens)
   end
 
   if not ctx_type then
-    -- Final fallback: unified token-based detection
-    ctx_type, mode, extra = TokenContext.detect_context(tokens, line_num, col)
+    -- Final fallback: unified token-based detection (pass chunk for alias disambiguation)
+    ctx_type, mode, extra = TokenContext.detect_context(tokens, line_num, col, chunk)
   end
 
   extra = extra or {}
@@ -445,7 +469,8 @@ function Context._detect_full_etl(bufnr, line_num, col)
   end
 
   if not ctx_type then
-    ctx_type, mode, extra = TokenContext.detect_context(tokens, relative_line, relative_col)
+    -- Pass chunk for alias disambiguation
+    ctx_type, mode, extra = TokenContext.detect_context(tokens, relative_line, relative_col, chunk)
   end
 
   extra = extra or {}

@@ -18,14 +18,15 @@ Context.QualifiedNames = QualifiedNames
 ---Unified context detection from tokens
 ---Handles all detection in priority order, replacing multiple separate calls
 ---Priority: OUTPUT patterns > EXEC > INSERT columns > VALUES > MERGE INSERT > ON clause >
----         TABLE contexts > qualified column > COLUMN contexts > DATABASE/SCHEMA > KEYWORD fallback
+---         ALIAS disambiguation > TABLE contexts > COLUMN contexts > DATABASE/SCHEMA > KEYWORD fallback
 ---@param tokens Token[] Parsed tokens
 ---@param line number 1-indexed line
 ---@param col number 1-indexed column
+---@param chunk StatementChunk? Optional parsed statement chunk for alias disambiguation
 ---@return string ctx_type Context type
 ---@return string mode Sub-mode for provider routing
 ---@return table extra Extra context info
-function Context.detect(tokens, line, col)
+function Context.detect(tokens, line, col, chunk)
   if not tokens or #tokens == 0 then
     return "keyword", "start", {}
   end
@@ -72,6 +73,22 @@ function Context.detect(tokens, line, col)
   ctx_type, mode, extra = ColumnContext.detect_on_clause(tokens, line, col)
   if ctx_type then
     return ctx_type, mode, extra
+  end
+
+  -- 7b. Chunk-aware alias disambiguation for dot-triggered qualified names
+  -- When cursor is after "alias.", check if the qualifier is a known alias from the chunk.
+  -- If it is, route to column/qualified instead of letting table context claim it.
+  if chunk and chunk.aliases then
+    local is_after_dot, qualified = QualifiedNames.is_dot_triggered(tokens, line, col)
+    if is_after_dot and qualified and qualified.alias then
+      local alias_lower = qualified.alias:lower()
+      if chunk.aliases[alias_lower] then
+        local ref = QualifiedNames.get_reference_before_dot(tokens, line, col)
+        if ref then
+          return "column", "qualified", { table_ref = ref, filter_table = ref, omit_table = true }
+        end
+      end
+    end
   end
 
   -- 8. TABLE context detection (FROM, JOIN, UPDATE, DELETE, INSERT INTO, etc.)

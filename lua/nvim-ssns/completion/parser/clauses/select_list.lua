@@ -20,6 +20,7 @@ function SelectListParser.parse(state, scope, select_start_token)
   local columns = {}
   local current_col = nil
   local current_source_table = nil
+  local current_expr_cols = {}  -- Tracks qualified table.column refs within current expression
   local paren_depth = 0
 
   -- Track SELECT clause position
@@ -131,6 +132,14 @@ function SelectListParser.parse(state, scope, select_start_token)
       current_col = Helpers.strip_brackets(token.text)
       state:advance()
 
+      -- Track qualified table.column reference for expression_columns
+      if current_source_table then
+        table.insert(current_expr_cols, {
+          name = current_col,
+          source_table = current_source_table,
+        })
+      end
+
       -- Check for AS keyword for alias
       if state:is_keyword("AS") then
         state:advance()
@@ -145,13 +154,19 @@ function SelectListParser.parse(state, scope, select_start_token)
     elseif token.type == "comma" then
       -- End of current column
       if current_col then
-        table.insert(columns, {
+        local col_entry = {
           name = current_col,
           source_table = current_source_table,
           is_star = false,
-        })
+        }
+        -- Include expression_columns when there are multiple contributing column refs
+        if #current_expr_cols > 1 then
+          col_entry.expression_columns = current_expr_cols
+        end
+        table.insert(columns, col_entry)
         current_col = nil
         current_source_table = nil
+        current_expr_cols = {}
       end
       state:advance()
     elseif state:is_keyword("AS") then
@@ -172,11 +187,15 @@ function SelectListParser.parse(state, scope, select_start_token)
 
   -- Add last column if any
   if current_col then
-    table.insert(columns, {
+    local col_entry = {
       name = current_col,
       source_table = current_source_table,
       is_star = false,
-    })
+    }
+    if #current_expr_cols > 1 then
+      col_entry.expression_columns = current_expr_cols
+    end
+    table.insert(columns, col_entry)
   end
 
   -- Update clause end position to just before FROM/INTO keyword
