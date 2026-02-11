@@ -422,12 +422,17 @@ end
 ---@param name string Server or database name
 ---@param color table Color spec { fg, bg, gui }
 function M.set_color(name, color)
-  local ok, ssns_component = pcall(require, 'lualine.components.ssns')
+  local ok, ssns_component = pcall(require, 'lualine.components.nvim-ssns')
   if ok and ssns_component.set_color then
     ssns_component.set_color(name, color)
     -- Invalidate and reload cache after color change
     M.invalidate_cache()
     M.init_async()
+
+    -- Refresh lualine if available
+    if vim.fn.exists(':LualineRefresh') == 2 then
+      vim.cmd('LualineRefresh')
+    end
   else
     vim.notify('SSNS: Could not access lualine component', vim.log.levels.ERROR)
   end
@@ -436,7 +441,7 @@ end
 ---Remove color for a connection
 ---@param name string Server or database name
 function M.remove_color(name)
-  local ok, ssns_component = pcall(require, 'lualine.components.ssns')
+  local ok, ssns_component = pcall(require, 'lualine.components.nvim-ssns')
   if ok and ssns_component.remove_color then
     ssns_component.remove_color(name)
     vim.notify(string.format('SSNS: Color removed for %s', name), vim.log.levels.INFO)
