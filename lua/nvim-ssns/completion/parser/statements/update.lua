@@ -38,6 +38,12 @@ function UpdateStatement.parse(state, scope, temp_tables)
   local update_target = state:parse_table_reference(known_ctes)
   chunk.update_target = update_target
 
+  -- Track update_target clause position for context detection
+  if update_target then
+    local last = state.pos > 1 and state.tokens[state.pos - 1] or start_token
+    BaseStatement.add_clause_position(chunk, "update_target", start_token, last)
+  end
+
   -- Note: FROM clause for extended UPDATE is parsed by the main loop after SET clause
   -- The main loop will call UpdateStatement.parse_from() when it encounters FROM
 

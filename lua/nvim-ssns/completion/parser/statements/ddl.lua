@@ -2,7 +2,7 @@
 --- Parses DDL statements: CREATE TABLE, ALTER TABLE, DROP TABLE, DECLARE, TRUNCATE
 ---
 --- Primarily tracks temp tables (#temp, ##temp) and table variables (@var) for
---- autocomplete context.
+--- autocomplete context. Also tracks clause positions for context detection.
 ---
 ---@module ssns.completion.parser.statements.ddl
 
@@ -33,15 +33,28 @@ function DdlStatement.parse_create(state, scope, temp_tables)
   if state:is_keyword("TABLE") then
     state:advance()  -- consume TABLE
 
-    -- Parse table name (could be temp table #name or ##name)
+    -- Parse table name (could be temp table #name or ##name, or regular table)
+    local name_start = state:current()
     local qualified = QualifiedName.parse(state)
+    local name_end = state.pos > 1 and state.tokens[state.pos - 1] or name_start
+
+    -- Track create_table clause position (covers table name)
+    if qualified then
+      BaseStatement.add_clause_position(chunk, "create_table", start_token, name_end)
+    end
+
     if qualified and Helpers.is_temp_table(qualified.name) then
       chunk.temp_table_name = qualified.name
       chunk.is_global_temp = Helpers.is_global_temp_table(qualified.name)
 
       -- Parse column definitions if present
       if state:is_type("paren_open") then
+        local col_start = state:current()
         local columns = ColumnDefsParser.parse(state)
+        local col_end = state.pos > 1 and state.tokens[state.pos - 1] or col_start
+
+        -- Track column_definitions clause position
+        BaseStatement.add_clause_position(chunk, "column_definitions", col_start, col_end)
 
         -- Store temp table info with parsed columns
         if #columns > 0 then
@@ -52,6 +65,27 @@ function DdlStatement.parse_create(state, scope, temp_tables)
             is_global = Helpers.is_global_temp_table(qualified.name),
           }
         end
+      end
+    elseif qualified then
+      -- Non-temp table: still track column definitions if present
+      if state:is_type("paren_open") then
+        local col_start = state:current()
+        local columns = ColumnDefsParser.parse(state)
+        local col_end = state.pos > 1 and state.tokens[state.pos - 1] or col_start
+        BaseStatement.add_clause_position(chunk, "column_definitions", col_start, col_end)
+      end
+    end
+
+  -- Handle CREATE VIEW/PROCEDURE/FUNCTION
+  elseif state:current() and state:current().type == "keyword" then
+    local obj_type = state:current().text:upper()
+    if obj_type == "VIEW" or obj_type == "PROC" or obj_type == "PROCEDURE" or obj_type == "FUNCTION" then
+      state:advance()  -- consume object type keyword
+      local qualified = QualifiedName.parse(state)
+      if qualified then
+        chunk.ddl_object_name = qualified.name
+        chunk.ddl_object_schema = qualified.schema
+        chunk.ddl_object_type = obj_type
       end
     end
   end
@@ -86,17 +120,41 @@ function DdlStatement.parse_alter(state, scope, temp_tables)
     state:advance()  -- consume TABLE
 
     -- Parse the table name
+    local name_start = state:current()
     local qualified = QualifiedName.parse(state)
+    local name_end = state.pos > 1 and state.tokens[state.pos - 1] or name_start
+
+    -- Track alter_table clause position
+    if qualified then
+      BaseStatement.add_clause_position(chunk, "alter_table", start_token, name_end)
+    end
+
     if qualified and Helpers.is_temp_table(qualified.name) then
       -- Check if temp table exists
       if temp_tables[qualified.name] then
         -- Check for ADD keyword
         if state:is_keyword("ADD") then
+          local add_token = state:current()
           state:advance()  -- consume ADD
 
-          -- Parse new column definition(s)
+          -- Track alter_add clause position
+          BaseStatement.add_clause_position(chunk, "alter_add", add_token, add_token)
+
+          -- Parse new column definition(s) and update position
           DdlStatement._parse_alter_add_columns(state, temp_tables[qualified.name])
+
+          -- Update alter_add end position
+          local last = state.pos > 1 and state.tokens[state.pos - 1] or add_token
+          chunk.clause_positions["alter_add"].end_line = last.line
+          chunk.clause_positions["alter_add"].end_col = last.col + #last.text - 1
         end
+      end
+    else
+      -- Non-temp table: still track ADD position
+      if state:is_keyword("ADD") then
+        local add_token = state:current()
+        state:advance()  -- consume ADD
+        BaseStatement.add_clause_position(chunk, "alter_add", add_token, add_token)
       end
     end
   end
@@ -139,7 +197,15 @@ function DdlStatement.parse_drop(state, scope, temp_tables)
 
     -- Parse the table name
     local drop_line = state:current() and state:current().line or start_token.line
+    local name_start = state:current()
     local qualified = QualifiedName.parse(state)
+    local name_end = state.pos > 1 and state.tokens[state.pos - 1] or name_start
+
+    -- Track drop_table clause position
+    if qualified then
+      BaseStatement.add_clause_position(chunk, "drop_table", start_token, name_end)
+    end
+
     if qualified and Helpers.is_temp_table(qualified.name) then
       -- Mark this temp table as dropped
       if temp_tables[qualified.name] then
@@ -173,6 +239,9 @@ function DdlStatement.parse_declare(state, scope, temp_tables)
   scope.statement_type = "DECLARE"
   state:advance()  -- consume DECLARE
 
+  -- Track declare clause position
+  BaseStatement.add_clause_position(chunk, "declare", start_token, start_token)
+
   -- Check for table variable declaration: DECLARE @var TABLE (col1 type, ...)
   -- Handle both unified "variable" token (@var as single token) and legacy "at" + "identifier"
   local token = state:current()
@@ -198,7 +267,12 @@ function DdlStatement.parse_declare(state, scope, temp_tables)
 
     -- Parse column definitions
     if state:is_type("paren_open") then
+      local col_start = state:current()
       local columns = ColumnDefsParser.parse(state)
+      local col_end = state.pos > 1 and state.tokens[state.pos - 1] or col_start
+
+      -- Track column_definitions clause position
+      BaseStatement.add_clause_position(chunk, "column_definitions", col_start, col_end)
 
       -- Store table variable info
       if #columns > 0 then
@@ -213,6 +287,11 @@ function DdlStatement.parse_declare(state, scope, temp_tables)
   end
 
   state:consume_until_statement_end()
+
+  -- Update declare clause end position
+  local last = state.pos > 1 and state.tokens[state.pos - 1] or start_token
+  chunk.clause_positions["declare"].end_line = last.line
+  chunk.clause_positions["declare"].end_col = last.col + #last.text - 1
 
   -- Set token_end_idx and extract parameters
   if chunk.token_start_idx then

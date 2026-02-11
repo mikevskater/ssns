@@ -18,17 +18,22 @@ function SetStatement.parse(state, scope, SubqueryParser)
   scope.statement_type = "SET"
   state:advance()  -- Advance past SET
 
+  -- Track SET clause position
+  BaseStatement.add_clause_position(chunk, "set", start_token, start_token)
+
   -- Build known_ctes for subquery parsing
   local known_ctes = scope and scope:get_known_ctes_table() or {}
 
   -- Parse SET statement content, looking for subqueries
   local paren_depth = 0
+  local last_token = start_token
 
   while state:current() do
     local token = state:current()
 
     if token.type == "paren_open" then
       paren_depth = paren_depth + 1
+      last_token = token
       state:advance()
       -- Check for subquery: (SELECT ...
       if state:is_keyword("SELECT") and SubqueryParser then
@@ -36,6 +41,7 @@ function SetStatement.parse(state, scope, SubqueryParser)
         if subquery then
           -- After parse, parser is AT the closing ) - consume it
           if state:is_type("paren_close") then
+            last_token = state:current()
             state:advance()
           end
           paren_depth = paren_depth - 1
@@ -47,6 +53,7 @@ function SetStatement.parse(state, scope, SubqueryParser)
       end
     elseif token.type == "paren_close" then
       paren_depth = paren_depth - 1
+      last_token = token
       state:advance()
     elseif token.type == "go" or (token.type == "identifier" and token.text:upper() == "GO") then
       -- Stop at GO batch separator
@@ -59,12 +66,18 @@ function SetStatement.parse(state, scope, SubqueryParser)
       if Keywords.is_statement_starter(token.text:upper()) then
         break
       else
+        last_token = token
         state:advance()
       end
     else
+      last_token = token
       state:advance()
     end
   end
+
+  -- Update SET clause end position
+  chunk.clause_positions["set"].end_line = last_token.line
+  chunk.clause_positions["set"].end_col = last_token.col + #last_token.text - 1
 
   -- Finalize chunk (copies subqueries from scope, sets token_end_idx)
   BaseStatement.finalize_chunk(chunk, scope, state)

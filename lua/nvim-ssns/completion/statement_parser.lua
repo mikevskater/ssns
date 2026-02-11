@@ -186,6 +186,26 @@ local function parse_statement_dispatch(state, scope, temp_tables)
     if state:is_keyword("WHERE") then
       WhereClauseParser.parse(state, chunk, scope, SubqueryParser)
     end
+    -- Parse ORDER BY if present (for DELETE TOP ... ORDER BY)
+    if state:is_keyword("ORDER") then
+      local order_token = state:current()
+      state:advance()  -- consume ORDER
+      if state:is_keyword("BY") then
+        local by_token = state:current()
+        state:advance()  -- consume BY
+        local last_token = by_token
+        while state:current() do
+          local t = state:current()
+          if t.type == "semicolon" or t.type == "go" then break end
+          if t.type == "keyword" and is_statement_starter(t.text:upper()) then break end
+          last_token = t
+          state:advance()
+        end
+        BaseStatement.add_clause_position(chunk, "order_by", by_token, last_token)
+      else
+        BaseStatement.update_end_position(chunk, order_token)
+      end
+    end
     -- Finalize chunk
     BaseStatement.finalize_chunk(chunk, scope, state)
     -- Update chunk end position from clause positions
@@ -302,6 +322,28 @@ function parse_statement_remaining(state, chunk, scope, statement_type)
   -- Parse WHERE clause
   if state:is_keyword("WHERE") then
     WhereClauseParser.parse(state, chunk, scope, SubqueryParser)
+  end
+
+  -- Parse ORDER BY if present (for UPDATE TOP ... ORDER BY)
+  if state:is_keyword("ORDER") then
+    local order_token = state:current()
+    state:advance()  -- consume ORDER
+    if state:is_keyword("BY") then
+      local by_token = state:current()
+      state:advance()  -- consume BY
+      local last_token = by_token
+      while state:current() do
+        local t = state:current()
+        if t.type == "semicolon" or t.type == "go" then break end
+        if t.type == "keyword" and is_statement_starter(t.text:upper()) then break end
+        last_token = t
+        state:advance()
+      end
+      BaseStatement.add_clause_position(chunk, "order_by", by_token, last_token)
+    else
+      -- ORDER without BY — treat as end of UPDATE
+      BaseStatement.update_end_position(chunk, order_token)
+    end
   end
 
   -- Finalize UPDATE chunk

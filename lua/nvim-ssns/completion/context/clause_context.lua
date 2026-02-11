@@ -195,6 +195,97 @@ function ClauseContext.handle_clause(bufnr, line_num, col, tokens, chunk, clause
       end
     end
 
+  elseif clause == "update_target" then
+    ctx_type = Type.TABLE
+    mode = "update"
+    local token_qualified, is_after_dot = detect_qualified_from_tokens(tokens, line_num, col)
+    if token_qualified and (token_qualified.database or token_qualified.schema) then
+      if token_qualified.database then
+        extra.database = token_qualified.database
+        extra.schema = token_qualified.schema
+        extra.filter_database = token_qualified.database
+        extra.filter_schema = token_qualified.schema
+        extra.omit_schema = is_after_dot
+        mode = "update_cross_db_qualified"
+      elseif token_qualified.schema then
+        extra.potential_database = token_qualified.schema
+        extra.schema = token_qualified.schema
+        extra.filter_schema = token_qualified.schema
+        extra.omit_schema = is_after_dot
+        mode = "update_qualified"
+      end
+    end
+
+  elseif clause == "delete_target" then
+    ctx_type = Type.TABLE
+    mode = "delete"
+    local token_qualified, is_after_dot = detect_qualified_from_tokens(tokens, line_num, col)
+    if token_qualified and (token_qualified.database or token_qualified.schema) then
+      if token_qualified.database then
+        extra.database = token_qualified.database
+        extra.schema = token_qualified.schema
+        extra.filter_database = token_qualified.database
+        extra.filter_schema = token_qualified.schema
+        extra.omit_schema = is_after_dot
+        mode = "delete_cross_db_qualified"
+      elseif token_qualified.schema then
+        extra.potential_database = token_qualified.schema
+        extra.schema = token_qualified.schema
+        extra.filter_schema = token_qualified.schema
+        extra.omit_schema = is_after_dot
+        mode = "delete_qualified"
+      end
+    end
+
+  elseif clause == "using" then
+    ctx_type = Type.TABLE
+    mode = "from"
+    local token_qualified, is_after_dot = detect_qualified_from_tokens(tokens, line_num, col)
+    if token_qualified and (token_qualified.database or token_qualified.schema) then
+      if token_qualified.database then
+        extra.database = token_qualified.database
+        extra.schema = token_qualified.schema
+        extra.filter_database = token_qualified.database
+        extra.filter_schema = token_qualified.schema
+        extra.omit_schema = is_after_dot
+        mode = "from_cross_db_qualified"
+      elseif token_qualified.schema then
+        extra.potential_database = token_qualified.schema
+        extra.schema = token_qualified.schema
+        extra.filter_schema = token_qualified.schema
+        extra.omit_schema = is_after_dot
+        mode = "from_qualified"
+      end
+    end
+
+  elseif clause:match("^when_") then
+    -- WHEN MATCHED / WHEN NOT MATCHED conditions — column context
+    ctx_type = Type.COLUMN
+    mode = "where"
+
+  elseif clause:match("^merge_set_") then
+    -- MERGE UPDATE SET — same as regular SET
+    ctx_type = Type.COLUMN
+    local left_side = TokenContext.extract_left_side_column(tokens, line_num, col)
+    if left_side then
+      extra.left_side = left_side
+      mode = "set_value"
+    else
+      mode = "set"
+    end
+
+  elseif clause:match("^merge_insert_cols_") then
+    ctx_type = Type.COLUMN
+    mode = "insert_columns"
+
+  elseif clause:match("^merge_values_") then
+    ctx_type = Type.COLUMN
+    mode = "values"
+
+  elseif clause == "output" then
+    ctx_type = Type.COLUMN
+    mode = "select"
+
   elseif clause == "insert_columns" then
     ctx_type = Type.COLUMN
     mode = "insert_columns"
@@ -202,6 +293,33 @@ function ClauseContext.handle_clause(bufnr, line_num, col, tokens, chunk, clause
   elseif clause == "values" then
     ctx_type = Type.COLUMN
     mode = "values"
+
+  elseif clause == "create_table" or clause == "alter_table" or clause == "drop_table" then
+    ctx_type = Type.TABLE
+    mode = clause
+    local token_qualified, is_after_dot = detect_qualified_from_tokens(tokens, line_num, col)
+    if token_qualified and (token_qualified.database or token_qualified.schema) then
+      if token_qualified.database then
+        extra.database = token_qualified.database
+        extra.schema = token_qualified.schema
+        extra.filter_database = token_qualified.database
+        extra.filter_schema = token_qualified.schema
+        extra.omit_schema = is_after_dot
+      elseif token_qualified.schema then
+        extra.potential_database = token_qualified.schema
+        extra.schema = token_qualified.schema
+        extra.filter_schema = token_qualified.schema
+        extra.omit_schema = is_after_dot
+      end
+    end
+
+  elseif clause == "column_definitions" or clause == "alter_add" then
+    ctx_type = Type.COLUMN
+    mode = "column_definitions"
+
+  elseif clause == "declare" then
+    ctx_type = Type.KEYWORD
+    mode = "declare"
 
   else
     -- Unknown clause - return nil to fall through to token-based detection
@@ -213,7 +331,10 @@ function ClauseContext.handle_clause(bufnr, line_num, col, tokens, chunk, clause
   local is_after_dot_qual, _ = TokenContext.is_dot_triggered(tokens, line_num, col)
   if is_after_dot_qual and
      clause ~= "from" and clause ~= "join" and clause ~= "into" and
-     clause ~= "update" and clause ~= "delete" and clause ~= "merge" then
+     clause ~= "update" and clause ~= "delete" and clause ~= "merge" and
+     clause ~= "update_target" and clause ~= "delete_target" and
+     clause ~= "using" and
+     clause ~= "create_table" and clause ~= "alter_table" and clause ~= "drop_table" then
     local ref = TokenContext.get_reference_before_dot(tokens, line_num, col)
     if ref then
       extra.table_ref = ref

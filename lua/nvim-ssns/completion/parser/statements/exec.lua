@@ -1,6 +1,7 @@
 ---EXEC/EXECUTE statement parsing module
 
 local BaseStatement = require('nvim-ssns.completion.parser.statements.base')
+local Helpers = require('nvim-ssns.completion.parser.utils.helpers')
 
 local ExecStatement = {}
 
@@ -14,7 +15,29 @@ function ExecStatement.parse(state, scope)
   local chunk = BaseStatement.create_chunk("EXEC", start_token, state.go_batch_index, state)
 
   scope.statement_type = "EXEC"
-  state:advance()  -- Must advance past EXEC before consume_until_statement_end
+  state:advance()  -- consume EXEC/EXECUTE
+
+  -- Capture procedure name (possibly schema-qualified: schema.proc_name)
+  if state:current() and (state:current().type == "identifier" or state:current().type == "bracket_id") then
+    local proc_parts = {}
+    while state:current() do
+      local t = state:current()
+      if t.type == "identifier" or t.type == "bracket_id" then
+        table.insert(proc_parts, Helpers.strip_brackets(t.text))
+        state:advance()
+        if state:is_type("dot") then
+          state:advance()
+        else
+          break
+        end
+      else
+        break
+      end
+    end
+    chunk.exec_procedure = table.concat(proc_parts, ".")
+  end
+
+  -- Consume remaining parameters until statement end
   state:consume_until_statement_end()
 
   -- Set token_end_idx manually since we don't call finalize_chunk

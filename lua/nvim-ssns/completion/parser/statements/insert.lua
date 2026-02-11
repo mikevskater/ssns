@@ -7,6 +7,8 @@ require('nvim-ssns.completion.parser.types')
 local BaseStatement = require('nvim-ssns.completion.parser.statements.base')
 local SelectListParser = require('nvim-ssns.completion.parser.clauses.select_list')
 local FromClauseParser = require('nvim-ssns.completion.parser.clauses.from_clause')
+local WhereClauseParser = require('nvim-ssns.completion.parser.clauses.where_clause')
+local SubqueryParser = require('nvim-ssns.completion.parser.clauses.subquery')
 local TableReferenceParser = require('nvim-ssns.completion.parser.utils.table_reference')
 local Helpers = require('nvim-ssns.completion.parser.utils.helpers')
 local Keywords = require('nvim-ssns.completion.parser.utils.keywords')
@@ -50,9 +52,28 @@ function InsertStatement.parse(state, scope, temp_tables)
     in_insert = false  -- VALUES ends the INSERT context
   -- Parse INSERT...EXEC if present
   elseif state:is_keyword("EXEC") or state:is_keyword("EXECUTE") then
-    -- INSERT INTO ... EXEC sproc - consume the EXEC and everything after it
+    -- INSERT INTO ... EXEC sproc - consume the EXEC and capture procedure name
     state:advance()  -- consume EXEC/EXECUTE keyword
-    -- Skip proc name and parameters until we hit a statement terminator or new statement
+    -- Capture procedure name (possibly schema-qualified: schema.proc_name)
+    if state:current() and (state:current().type == "identifier" or state:current().type == "bracket_id") then
+      local proc_parts = {}
+      while state:current() do
+        local t = state:current()
+        if t.type == "identifier" or t.type == "bracket_id" then
+          table.insert(proc_parts, Helpers.strip_brackets(t.text))
+          state:advance()
+          if state:is_type("dot") then
+            state:advance()
+          else
+            break
+          end
+        else
+          break
+        end
+      end
+      chunk.exec_procedure = table.concat(proc_parts, ".")
+    end
+    -- Skip remaining parameters until we hit a statement terminator or new statement
     while state:current() do
       local token = state:current()
       -- Stop at GO batch separator
@@ -224,6 +245,72 @@ function InsertStatement._parse_select(state, chunk, scope)
     local from_token = state:current()
     local result = FromClauseParser.parse(state, scope, from_token)
     BaseStatement.process_from_result(chunk, scope, result, { append_tables = true })
+  end
+
+  -- Parse WHERE clause if present
+  if state:is_keyword("WHERE") then
+    WhereClauseParser.parse(state, chunk, scope, SubqueryParser)
+  end
+
+  -- Parse GROUP BY if present
+  if state:is_keyword("GROUP") then
+    local group_token = state:current()
+    state:advance()  -- consume GROUP
+    if state:is_keyword("BY") then
+      local by_token = state:current()
+      state:advance()  -- consume BY
+      local last_token = by_token
+      while state:current() do
+        local t = state:current()
+        if t.type == "semicolon" or t.type == "go" then break end
+        if t.type == "keyword" then
+          local kw = t.text:upper()
+          if kw == "HAVING" or kw == "ORDER" or kw == "OPTION" or kw == "FOR" then break end
+          if Keywords.is_statement_starter(kw) then break end
+        end
+        last_token = t
+        state:advance()
+      end
+      BaseStatement.add_clause_position(chunk, "group_by", by_token, last_token)
+    end
+  end
+
+  -- Parse HAVING if present
+  if state:is_keyword("HAVING") then
+    local having_token = state:current()
+    state:advance()  -- consume HAVING
+    local last_token = having_token
+    while state:current() do
+      local t = state:current()
+      if t.type == "semicolon" or t.type == "go" then break end
+      if t.type == "keyword" then
+        local kw = t.text:upper()
+        if kw == "ORDER" or kw == "OPTION" or kw == "FOR" then break end
+        if Keywords.is_statement_starter(kw) then break end
+      end
+      last_token = t
+      state:advance()
+    end
+    BaseStatement.add_clause_position(chunk, "having", having_token, last_token)
+  end
+
+  -- Parse ORDER BY if present
+  if state:is_keyword("ORDER") then
+    local order_token = state:current()
+    state:advance()  -- consume ORDER
+    if state:is_keyword("BY") then
+      local by_token = state:current()
+      state:advance()  -- consume BY
+      local last_token = by_token
+      while state:current() do
+        local t = state:current()
+        if t.type == "semicolon" or t.type == "go" then break end
+        if t.type == "keyword" and Keywords.is_statement_starter(t.text:upper()) then break end
+        last_token = t
+        state:advance()
+      end
+      BaseStatement.add_clause_position(chunk, "order_by", by_token, last_token)
+    end
   end
 end
 

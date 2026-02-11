@@ -37,17 +37,27 @@ function DeleteStatement.parse(state, scope, temp_tables)
   -- Handle DELETE syntax variants
   if state:is_keyword("FROM") then
     -- Simple DELETE FROM table
+    local from_token = state:current()
     state:advance()  -- consume FROM
     local table_ref = state:parse_table_reference(known_ctes)
     if table_ref then
       table.insert(chunk.tables, table_ref)
       scope:add_table(table_ref)
     end
+    -- Track delete_target clause position (FROM keyword to end of table ref)
+    local last = state.pos > 1 and state.tokens[state.pos - 1] or from_token
+    BaseStatement.add_clause_position(chunk, "delete_target", from_token, last)
   elseif state:current() and (state:current().type == "identifier" or state:current().type == "bracket_id") then
     -- Extended DELETE: DELETE alias/table FROM table alias
     -- Parse the delete target (could be alias or table name)
     local delete_target = state:parse_table_reference(known_ctes)
     chunk.delete_target = delete_target
+
+    -- Track delete_target clause position for context detection
+    if delete_target then
+      local last = state.pos > 1 and state.tokens[state.pos - 1] or start_token
+      BaseStatement.add_clause_position(chunk, "delete_target", start_token, last)
+    end
     -- The FROM clause will be parsed later in the main loop
   end
 

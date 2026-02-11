@@ -10,6 +10,7 @@
 require('nvim-ssns.completion.parser.types')
 local BaseStatement = require('nvim-ssns.completion.parser.statements.base')
 local AliasParser = require('nvim-ssns.completion.parser.utils.alias')
+local Keywords = require('nvim-ssns.completion.parser.utils.keywords')
 
 local MergeStatement = {}
 
@@ -32,12 +33,15 @@ function MergeStatement.parse(state, scope, temp_tables)
 
   -- Parse MERGE INTO target_table [AS alias]
   if state:is_keyword("INTO") then
+    local into_token = state:current()
     state:advance()  -- consume INTO
     local target = state:parse_table_reference(known_ctes)
     if target then
       table.insert(chunk.tables, target)
       scope:add_table(target)
     end
+    local last = state.pos > 1 and state.tokens[state.pos - 1] or into_token
+    BaseStatement.add_clause_position(chunk, "into", into_token, last)
   end
 
   -- Parse USING source (table or subquery)
@@ -45,8 +49,8 @@ function MergeStatement.parse(state, scope, temp_tables)
     MergeStatement._parse_using(state, chunk, scope, known_ctes)
   end
 
-  -- Skip rest of MERGE (ON condition, WHEN clauses with UPDATE/DELETE/INSERT)
-  MergeStatement._skip_merge_body(state, chunk)
+  -- Parse rest of MERGE body (ON condition, WHEN clauses with UPDATE/DELETE/INSERT)
+  MergeStatement._parse_merge_body(state, chunk, scope)
 
   -- Finalize: build aliases, resolve column parents, copy subqueries
   BaseStatement.finalize_chunk(chunk, scope, state)
@@ -54,12 +58,13 @@ function MergeStatement.parse(state, scope, temp_tables)
   return chunk
 end
 
----Parse USING clause (source table or subquery)
+---Parse USING clause (source table or subquery) and track clause position
 ---@param state ParserState
 ---@param chunk StatementChunk
 ---@param scope ScopeContext
 ---@param known_ctes table<string, boolean>
 function MergeStatement._parse_using(state, chunk, scope, known_ctes)
+  local using_token = state:current()
   state:advance()  -- consume USING
 
   -- Check for subquery: USING (SELECT ...)
@@ -97,51 +102,182 @@ function MergeStatement._parse_using(state, chunk, scope, known_ctes)
       scope:add_table(source)
     end
   end
+
+  -- Track USING clause position
+  local last = state.pos > 1 and state.tokens[state.pos - 1] or using_token
+  BaseStatement.add_clause_position(chunk, "using", using_token, last)
 end
 
----Skip the rest of MERGE body (ON, WHEN clauses) and track end position
+---Parse the MERGE body: ON condition and WHEN clauses with clause position tracking
 ---MERGE body contains UPDATE/DELETE/INSERT which are NOT new statements
 ---@param state ParserState
----@param chunk StatementChunk Chunk to update end position
-function MergeStatement._skip_merge_body(state, chunk)
+---@param chunk StatementChunk Chunk to update
+---@param scope ScopeContext Scope context
+function MergeStatement._parse_merge_body(state, chunk, scope)
   local merge_depth = 0
-  local last_token = nil
+  local when_count = 0
 
-  while state:current() do
-    local tok = state:current()
-    if not tok then break end
+  -- Parse ON condition
+  if state:is_keyword("ON") then
+    local on_token = state:current()
+    state:advance()  -- consume ON
+    local last_token = on_token
+    -- Skip ON condition until WHEN or statement end
+    while state:current() do
+      local t = state:current()
+      if t.type == "paren_open" then merge_depth = merge_depth + 1 end
+      if t.type == "paren_close" then merge_depth = merge_depth - 1 end
+      if merge_depth == 0 then
+        if t.type == "keyword" and t.text:upper() == "WHEN" then break end
+        if t.type == "semicolon" or t.type == "go" then break end
+        if t.type == "keyword" and MergeStatement._is_merge_terminator(t.text:upper()) then break end
+      end
+      last_token = t
+      state:advance()
+    end
+    BaseStatement.add_clause_position(chunk, "on", on_token, last_token)
+    merge_depth = 0
+  end
 
-    local upper = tok.text:upper()
+  -- Parse WHEN clauses
+  while state:current() and state:is_keyword("WHEN") do
+    when_count = when_count + 1
+    local when_token = state:current()
+    state:advance()  -- consume WHEN
 
-    if state:is_type("paren_open") then
-      merge_depth = merge_depth + 1
-    elseif state:is_type("paren_close") then
-      merge_depth = merge_depth - 1
+    -- Determine MATCHED vs NOT MATCHED
+    local is_not_matched = false
+    if state:is_keyword("NOT") then
+      is_not_matched = true
+      state:advance()
+    end
+    if state:is_keyword("MATCHED") then state:advance() end
+
+    -- Optional BY SOURCE / BY TARGET
+    if state:is_keyword("BY") then
+      state:advance()
+      if state:current() and (state:current().text:upper() == "SOURCE" or state:current().text:upper() == "TARGET") then
+        state:advance()
+      end
     end
 
-    if merge_depth == 0 then
-      if tok.type == "semicolon" or upper == "GO" then
-        -- Include the semicolon in the range
-        last_token = tok
-        break
+    -- Optional AND condition — skip until THEN
+    if state:is_keyword("AND") then
+      while state:current() and not state:is_keyword("THEN") do
+        local t = state:current()
+        if t.type == "paren_open" then merge_depth = merge_depth + 1 end
+        if t.type == "paren_close" then merge_depth = merge_depth - 1 end
+        if t.type == "semicolon" or t.type == "go" then break end
+        state:advance()
       end
-      -- Break on new statements (NOT UPDATE/DELETE/INSERT - they're part of WHEN)
-      if upper == "SELECT" or upper == "CREATE" or upper == "ALTER" or
+      merge_depth = 0
+    end
+
+    if state:is_keyword("THEN") then state:advance() end
+
+    -- Parse action: UPDATE SET / DELETE / INSERT
+    local last_action_token = state:current() or when_token
+    if state:is_keyword("UPDATE") then
+      state:advance()  -- consume UPDATE
+      if state:is_keyword("SET") then
+        local set_token = state:current()
+        state:advance()  -- consume SET
+        -- Parse SET assignments until next WHEN, OUTPUT, semicolon, or statement end
+        local last_set = set_token
+        while state:current() do
+          local t = state:current()
+          if t.type == "paren_open" then merge_depth = merge_depth + 1 end
+          if t.type == "paren_close" then merge_depth = merge_depth - 1 end
+          if merge_depth == 0 then
+            if t.type == "keyword" then
+              local kw = t.text:upper()
+              if kw == "WHEN" or kw == "OUTPUT" then break end
+              if MergeStatement._is_merge_terminator(kw) then break end
+            end
+            if t.type == "semicolon" or t.type == "go" then break end
+          end
+          last_set = t
+          state:advance()
+        end
+        merge_depth = 0
+        BaseStatement.add_clause_position(chunk, "merge_set_" .. when_count, set_token, last_set)
+        last_action_token = last_set
+      end
+    elseif state:is_keyword("DELETE") then
+      last_action_token = state:current()
+      state:advance()
+    elseif state:is_keyword("INSERT") then
+      state:advance()  -- consume INSERT
+      -- Parse INSERT column list if present
+      if state:is_type("paren_open") then
+        local col_start = state:current()
+        state:advance()  -- consume (
+        while state:current() and not state:is_type("paren_close") do
+          state:advance()
+        end
+        if state:is_type("paren_close") then
+          local col_end = state:current()
+          BaseStatement.add_clause_position(chunk, "merge_insert_cols_" .. when_count, col_start, col_end)
+          state:advance()  -- consume )
+        end
+      end
+      -- Parse VALUES
+      if state:is_keyword("VALUES") then
+        local val_token = state:current()
+        state:advance()  -- consume VALUES
+        if state:is_type("paren_open") then
+          state:skip_paren_contents()
+        end
+        local last_val = state.pos > 1 and state.tokens[state.pos - 1] or val_token
+        BaseStatement.add_clause_position(chunk, "merge_values_" .. when_count, val_token, last_val)
+        last_action_token = last_val
+      end
+    else
+      -- Unknown action — skip until next WHEN or end
+      while state:current() do
+        local t = state:current()
+        if t.type == "keyword" and t.text:upper() == "WHEN" then break end
+        if t.type == "semicolon" or t.type == "go" then break end
+        if t.type == "keyword" and MergeStatement._is_merge_terminator(t.text:upper()) then break end
+        last_action_token = t
+        state:advance()
+      end
+    end
+
+    -- Track WHEN clause position
+    local clause_name = is_not_matched and ("when_not_matched_" .. when_count) or ("when_matched_" .. when_count)
+    BaseStatement.add_clause_position(chunk, clause_name, when_token, last_action_token)
+  end
+
+  -- Parse OUTPUT clause if present
+  if state:is_keyword("OUTPUT") then
+    local output_token = state:current()
+    state:advance()
+    local last_output = output_token
+    while state:current() do
+      local t = state:current()
+      if t.type == "semicolon" or t.type == "go" then break end
+      if t.type == "keyword" and MergeStatement._is_merge_terminator(t.text:upper()) then break end
+      last_output = t
+      state:advance()
+    end
+    BaseStatement.add_clause_position(chunk, "output", output_token, last_output)
+  end
+
+  -- Update chunk end position
+  if state.pos > 1 then
+    BaseStatement.update_end_position(chunk, state.tokens[state.pos - 1])
+  end
+end
+
+---Check if a keyword terminates the MERGE statement (is a new statement, but not MERGE actions)
+---@param upper string Uppercased keyword
+---@return boolean
+function MergeStatement._is_merge_terminator(upper)
+  return upper == "SELECT" or upper == "CREATE" or upper == "ALTER" or
          upper == "DROP" or upper == "TRUNCATE" or upper == "WITH" or
          upper == "EXEC" or upper == "EXECUTE" or upper == "DECLARE" or
-         upper == "MERGE" then
-        break
-      end
-    end
-
-    last_token = tok
-    state:advance()
-  end
-
-  -- Update chunk end position to last token in MERGE body
-  if last_token then
-    BaseStatement.update_end_position(chunk, last_token)
-  end
+         upper == "MERGE" or upper == "SET"
 end
 
 return MergeStatement
