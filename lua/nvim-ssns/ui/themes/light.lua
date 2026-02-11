@@ -31,6 +31,7 @@ return {
     synonym = { fg = "#505050" },                         -- Gray
     action = { fg = "#800080" },                          -- Purple
     group = { fg = "#505050", bold = true },              -- Gray bold
+    server_group = { fg = "#B07D2B", bold = true },
 
     -- Status highlights
     status_connected = { fg = "#008000", bold = true },   -- Green

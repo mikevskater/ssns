@@ -53,6 +53,107 @@ function TreeRender.create_ui_group(parent, name, object_type, items)
   return group
 end
 
+---Create an ephemeral server group object for display
+---@param group_data ServerGroupData Group data from ServerGroups state
+---@param group_path string Dot-separated group path
+---@return table group Ephemeral group object
+function TreeRender.create_server_group(group_data, group_path)
+  local ServerGroups = require('nvim-ssns.server_groups')
+  local BaseDbObject = require('nvim-ssns.classes.base')
+
+  local group = setmetatable({}, { __index = BaseDbObject })
+  group.name = group_data.name
+  group.object_type = "server_group"
+  group.parent = nil
+  group.children = {}
+  group.is_loaded = true
+  group._is_ephemeral = true
+  group._group_data = group_data
+  group._group_path = group_path
+
+  -- UI state driven by persisted expansion
+  group.ui_state = {
+    expanded = ServerGroups.is_expanded(group_path),
+    visible = true,
+    icon = nil,
+    highlight = nil,
+    loading = false,
+    error = nil,
+  }
+
+  function group:has_children()
+    return #group_data.servers > 0 or #group_data.sub_groups > 0
+  end
+
+  function group:get_children()
+    return self.children
+  end
+
+  function group:toggle_expand()
+    self.ui_state.expanded = not self.ui_state.expanded
+    ServerGroups.set_expanded(group_path, self.ui_state.expanded)
+  end
+
+  return group
+end
+
+---Render a server group and its children (sub-groups + servers)
+---@param UiTree table The main UiTree module
+---@param group_data ServerGroupData
+---@param cb ContentBuilder
+---@param indent_level number
+---@param group_path string Dot-separated path
+function TreeRender.render_server_group(UiTree, group_data, cb, indent_level, group_path)
+  local Config = require('nvim-ssns.config')
+  local Cache = require('nvim-ssns.cache')
+  local ServerGroups = require('nvim-ssns.server_groups')
+  local icons = Config.get_ui().icons
+
+  local indent = string.rep("  ", indent_level)
+  local is_expanded = ServerGroups.is_expanded(group_path)
+  local expand_icon = is_expanded and (icons.expanded or "\u{f078}") or (icons.collapsed or "\u{f054}")
+  local group_icon = icons.server_group or icons.schema or "\u{f07b}"
+
+  -- Create ephemeral group object for element tracking
+  local group_obj = TreeRender.create_server_group(group_data, group_path)
+
+  -- Count total items (servers + sub-groups)
+  local total = #group_data.servers + #group_data.sub_groups
+  local count_display = "(" .. total .. ")"
+
+  cb:spans({
+    { text = indent },
+    { text = expand_icon .. " " .. group_icon .. " " .. group_data.name .. " " .. count_display,
+      style = "SsnsServerGroup",
+      track = {
+        name = "server_group_" .. group_path,
+        type = "server_group",
+        data = { object = group_obj },
+        row_based = true,
+      },
+    },
+  })
+
+  -- If expanded, render sub-groups first, then servers
+  if is_expanded then
+    -- Sub-groups (sorted)
+    local sorted_subs = ServerGroups.get_group_subgroups_sorted(group_data)
+    for _, sub in ipairs(sorted_subs) do
+      local sub_path = group_path .. "." .. sub.name
+      TreeRender.render_server_group(UiTree, sub, cb, indent_level + 1, sub_path)
+    end
+
+    -- Servers (sorted)
+    local sorted_servers = ServerGroups.get_group_servers_sorted(group_data)
+    for _, server_name in ipairs(sorted_servers) do
+      local server = Cache.find_server(server_name)
+      if server then
+        TreeRender.render_server(UiTree, server, cb, indent_level + 1)
+      end
+    end
+  end
+end
+
 ---Collect all objects from a schema (unsorted)
 ---@param schema SchemaClass The schema to get objects from
 ---@return BaseDbObject[] all_objects Combined list of all objects (unsorted)
@@ -237,6 +338,8 @@ function TreeRender.get_object_style(object_type)
     -- Actions
     action = "SsnsAction",
     add_server_action = "SsnsAction",
+    -- Server groups (organizational folders)
+    server_group = "SsnsServerGroup",
     -- Groups
     databases_group = "SsnsGroup",
     tables_group = "SsnsGroup",
@@ -290,6 +393,8 @@ function TreeRender.get_object_icon(object_type, icons, obj)
     sequence = icons.sequence or "",
     synonym = icons.synonym or "",
     action = icons.action or "",
+    -- Server group (organizational folder)
+    server_group = icons.server_group or icons.schema or "\u{f07b}",
     -- Groups use folder icon
     databases_group = icons.schema or "",
     tables_group = icons.schema or "",
@@ -384,7 +489,8 @@ function TreeRender.render(UiTree, opts)
   -- Add separator line
   cb:line("")
 
-  -- Get all servers
+  -- Sync groups with cache and get render order
+  local ServerGroups = require('nvim-ssns.server_groups')
   local servers = Cache.get_all_servers()
 
   if #servers == 0 then
@@ -396,9 +502,27 @@ function TreeRender.render(UiTree, opts)
     cb:spans({{ text = '    my_server = "sqlserver://.\\\\SQLEXPRESS/master"', style = "Comment" }})
     cb:spans({{ text = "  }", style = "Comment" }})
   else
-    -- Render each server (indent level 1 to match "+ Add Server" indent)
-    for _, server in ipairs(servers) do
-      TreeRender.render_server(UiTree, server, cb, 1)
+    -- Sync groups state with current cache servers
+    ServerGroups.sync_with_cache()
+
+    -- Show sort indicator if groups exist
+    if ServerGroups.has_groups() then
+      local sort_label = ServerGroups.get_sort_label()
+      cb:spans({{ text = "  " .. sort_label, style = "Comment" }})
+    end
+
+    -- Render using group-aware ordering
+    local ordered_items = ServerGroups.get_render_order()
+
+    for _, item in ipairs(ordered_items) do
+      if item.type == "group" then
+        TreeRender.render_server_group(UiTree, item.group_data, cb, 1, item.path)
+      else
+        local server = Cache.find_server(item.name)
+        if server then
+          TreeRender.render_server(UiTree, server, cb, 1)
+        end
+      end
     end
   end
 
@@ -946,6 +1070,7 @@ function TreeRender.render_object(UiTree, obj, cb, indent_level)
     or obj.object_type == "procedure"
     or obj.object_type == "function"
     or obj.object_type == "synonym"
+    or obj.object_type == "server_group"
     or obj.object_type == "databases_group"
     or obj.object_type == "tables_group"
     or obj.object_type == "views_group"

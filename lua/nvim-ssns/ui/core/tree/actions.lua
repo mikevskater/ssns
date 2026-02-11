@@ -22,6 +22,15 @@ function TreeActions.toggle_node(UiTree)
     return
   end
 
+  -- Handle server groups (toggle via ServerGroups persistence)
+  if obj.object_type == "server_group" then
+    local ServerGroups = require('nvim-ssns.server_groups')
+    ServerGroups.toggle_expanded(obj._group_path)
+    obj.ui_state.expanded = not obj.ui_state.expanded
+    UiTree.render()
+    return
+  end
+
   -- Handle action nodes
   if obj.object_type == "action" then
     TreeActions.execute_action(UiTree, obj)
@@ -204,6 +213,12 @@ function TreeActions.load_node_async(UiTree, obj, line_number)
       local error_msg = obj.error_message or "Unknown error"
       obj.ui_state.error = error_msg
       vim.notify(string.format("SSNS: Failed to load %s: %s", obj.name, error_msg), vim.log.levels.ERROR)
+    end
+
+    -- Record last_connected for server on successful load
+    if success and obj.object_type == "server" then
+      local ServerGroups = require('nvim-ssns.server_groups')
+      ServerGroups.record_connection(obj.name)
     end
 
     -- Re-render tree (cursor restoration handled by render function)
@@ -590,6 +605,12 @@ function TreeActions.toggle_connection(UiTree)
         vim.notify(string.format("Connection failed: %s", err), vim.log.levels.ERROR)
       end
 
+      -- Record last_connected timestamp on successful connect
+      if not err and obj.object_type == "server" and obj:is_connected() then
+        local ServerGroups = require('nvim-ssns.server_groups')
+        ServerGroups.record_connection(obj.name)
+      end
+
       -- Re-render tree (cursor restoration handled by render function)
       UiTree.render()
     end)
@@ -796,6 +817,332 @@ end
 ---@param UiTree table The main UiTree module
 function TreeActions.handle_double_click(UiTree)
   TreeActions.handle_mouse_click(UiTree, true)
+end
+
+-- ============================================================================
+-- Server Group Actions
+-- ============================================================================
+
+---Get the server group context from the current cursor position
+---Returns the group_path for the closest server_group ancestor or nil
+---@param UiTree table
+---@return table? obj The object at cursor
+---@return string? group_path The group path if cursor is on/in a group
+local function get_group_context(UiTree)
+  local Buffer = require('nvim-ssns.ui.core.buffer')
+  local line_number = Buffer.get_current_line()
+  local obj = UiTree.line_map[line_number]
+  if not obj then return nil, nil end
+
+  if obj.object_type == "server_group" then
+    return obj, obj._group_path
+  end
+
+  -- Walk up parents to find containing group
+  local current = obj
+  while current do
+    if current.object_type == "server_group" then
+      return obj, current._group_path
+    end
+    current = current.parent
+  end
+
+  return obj, nil
+end
+
+---Create a new server group
+---@param UiTree table The main UiTree module
+function TreeActions.create_group(UiTree)
+  local ServerGroups = require('nvim-ssns.server_groups')
+  local obj, group_path = get_group_context(UiTree)
+
+  -- Determine parent path: if on a group, create inside it; otherwise at root
+  local parent_path = nil
+  if obj and obj.object_type == "server_group" then
+    parent_path = obj._group_path
+  end
+
+  vim.ui.input({ prompt = "Group name: " }, function(name)
+    if not name or name == "" then return end
+
+    local ok, err = ServerGroups.create_group(parent_path, name)
+    if ok then
+      -- Auto-expand parent if creating inside a group
+      if parent_path then
+        ServerGroups.set_expanded(parent_path, true)
+      end
+      UiTree.render()
+    else
+      vim.notify("SSNS: " .. (err or "Failed to create group"), vim.log.levels.ERROR)
+    end
+  end)
+end
+
+---Rename a server group (only works on server_group nodes)
+---@param UiTree table The main UiTree module
+function TreeActions.rename_group(UiTree)
+  local ServerGroups = require('nvim-ssns.server_groups')
+  local Buffer = require('nvim-ssns.ui.core.buffer')
+  local line_number = Buffer.get_current_line()
+  local obj = UiTree.line_map[line_number]
+
+  if not obj or obj.object_type ~= "server_group" then
+    vim.notify("SSNS: Cursor must be on a server group to rename", vim.log.levels.WARN)
+    return
+  end
+
+  local group_path = obj._group_path
+  vim.ui.input({ prompt = "New group name: ", default = obj.name }, function(new_name)
+    if not new_name or new_name == "" or new_name == obj.name then return end
+
+    local ok, err = ServerGroups.rename_group(group_path, new_name)
+    if ok then
+      UiTree.render()
+    else
+      vim.notify("SSNS: " .. (err or "Failed to rename group"), vim.log.levels.ERROR)
+    end
+  end)
+end
+
+---Delete a server group (children adopted by parent)
+---@param UiTree table The main UiTree module
+function TreeActions.delete_group(UiTree)
+  local ServerGroups = require('nvim-ssns.server_groups')
+  local Buffer = require('nvim-ssns.ui.core.buffer')
+  local line_number = Buffer.get_current_line()
+  local obj = UiTree.line_map[line_number]
+
+  if not obj or obj.object_type ~= "server_group" then
+    vim.notify("SSNS: Cursor must be on a server group to delete", vim.log.levels.WARN)
+    return
+  end
+
+  local group_path = obj._group_path
+  local confirm = vim.fn.confirm(
+    string.format("Delete group '%s'?\nChildren will be moved to the parent level.", obj.name),
+    "&Yes\n&No",
+    2
+  )
+  if confirm ~= 1 then return end
+
+  local ok, err = ServerGroups.delete_group(group_path)
+  if ok then
+    UiTree.render()
+  else
+    vim.notify("SSNS: " .. (err or "Failed to delete group"), vim.log.levels.ERROR)
+  end
+end
+
+---Move a server or group to another group (select dialog)
+---@param UiTree table The main UiTree module
+function TreeActions.move_to_group(UiTree)
+  local ServerGroups = require('nvim-ssns.server_groups')
+  local Buffer = require('nvim-ssns.ui.core.buffer')
+  local line_number = Buffer.get_current_line()
+  local obj = UiTree.line_map[line_number]
+
+  if not obj then return end
+
+  local destinations
+  local move_fn
+
+  if obj.object_type == "server_group" then
+    -- Moving a group
+    destinations = ServerGroups.get_move_destinations_for_group(obj._group_path)
+    move_fn = function(dest_path)
+      return ServerGroups.move_group(obj._group_path, dest_path == "" and nil or dest_path)
+    end
+  elseif obj.object_type == "server" then
+    -- Moving a server
+    destinations = ServerGroups.get_move_destinations_for_server(obj.name)
+    move_fn = function(dest_path)
+      return ServerGroups.move_server(obj.name, dest_path == "" and nil or dest_path)
+    end
+  else
+    vim.notify("SSNS: Can only move servers or server groups", vim.log.levels.WARN)
+    return
+  end
+
+  if #destinations == 0 then
+    vim.notify("SSNS: No valid destinations available", vim.log.levels.INFO)
+    return
+  end
+
+  -- Build selection list
+  local labels = {}
+  for _, dest in ipairs(destinations) do
+    table.insert(labels, dest.label)
+  end
+
+  vim.ui.select(labels, { prompt = "Move to:" }, function(choice, idx)
+    if not choice or not idx then return end
+
+    local dest = destinations[idx]
+    local ok, err = move_fn(dest.path)
+    if ok then
+      UiTree.render()
+    else
+      vim.notify("SSNS: " .. (err or "Failed to move"), vim.log.levels.ERROR)
+    end
+  end)
+end
+
+---Move item one level up to parent
+---@param UiTree table The main UiTree module
+function TreeActions.move_to_parent(UiTree)
+  local ServerGroups = require('nvim-ssns.server_groups')
+  local Buffer = require('nvim-ssns.ui.core.buffer')
+  local line_number = Buffer.get_current_line()
+  local obj = UiTree.line_map[line_number]
+
+  if not obj then return end
+
+  local item_type, identifier
+
+  if obj.object_type == "server_group" then
+    item_type = "group"
+    identifier = obj._group_path
+  elseif obj.object_type == "server" then
+    item_type = "server"
+    identifier = obj.name
+  else
+    vim.notify("SSNS: Can only move servers or server groups", vim.log.levels.WARN)
+    return
+  end
+
+  local ok, err = ServerGroups.move_to_parent(item_type, identifier)
+  if ok then
+    UiTree.render()
+  else
+    vim.notify("SSNS: " .. (err or "Already at top level"), vim.log.levels.INFO)
+  end
+end
+
+---Add a saved connection to a server group (picker from all connections)
+---@param UiTree table The main UiTree module
+function TreeActions.add_to_group(UiTree)
+  local ServerGroups = require('nvim-ssns.server_groups')
+  local Connections = require('nvim-ssns.connections')
+  local Cache = require('nvim-ssns.cache')
+  local Buffer = require('nvim-ssns.ui.core.buffer')
+  local line_number = Buffer.get_current_line()
+  local obj = UiTree.line_map[line_number]
+
+  -- Determine target group
+  local target_group_path = nil
+  if obj and obj.object_type == "server_group" then
+    target_group_path = obj._group_path
+  end
+
+  -- Load all saved connections
+  Connections.load_async(function(all_connections, err)
+    if err then
+      vim.schedule(function()
+        vim.notify("SSNS: Failed to load connections: " .. err, vim.log.levels.ERROR)
+      end)
+      return
+    end
+
+    -- Filter to connections NOT already in Cache.servers
+    local available = {}
+    for _, conn in ipairs(all_connections) do
+      if not Cache.server_exists(conn.name) then
+        table.insert(available, conn)
+      end
+    end
+
+    vim.schedule(function()
+      if #available == 0 then
+        vim.notify("SSNS: All saved connections are already in the tree", vim.log.levels.INFO)
+        return
+      end
+
+      -- Build selection list
+      local labels = {}
+      for _, conn in ipairs(available) do
+        local label = conn.name .. " (" .. (conn.type or "unknown") .. ")"
+        table.insert(labels, label)
+      end
+
+      vim.ui.select(labels, { prompt = "Add connection to group:" }, function(choice, idx)
+        if not choice or not idx then return end
+
+        local conn = available[idx]
+
+        -- Create server and add to cache
+        local server, add_err = Cache.add_server_from_connection(conn)
+        if not server then
+          vim.notify("SSNS: " .. (add_err or "Failed to add server"), vim.log.levels.ERROR)
+          return
+        end
+
+        -- Place in group if a target was specified
+        if target_group_path then
+          ServerGroups.add_server_to_group(conn.name, target_group_path)
+        end
+
+        UiTree.render()
+        vim.notify(string.format("SSNS: Added '%s' to tree", conn.name), vim.log.levels.INFO)
+      end)
+    end)
+  end)
+end
+
+---Cycle sort mode
+---@param UiTree table The main UiTree module
+function TreeActions.cycle_sort(UiTree)
+  local ServerGroups = require('nvim-ssns.server_groups')
+  local new_mode = ServerGroups.cycle_sort()
+
+  local labels = { alpha = "Alphabetical", last_connection = "Last Connected", custom = "Custom" }
+  vim.notify("SSNS: Sort mode: " .. (labels[new_mode] or new_mode), vim.log.levels.INFO)
+  UiTree.render()
+end
+
+---Reorder current item up
+---@param UiTree table The main UiTree module
+function TreeActions.reorder_up(UiTree)
+  local ServerGroups = require('nvim-ssns.server_groups')
+  local Buffer = require('nvim-ssns.ui.core.buffer')
+  local line_number = Buffer.get_current_line()
+  local obj = UiTree.line_map[line_number]
+
+  if not obj then return end
+
+  local moved = false
+  if obj.object_type == "server_group" then
+    moved = ServerGroups.reorder_up("group", obj._group_path)
+  elseif obj.object_type == "server" then
+    moved = ServerGroups.reorder_up("server", obj.name)
+  end
+
+  if moved then
+    -- render() will restore cursor to the same object at its new position
+    UiTree.render()
+  end
+end
+
+---Reorder current item down
+---@param UiTree table The main UiTree module
+function TreeActions.reorder_down(UiTree)
+  local ServerGroups = require('nvim-ssns.server_groups')
+  local Buffer = require('nvim-ssns.ui.core.buffer')
+  local line_number = Buffer.get_current_line()
+  local obj = UiTree.line_map[line_number]
+
+  if not obj then return end
+
+  local moved = false
+  if obj.object_type == "server_group" then
+    moved = ServerGroups.reorder_down("group", obj._group_path)
+  elseif obj.object_type == "server" then
+    moved = ServerGroups.reorder_down("server", obj.name)
+  end
+
+  if moved then
+    -- render() will restore cursor to the same object at its new position
+    UiTree.render()
+  end
 end
 
 return TreeActions

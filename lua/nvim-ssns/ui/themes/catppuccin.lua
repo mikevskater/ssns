@@ -31,6 +31,7 @@ return {
     synonym = { fg = "#6C7086" },                         -- Overlay0
     action = { fg = "#F5C2E7" },                          -- Pink
     group = { fg = "#6C7086", bold = true },              -- Overlay0 bold
+    server_group = { fg = "#F9E2AF", bold = true },
 
     -- Status highlights
     status_connected = { fg = "#A6E3A1", bold = true },   -- Green

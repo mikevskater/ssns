@@ -533,6 +533,52 @@ function UiBuffer.setup_keymaps()
       rhs = "<Cmd>lua require('nvim-ssns.ui.core.tree').handle_double_click()<CR>",
       desc = "Toggle expand with double-click",
     },
+    -- Server group operations
+    {
+      lhs = km.create_group or "G",
+      rhs = "<Cmd>lua require('nvim-ssns.ui.core.tree').create_group()<CR>",
+      desc = "Create server group",
+    },
+    {
+      lhs = km.rename_group or "cg",
+      rhs = "<Cmd>lua require('nvim-ssns.ui.core.tree').rename_group()<CR>",
+      desc = "Rename server group",
+    },
+    {
+      lhs = km.delete_group or "dg",
+      rhs = "<Cmd>lua require('nvim-ssns.ui.core.tree').delete_group()<CR>",
+      desc = "Delete server group",
+    },
+    {
+      lhs = km.move_to_group or "m",
+      rhs = "<Cmd>lua require('nvim-ssns.ui.core.tree').move_to_group()<CR>",
+      desc = "Move to group",
+    },
+    {
+      lhs = km.move_to_parent or "u",
+      rhs = "<Cmd>lua require('nvim-ssns.ui.core.tree').move_to_parent()<CR>",
+      desc = "Move to parent level",
+    },
+    {
+      lhs = km.add_to_group or "A",
+      rhs = "<Cmd>lua require('nvim-ssns.ui.core.tree').add_to_group()<CR>",
+      desc = "Add connection to group",
+    },
+    {
+      lhs = km.cycle_sort or "s",
+      rhs = "<Cmd>lua require('nvim-ssns.ui.core.tree').cycle_sort()<CR>",
+      desc = "Cycle sort mode",
+    },
+    {
+      lhs = km.reorder_up or "<C-k>",
+      rhs = "<Cmd>lua require('nvim-ssns.ui.core.tree').reorder_up()<CR>",
+      desc = "Reorder item up",
+    },
+    {
+      lhs = km.reorder_down or "<C-j>",
+      rhs = "<Cmd>lua require('nvim-ssns.ui.core.tree').reorder_down()<CR>",
+      desc = "Reorder item down",
+    },
   }
 
   -- Add escape key for float mode only

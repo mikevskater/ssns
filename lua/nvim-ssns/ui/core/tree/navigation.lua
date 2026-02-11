@@ -57,6 +57,7 @@ function TreeNavigation.navigate_to_object(UiTree, target_object)
       or parent.object_type == "schemas_group"
       or parent.object_type == "system_databases_group"
       or parent.object_type == "system_schemas_group"
+      or parent.object_type == "server_group"
   end
 
   -- Helper to expand a parent node

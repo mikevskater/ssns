@@ -31,6 +31,7 @@ return {
     synonym = { fg = "#C9647C" },                         -- Dusty rose
     action = { fg = "#FF6EC7" },                          -- Fuchsia pink
     group = { fg = "#B85C7A", bold = true },              -- Mauve bold
+    server_group = { fg = "#D4A373", bold = true },
 
     -- Status highlights (cute status colors)
     status_connected = { fg = "#FF69B4", bold = true },   -- Hot pink (happy!)

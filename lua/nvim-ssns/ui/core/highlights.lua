@@ -99,6 +99,8 @@ function UiHighlights.get_highlight_group(obj)
     synonym = "SsnsSynonym",
     action = "SsnsAction",
     add_server_action = "SsnsAddServerAction",
+    -- Server groups
+    server_group = "SsnsServerGroup",
     -- Groups
     databases_group = "SsnsGroup",
     tables_group = "SsnsGroup",

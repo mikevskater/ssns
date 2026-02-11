@@ -31,6 +31,7 @@ return {
     synonym = { fg = "#808080" },                         -- Gray
     action = { fg = "#ff69b4" },                          -- Pink
     group = { fg = "#251815", bold = true },              -- Black bold
+    server_group = { fg = "#E8AB53", bold = true },
 
     -- Status highlights
     status_connected = { fg = "#f90013", bold = true },   -- Red (Hello Kitty's bow)

@@ -31,6 +31,7 @@ return {
     synonym = { fg = "#228B22" },                         -- Forest green
     action = { fg = "#00FF00" },                          -- Pure green
     group = { fg = "#006400", bold = true },              -- Dark green bold
+    server_group = { fg = "#D4A959", bold = true },
 
     -- Status highlights (green status indicators)
     status_connected = { fg = "#00FF41", bold = true },   -- Bright Matrix green

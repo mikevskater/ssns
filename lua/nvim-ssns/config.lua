@@ -52,6 +52,7 @@
 ---@field action string Action icon
 ---@field sequence string Sequence icon
 ---@field synonym string Synonym icon
+---@field server_group string Server group folder icon
 ---@field connected string Connected status icon
 ---@field disconnected string Disconnected status icon
 ---@field connecting string Connecting/loading status icon
@@ -211,6 +212,15 @@
 ---@field add_server string Open add server UI (default: "a")
 ---@field toggle_favorite string Toggle favorite (default: "*")
 ---@field show_history string Show query history (default: "<Leader>@")
+---@field create_group string Create server group (default: "G")
+---@field rename_group string Rename server group (default: "cg")
+---@field delete_group string Delete server group (default: "dg")
+---@field move_to_group string Move to group (default: "m")
+---@field move_to_parent string Move to parent level (default: "u")
+---@field add_to_group string Add saved connection to group (default: "A")
+---@field cycle_sort string Cycle sort mode (default: "s")
+---@field reorder_up string Reorder up (default: "<C-k>")
+---@field reorder_down string Reorder down (default: "<C-j>")
 
 ---@class QueryKeymaps Query buffer specific keymaps
 ---@field execute string Execute query (default: "<Leader>r")
@@ -564,6 +574,7 @@ local default_config = {
       action = "\u{f04b}",      --
       sequence = "\u{f292}",    --
       synonym = "\u{f0c1}",     --
+      server_group = "\u{f07b}",  --  (folder)
 
       -- Status indicators
       connected = "\u{f00c}",      --
@@ -601,6 +612,7 @@ local default_config = {
       synonym = { fg = "#808080" },                        -- Gray (synonyms)
       action = { fg = "#C586C0" },                         -- Purple (actions)
       group = { fg = "#858585", bold = true },             -- Gray bold (groups)
+      server_group = { fg = "#E8AB53", bold = true },      -- Folder yellow (server groups)
 
       -- Status highlights
       status_connected = { fg = "#4EC9B0", bold = true },  -- Green/cyan
@@ -949,6 +961,16 @@ local default_config = {
       show_history = "<Leader>@", -- Show query history
       view_definition = "K", -- View object definition (ALTER script)
       view_metadata = "M",   -- View object metadata
+      -- Server group operations
+      create_group = "G",           -- Create server group
+      rename_group = "cg",          -- Rename server group
+      delete_group = "dg",          -- Delete server group
+      move_to_group = "m",          -- Move server/group to another group
+      move_to_parent = "u",         -- Move item one level up
+      add_to_group = "A",           -- Add server from saved connections to group
+      cycle_sort = "s",             -- Cycle sort mode (custom/alpha/recent)
+      reorder_up = "<C-k>",         -- Reorder item up (custom sort)
+      reorder_down = "<C-j>",       -- Reorder item down (custom sort)
     },
 
     -- Query buffer keymaps

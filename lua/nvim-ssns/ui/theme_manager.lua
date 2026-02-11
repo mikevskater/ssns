@@ -327,6 +327,7 @@ function ThemeManager.apply_colors(colors)
   vim.api.nvim_set_hl(0, "SsnsSynonym", colors.synonym or {})
   vim.api.nvim_set_hl(0, "SsnsAction", colors.action or {})
   vim.api.nvim_set_hl(0, "SsnsGroup", colors.group or {})
+  vim.api.nvim_set_hl(0, "SsnsServerGroup", colors.server_group or { fg = "#E8AB53", bold = true })
 
   -- Add server action (green)
   vim.api.nvim_set_hl(0, "SsnsAddServerAction", { fg = "#4EC9B0", bold = true })

@@ -86,6 +86,10 @@ function Ssns.setup(user_config)
     end
   end
 
+  -- Setup server groups (VimLeavePre flush for persistence)
+  local ServerGroups = require('nvim-ssns.server_groups')
+  ServerGroups.setup()
+
   -- Load servers from configuration
   local Cache = require('nvim-ssns.cache')
   local Connections = require('nvim-ssns.connections')

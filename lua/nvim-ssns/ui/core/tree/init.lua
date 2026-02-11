@@ -185,6 +185,53 @@ function UiTree.handle_double_click()
   TreeActions.handle_double_click(UiTree)
 end
 
+-- Server Group actions
+
+---Create a new server group
+function UiTree.create_group()
+  TreeActions.create_group(UiTree)
+end
+
+---Rename a server group
+function UiTree.rename_group()
+  TreeActions.rename_group(UiTree)
+end
+
+---Delete a server group
+function UiTree.delete_group()
+  TreeActions.delete_group(UiTree)
+end
+
+---Move server/group to another group
+function UiTree.move_to_group()
+  TreeActions.move_to_group(UiTree)
+end
+
+---Move item one level up
+function UiTree.move_to_parent()
+  TreeActions.move_to_parent(UiTree)
+end
+
+---Add saved connection to group
+function UiTree.add_to_group()
+  TreeActions.add_to_group(UiTree)
+end
+
+---Cycle sort mode
+function UiTree.cycle_sort()
+  TreeActions.cycle_sort(UiTree)
+end
+
+---Reorder item up
+function UiTree.reorder_up()
+  TreeActions.reorder_up(UiTree)
+end
+
+---Reorder item down
+function UiTree.reorder_down()
+  TreeActions.reorder_down(UiTree)
+end
+
 -- Navigation functions
 
 ---Navigate to an object in the tree

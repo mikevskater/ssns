@@ -31,6 +31,7 @@ return {
     synonym = { fg = "#4C566A" },
     action = { fg = "#B48EAD" },
     group = { fg = "#4C566A", bold = true },
+    server_group = { fg = "#EBCB8B", bold = true },
 
     -- Status
     status_connected = { fg = "#A3BE8C", bold = true },

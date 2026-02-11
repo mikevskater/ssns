@@ -31,6 +31,7 @@ return {
     synonym = { fg = "#7979B4" },                         -- Dark Grey Purple
     action = { fg = "#C193BF" },                          -- Light Purple
     group = { fg = "#8ED3D8", bold = true },              -- Dark Grey Purple bold
+    server_group = { fg = "#E8AB53", bold = true },
 
     -- Status highlights
     status_connected = { fg = "#428EC5", bold = true },   -- Deep Blue (loyal connection)
