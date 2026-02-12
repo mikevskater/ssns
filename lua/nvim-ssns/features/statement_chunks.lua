@@ -175,24 +175,34 @@ function StatementChunksViewer.view_statement_chunks()
         cb:blank()
       end
 
-      -- Clause positions
+      -- Clause positions (sorted by position in the SQL statement)
       if chunk.clause_positions and next(chunk.clause_positions) then
         cb:styled("  Clause Positions:", "label")
         local sorted_clauses = {}
-        for clause_name in pairs(chunk.clause_positions) do
-          table.insert(sorted_clauses, clause_name)
+        for clause_name, pos in pairs(chunk.clause_positions) do
+          table.insert(sorted_clauses, {
+            name = clause_name,
+            start_line = pos.start_line or 0,
+            start_col = pos.start_col or 0,
+            end_line = pos.end_line or 0,
+            end_col = pos.end_col or 0,
+          })
         end
-        table.sort(sorted_clauses)
-        for _, clause_name in ipairs(sorted_clauses) do
-          local pos = chunk.clause_positions[clause_name]
+        table.sort(sorted_clauses, function(a, b)
+          if a.start_line ~= b.start_line then
+            return a.start_line < b.start_line
+          end
+          return a.start_col < b.start_col
+        end)
+        for _, clause in ipairs(sorted_clauses) do
           cb:spans({
             { text = "    ", style = "text" },
-            { text = clause_name, style = "keyword" },
+            { text = clause.name, style = "keyword" },
             { text = string.format(": L%d:%d - L%d:%d",
-                pos.start_line or 0,
-                pos.start_col or 0,
-                pos.end_line or 0,
-                pos.end_col or 0), style = "muted" },
+                clause.start_line,
+                clause.start_col,
+                clause.end_line,
+                clause.end_col), style = "muted" },
           })
         end
         cb:blank()
