@@ -124,15 +124,15 @@ function M.sync_filter_dropdowns()
   if not multi_panel then return end
 
   local filters_panel = multi_panel.panels["filters"]
-  if not filters_panel or not filters_panel.input_manager then return end
+  if not filters_panel or not filters_panel.float then return end
 
-  local input_manager = filters_panel.input_manager
+  local float = filters_panel.float
 
-  -- Sync search_targets dropdown
-  input_manager:set_multi_dropdown_values("search_targets", Render.get_search_targets_values())
+  -- Sync search_targets embedded multi-dropdown
+  float:set_embedded_value("search_targets", Render.get_search_targets_values())
 
-  -- Sync object_types dropdown
-  input_manager:set_multi_dropdown_values("object_types", Render.get_object_types_values())
+  -- Sync object_types embedded multi-dropdown
+  float:set_embedded_value("object_types", Render.get_object_types_values())
 end
 
 ---Sync settings dropdown values with current ui_state
@@ -142,12 +142,12 @@ function M.sync_settings_dropdowns()
   if not multi_panel then return end
 
   local settings_panel = multi_panel.panels["settings"]
-  if not settings_panel or not settings_panel.input_manager then return end
+  if not settings_panel or not settings_panel.float then return end
 
-  local input_manager = settings_panel.input_manager
+  local float = settings_panel.float
 
-  -- Sync search_options dropdown
-  input_manager:set_multi_dropdown_values("search_options", Render.get_search_options_values())
+  -- Sync search_options embedded multi-dropdown
+  float:set_embedded_value("search_options", Render.get_search_options_values())
 end
 
 -- ============================================================================
