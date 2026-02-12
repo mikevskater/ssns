@@ -359,25 +359,23 @@ function M.render_filters(state)
     cb:set_max_width(panel_width)
   end
 
-  -- Row 1: Search targets dropdown (what to search in)
-  cb:multi_dropdown("search_targets", {
-    label = "Search In",
-    label_width = 11,
+  -- Row 1: Search targets multi-dropdown (embedded, what to search in)
+  cb:embedded_multi_dropdown("search_targets", {
+    label = "Search In ",
     options = {
       { value = "names", label = "Names {1}" },
       { value = "defs", label = "Definitions {2}" },
       { value = "meta", label = "Metadata {3}" },
     },
-    values = get_search_targets_values(),
+    selected = get_search_targets_values(),
     display_mode = "list",
     placeholder = "(none)",
-    width = 70,
+    width = 40,
   })
 
-  -- Row 2: Object types dropdown (what types to show)
-  cb:multi_dropdown("object_types", {
-    label = "Types",
-    label_width = 11,
+  -- Row 2: Object types multi-dropdown (embedded, what types to show)
+  cb:embedded_multi_dropdown("object_types", {
+    label = "Types     ",
     options = {
       { value = "table", label = "T Tables {!}" },
       { value = "view", label = "V Views {@}" },
@@ -386,11 +384,10 @@ function M.render_filters(state)
       { value = "synonym", label = "S Synonyms {%}" },
       { value = "schema", label = "σ Schemas {^}" },
     },
-    values = get_object_types_values(),
+    selected = get_object_types_values(),
     display_mode = "list",
-    select_all_option = true,
     placeholder = "(none)",
-    width = 70,
+    width = 40,
   })
 
   -- Row 3: Status/counts
@@ -418,7 +415,7 @@ function M.render_filters(state)
   return cb:build_lines(), cb:build_highlights()
 end
 
----Render the settings panel with dropdowns and toggles
+---Render the settings panel with embedded container dropdowns
 ---@param state MultiPanelState
 ---@return ContentBuilder cb
 function M.render_settings(state)
@@ -431,64 +428,54 @@ function M.render_settings(state)
     cb:set_max_width(panel_width)
   end
 
-  -- Row 1: Server dropdown
-  cb:dropdown("server", {
-    label = "Server",
-    label_width = 11,
+  -- Row 1: Server dropdown (embedded)
+  cb:embedded_dropdown("server", {
+    label = "Server    ",
     options = get_server_options(),
-    value = ui_state.selected_server and ui_state.selected_server.name or "",
+    selected = ui_state.selected_server and ui_state.selected_server.name or "",
     placeholder = "(select server)",
-    width = 70,
+    width = 40,
   })
 
-  -- Row 2: Database multi-dropdown (show loading state when server is connecting/loading)
+  -- Row 2: Database multi-dropdown (embedded, show loading state)
   local db_placeholder = "(select databases)"
   local db_options = {}
-  local db_disabled = false
 
   if ui_state.server_loading then
-    -- Show loading spinner in placeholder
     local spinner_char = State.get_loading_spinner_frame()
     if spinner_char == "" then spinner_char = "⠋" end
     db_placeholder = spinner_char .. " Loading databases..."
-    db_disabled = true
   elseif not ui_state.selected_server then
     db_placeholder = "(select server first)"
-    db_disabled = true
   else
     db_options = get_database_options()
     if #db_options == 0 then
       db_placeholder = "(no databases found)"
-      db_disabled = true
     end
   end
 
-  cb:multi_dropdown("databases", {
-    label = "Databases",
-    label_width = 11,
+  cb:embedded_multi_dropdown("databases", {
+    label = "Databases ",
     options = db_options,
-    values = get_selected_db_names(),
+    selected = get_selected_db_names(),
     display_mode = "count",
-    select_all_option = not db_disabled,
     placeholder = db_placeholder,
-    width = 70,
-    disabled = db_disabled,
+    width = 40,
   })
 
-  -- Row 3: Search options multi-dropdown (list mode)
-  cb:multi_dropdown("search_options", {
-    label = "Options",
-    label_width = 11,
+  -- Row 3: Search options multi-dropdown (embedded, list mode)
+  cb:embedded_multi_dropdown("search_options", {
+    label = "Options   ",
     options = {
       { value = "case", label = "Case {c}" },
       { value = "regex", label = "Regex {x}" },
       { value = "word", label = "Word {w}" },
       { value = "system", label = "Sys Objs {S}" },
     },
-    values = get_search_options_values(),
+    selected = get_search_options_values(),
     display_mode = "list",
     placeholder = "(none)",
-    width = 70,
+    width = 40,
   })
 
   return cb
