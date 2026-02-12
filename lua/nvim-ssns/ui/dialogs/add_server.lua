@@ -301,9 +301,9 @@ function AddServerUI.show_form_controls()
     {
       header = "Form Navigation",
       keys = {
-        { key = "Tab", desc = "Next field" },
-        { key = "S-Tab", desc = "Previous field" },
-        { key = "Enter", desc = "Edit field / Select dropdown" },
+        { key = "h/j/k/l", desc = "Navigate between fields" },
+        { key = "Enter", desc = "Edit input / Open dropdown" },
+        { key = "Esc", desc = "Exit field edit" },
       },
     },
     {
@@ -665,51 +665,68 @@ function AddServerUI.show_new_connection_form_with_state(form_state, edit_connec
   local needs_auth_creds = form_state.auth_type == "sql"
   local default_port = DEFAULT_PORTS[form_state.db_type]
 
-  -- Build styled content with inline inputs
+  -- Build styled content with embedded containers
   local cb = ContentBuilder.new()
 
-  -- Server Type dropdown
+  -- Server Type dropdown (embedded container)
   cb:blank()
   local db_type_options = {}
   for _, t in ipairs(DB_TYPES) do
     table.insert(db_type_options, { value = t.id, label = t.icon .. " " .. t.label })
   end
-  cb:dropdown("db_type", {
+  cb:embedded_dropdown("db_type", {
     label = "  DATABASE TYPE",
     options = db_type_options,
-    value = form_state.db_type,
+    selected = form_state.db_type,
     width = 22,
+    on_change = function(key, value)
+      AddServerUI._sync_inputs_to_form_state(form_state)
+      form_state.db_type = value
+      local auth_opts = AUTH_TYPES[value]
+      if auth_opts and #auth_opts > 0 then
+        form_state.auth_type = auth_opts[1].id
+      end
+      if value == "sqlite" or form_state.auth_type ~= "sql" then
+        form_state.username = ""
+        form_state.password = ""
+      end
+      AddServerUI.show_new_connection_form_with_state(form_state, edit_connection)
+    end,
   })
   cb:blank()
 
-  -- Connection Name (inline input)
-  cb:labeled_input("name", "     CONNECTION NAME", {
+  -- Connection Name (embedded input)
+  cb:embedded_input("name", {
+    label = "     CONNECTION NAME",
     value = form_state.name,
     placeholder = "(required)",
     width = 30,
   })
 
-  -- Server/Database File Path (inline input)
+  -- Server/Database File Path (embedded input)
   local path_label = is_sqlite and "     DATABASE FILE  " or "     SERVER         "
-  cb:labeled_input("server_path", path_label, {
+  cb:embedded_input("server_path", {
+    label = path_label,
     value = form_state.server_path,
     placeholder = "(required)",
     width = 30,
   })
 
-  -- Port (inline input, not for SQLite)
+  -- Port (embedded input, not for SQLite)
   if not is_sqlite then
     local port_str = form_state.port and tostring(form_state.port) or (default_port and tostring(default_port) or "")
-    cb:labeled_input("port", "     PORT           ", {
+    cb:embedded_input("port", {
+      label = "     PORT           ",
       value = port_str,
       placeholder = default_port and tostring(default_port) or "(default)",
       width = 8,
     })
   end
 
-  -- Database (inline input, not for SQLite)
+  -- Database (embedded input, not for SQLite)
   if not is_sqlite then
-    cb:labeled_input("database", "     DATABASE       ", {
+    cb:embedded_input("database", {
+      label = "     DATABASE       ",
       value = form_state.database,
       placeholder = "(optional)",
       width = 25,
@@ -718,28 +735,39 @@ function AddServerUI.show_new_connection_form_with_state(form_state, edit_connec
 
   cb:blank()
 
-  -- Authentication dropdown (not for SQLite)
+  -- Authentication dropdown (not for SQLite, embedded container)
   if not is_sqlite then
     local auth_opts = AUTH_TYPES[form_state.db_type] or {}
     local auth_options = {}
     for _, a in ipairs(auth_opts) do
       table.insert(auth_options, { value = a.id, label = a.label })
     end
-    cb:dropdown("auth_type", {
+    cb:embedded_dropdown("auth_type", {
       label = "  AUTHENTICATION",
       options = auth_options,
-      value = form_state.auth_type,
+      selected = form_state.auth_type,
       width = 26,
+      on_change = function(key, value)
+        AddServerUI._sync_inputs_to_form_state(form_state)
+        form_state.auth_type = value
+        if value ~= "sql" then
+          form_state.username = ""
+          form_state.password = ""
+        end
+        AddServerUI.show_new_connection_form_with_state(form_state, edit_connection)
+      end,
     })
 
-    -- Username/Password (inline inputs, conditional)
+    -- Username/Password (embedded inputs, conditional)
     if needs_auth_creds then
-      cb:labeled_input("username", "     USERNAME       ", {
+      cb:embedded_input("username", {
+        label = "     USERNAME       ",
         value = form_state.username,
         placeholder = "(required)",
         width = 20,
       })
-      cb:labeled_input("password", "     PASSWORD       ", {
+      cb:embedded_input("password", {
+        label = "     PASSWORD       ",
         value = form_state.password,
         placeholder = "(required)",
         width = 20,
@@ -780,12 +808,10 @@ function AddServerUI.show_new_connection_form_with_state(form_state, edit_connec
   cb:styled("  ───────────────────────────────────────────", "muted")
   cb:spans({
     { text = "  ", style = "text" },
-    { text = "j/k", style = "key" },
+    { text = "hjkl", style = "key" },
     { text = " Navigate  ", style = "muted" },
     { text = "Enter", style = "key" },
-    { text = " Edit  ", style = "muted" },
-    { text = "Esc", style = "key" },
-    { text = " Confirm", style = "muted" },
+    { text = " Edit/Select", style = "muted" },
   })
   cb:spans({
     { text = "  ", style = "text" },
@@ -846,7 +872,7 @@ function AddServerUI.show_new_connection_form_with_state(form_state, edit_connec
   end
   keymaps["?"] = function() AddServerUI.show_form_controls() end
 
-  -- Create float with styled content and input support
+  -- Create float with styled content and embedded containers
   current_float = UiFloat.create(nil, {
     title = title,
     title_pos = "center",
@@ -858,53 +884,22 @@ function AddServerUI.show_new_connection_form_with_state(form_state, edit_connec
     default_keymaps = false,
     keymaps = keymaps,
     content_builder = cb,
-    enable_inputs = true,
   })
-
-  -- Handle dropdown changes
-  current_float:on_dropdown_change(function(key, value)
-    AddServerUI._sync_inputs_to_form_state(form_state)
-
-    if key == "db_type" then
-      -- Database type changed - update auth type to default for new type
-      form_state.db_type = value
-      local auth_opts = AUTH_TYPES[value]
-      if auth_opts and #auth_opts > 0 then
-        form_state.auth_type = auth_opts[1].id
-      end
-      -- Clear credentials when switching db types
-      if value == "sqlite" or form_state.auth_type ~= "sql" then
-        form_state.username = ""
-        form_state.password = ""
-      end
-      -- Refresh form to show/hide auth fields
-      AddServerUI.show_new_connection_form_with_state(form_state, edit_connection)
-
-    elseif key == "auth_type" then
-      -- Auth type changed
-      form_state.auth_type = value
-      -- Clear credentials when switching to non-SQL auth
-      if value ~= "sql" then
-        form_state.username = ""
-        form_state.password = ""
-      end
-      -- Refresh form to show/hide credential fields
-      AddServerUI.show_new_connection_form_with_state(form_state, edit_connection)
-    end
-  end)
 end
 
----Sync input field values back to form_state
+---Sync embedded container values back to form_state
 ---@param form_state table Form state to update
 function AddServerUI._sync_inputs_to_form_state(form_state)
   if not current_float then return end
-  
-  local values = current_float:get_all_input_values()
+
+  local values = current_float:get_all_embedded_values()
   if values.name then form_state.name = values.name end
   if values.server_path then form_state.server_path = values.server_path end
   if values.database then form_state.database = values.database end
   if values.username then form_state.username = values.username end
   if values.password then form_state.password = values.password end
+  if values.db_type then form_state.db_type = values.db_type end
+  if values.auth_type then form_state.auth_type = values.auth_type end
   if values.port then
     local port_num = tonumber(values.port)
     form_state.port = port_num
